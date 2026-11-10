@@ -1,0 +1,18 @@
+{
+  "name": "@probot-poc/sdk-runtime-spike",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Throwaway Phase 0 compatibility and isolation spike for @opencode/sdk",
+  "license": "ISC",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "spike": "node src/spike.mjs",
+    "spike:offline": "SPIKE_SKIP_MODEL=1 node src/spike.mjs"
+  },
+  "dependencies": {
+    "@opencode/sdk": "2.2.7"
+  }
+}
