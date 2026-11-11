@@ -368,6 +368,19 @@
             }
           }
         },
+        "sdk": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Experimental OpenCode SDK runtime. Default disabled; production remains opencode-cli.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "shadowMode": {
+              "type": "boolean"
+            }
+          }
+        },
         "context": {
           "type": "object",
           "additionalProperties": false,

@@ -211,6 +211,15 @@ const agentSchema = z.object({
       timeoutMs: z.number().int().min(1_000).max(3_600_000).default(900_000),
     })
     .prefault({}),
+  // Experimental OpenCode SDK runtime (docs/architecture-sdk-runtime.md §14).
+  // Default off: the production runtime remains opencode-cli. Phase 3 adds
+  // lifecycle/resource keys; do not add unused knobs here.
+  sdk: z
+    .object({
+      enabled: z.boolean().default(false),
+      shadowMode: z.boolean().default(true),
+    })
+    .prefault({}),
   context: z
     .object({
       adaptive: z.boolean().default(true),
