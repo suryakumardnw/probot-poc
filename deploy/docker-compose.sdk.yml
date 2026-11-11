@@ -1,0 +1,108 @@
+# Experimental SDK worker stack — Phase 1 (NON-PRODUCTION).
+#
+# This is a SEPARATE Compose project (`ai-pr-reviewer-sdk`). It is deliberately
+# NOT imported by deploy/docker-compose.yml and shares no services, networks,
+# secrets or volumes with the production stack.
+#
+# Phase 1 scope: an OFFLINE placeholder worker shell that creates an OpenCode
+# SDK host, refreshes a heartbeat and serves an internal-only health endpoint.
+# There are NO model calls, NO model credentials, NO GitHub/Postgres/Redis, NO
+# queue integration, NO review adapter and NO publishing. Model egress is
+# deliberately absent until Phase 2, when an egress proxy/allowlist must be
+# added and the whole probe suite re-run.
+#
+# Security invariants encoded here (and asserted by
+# test/deployment-sdk.test.ts):
+#   - read-only root filesystem; only /tmp (tmpfs) and /app/workspaces (named
+#     volume) are writable
+#   - all capabilities dropped, no-new-privileges, non-root uid 1000
+#   - single internal-only network; no host ports anywhere
+#   - no Docker socket, no env_file, no secrets
+#   - the one-shot probe runs under the identical hardening anchor
+#
+# Validate: docker compose -f deploy/docker-compose.sdk.yml config
+# Build:    docker compose -f deploy/docker-compose.sdk.yml build
+# Probe:    docker compose -f deploy/docker-compose.sdk.yml run --rm sdk-isolation-probe
+# Tear down: docker compose --profile probe -f deploy/docker-compose.sdk.yml down -v --remove-orphans
+
+name: ai-pr-reviewer-sdk
+
+x-sdk-hardening: &sdk-hardening
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  user: "1000:1000"
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
+  stop_grace_period: 30s
+  deploy:
+    resources:
+      # Provisional guardrails for the experiment, not production thresholds.
+      # Compose v5 rejects top-level `pids_limit` alongside a deploy limits
+      # block (it maps both to deploy.resources.limits.pids), so the PID cap
+      # lives in the deploy block and is identical for worker and probe.
+      limits:
+        cpus: "1.0"
+        memory: 1G
+        pids: 256
+
+services:
+  sdk-worker:
+    <<: *sdk-hardening
+    build:
+      context: ./sdk
+      dockerfile: Dockerfile
+    image: ai-pr-reviewer/sdk-worker:phase1
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      SDK_WORKER_PORT: "8081"
+      LOG_LEVEL: error
+    # Internal-only: other containers on sdk-internal may reach 8081, the host
+    # never can. No `ports:` key is allowed in this stack.
+    expose:
+      - "8081"
+    volumes:
+      - sdk-workspaces:/app/workspaces
+    healthcheck:
+      test: ["CMD", "node", "worker/healthcheck.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - sdk-internal
+
+  sdk-isolation-probe:
+    <<: *sdk-hardening
+    build:
+      context: ./sdk
+      dockerfile: Dockerfile
+    image: ai-pr-reviewer/sdk-worker:phase1
+    restart: "no"
+    profiles: ["probe"]
+    command: ["node", "worker/isolation-probe.mjs"]
+    environment:
+      NODE_ENV: production
+      SDK_WORKER_PORT: "8081"
+      LOG_LEVEL: error
+    volumes:
+      # Ephemeral, probe-only volume so the writable-mount check does not share
+      # review data with the worker.
+      - probe-workspaces:/app/workspaces
+    depends_on:
+      sdk-worker:
+        condition: service_healthy
+    networks:
+      - sdk-internal
+
+volumes:
+  sdk-workspaces:
+  probe-workspaces:
+
+networks:
+  # No external connectivity at all: this is what the egress probe verifies.
+  sdk-internal:
+    internal: true

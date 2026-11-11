@@ -278,6 +278,18 @@ The existing `git status --porcelain` integrity guard must remain.
 
 Remember: that guard detects modifications **after** execution; it does not prevent them. SDK permission enforcement must be independently demonstrated.
 
+**Phase 1 coverage:** the Phase 1 probe verifies the *container boundary* — non-root user,
+read-only rootfs, dropped capabilities, `no-new-privileges`, no Docker socket, no
+credential-like environment, blocked public HTTP/TCP/DNS egress, internal-only network,
+no host ports, and the writable-mount surface. The model-level adversarial list above
+(prompt injection, malicious symlinks, cross-review workspace access, concurrent session
+interference, `git status` integrity) is exercised in Phase 2, where a model is actually
+running. Do not cite Phase 1 as evidence that the full list passes.
+
+Credential scanning is a guardrail, not an exhaustive detector. It covers GitHub,
+database, Redis, AWS, OpenAI/Anthropic/model keys (including `GLM_API_KEY`,
+`ZHIPU_API_KEY`, generic `API_KEY`) and `GH_TOKEN`, and reports key names only.
+
 ---
 
 ## 8. Review execution and budgets
@@ -400,7 +412,8 @@ Build a throwaway compatibility spike before implementing the runtime. It must t
 10. Measure host creation/closure time and peak RSS.
 11. Verify cleanup.
 
-Use explicit `close()` in `finally`, not `await using`.
+Use explicit `close()` in a `try/finally` (or an equivalent single shutdown path), never
+`await using`.
 
 If the SDK cannot satisfy provider or security requirements, **stop** before implementing the runtime adapter.
 
@@ -453,6 +466,48 @@ must pass the container-boundary checks; production rollout remains unauthorized
   deployment tests remain mandatory (Phase 1).
 - The spike's `maxRssKb` is a secondary cross-check; sampled interval RSS is authoritative.
 
+### Phase 1 result (2026-11-11)
+
+**Verdict: PASS — for the Phase 1 offline placeholder configuration only.**
+
+The deployment unit lives in `deploy/sdk/**` and `deploy/docker-compose.sdk.yml`
+(separate Compose project `ai-pr-reviewer-sdk`), with static invariants in
+`test/deployment-sdk.test.ts` and operating notes in `docs/deployment-sdk-runtime.md`.
+It is an isolated experiment, not part of the production stack.
+
+Verified in a running container:
+
+- Image `node:24.0.0-slim`, runs as uid/gid `1000`, `npm ci --omit=dev`, no CLI/git/docker
+  CLI/Prisma and no secret files baked in.
+- Read-only rootfs; `/app` read-only; only `/tmp` (tmpfs), `/app/workspaces` (named
+  volume) and standard `/proc`/`/sys`/`/dev` interfaces are writable. `/dev/shm` remains
+  a default read-write Docker mount and is documented as such.
+- `cap_drop: ALL` with `CapEff=0000000000000000`; `NoNewPrivs=1`; no Docker socket.
+- No `env_file`; only `NODE_ENV`, `SDK_WORKER_PORT`, `LOG_LEVEL`; no GitHub, database,
+  Redis, AWS or model credentials.
+- Exactly one network, `sdk-internal` with `internal: true`; no host ports
+  (`PortBindings={}`); worker listens on `0.0.0.0:8081` inside that network only.
+- Public HTTP, raw TCP and external DNS egress all blocked; internal
+  `http://sdk-worker:8081/health` returns `200 {"status":"ok"}`.
+- Resource guardrails: `cpus 1.0`, memory `1G`, `pids 256` (provisional, not production
+  thresholds).
+- Graceful shutdown on SIGTERM/SIGINT (exit 0) with a single `host.close()` in a literal
+  `try/finally`; teardown leaves no containers, volumes or networks.
+- The one-shot probe reports 12/12 checks; the static suite passes 16/16, and the affected
+  production deployment tests still pass (41/41 combined).
+- The placeholder worker creates the SDK host offline (`models: { fetch: false }`) and
+  makes **no model calls**; there is deliberately no model egress in Phase 1.
+
+**Not covered by Phase 1** (deferred to Phase 2): prompt injection, malicious symlinks,
+cross-review workspace access, concurrent session interference, and the
+`git status --porcelain` integrity guard. Model egress (proxy/allowlist) and model
+credentials must be added and re-tested in Phase 2.
+
+**Non-blocking notes:** the SDK dependency tree reports 31 transitive npm advisories
+(25 moderate, 6 high); `@opentui/core@0.8.1` declares `node >=26.4.0` but is optional UI
+code and the worker runs healthy on Node 24. Neither is resolved here because root
+dependencies are out of scope for the experiment.
+
 ---
 
 ## 13. Final go/no-go conditions
@@ -497,7 +552,7 @@ The experiment must remain mergeable into `main` without touching production run
 | Phase | Shared files potentially touched | Conflict avoidance |
 | --- | --- | --- |
 | 0 | none (new `experiments/` tree + this doc) | Fully additive |
-| 1 | new `deploy/sdk-*` files | Separate deployment unit |
+| 1 | `deploy/sdk/**`, `deploy/docker-compose.sdk.yml`, `test/deployment-sdk.test.ts`, new `docs/deployment-sdk-runtime.md` | Separate deployment unit; no production compose/image edits |
 | 2 | `src/agent/index.ts` (barrel export), config schema | Additive exports/optional keys; rebase before merge |
 | 3–5 | new `src/agent/sdk/**`, `src/agent/plugins/**` | New modules only |
 | 6–8 | metrics registry, worker entrypoint | Wire behind `agent.sdk.enabled`; keep diff small |
@@ -532,9 +587,12 @@ Any merge that requires touching a production shared file must be reviewed as a 
 | Worker architecture | Agreed |
 | Evaluation strategy | Agreed |
 | SDK compatibility | **Verified on Node ≥ 24; unsupported on Node 20.18/22.14** |
-| Security enforcement | **Verified at SDK level (Phase 0); container boundary pending Phase 1** |
+| Security enforcement | **SDK level (Phase 0) + container boundary verified for the Phase 1 offline placeholder configuration** |
 | Production rollout | **Not authorized** |
 
 Phase 0 is complete as a spike. Its verdict is **conditional go on Node ≥ 24**; the current
-production image's Node 22.14.0 cannot run SDK 2.2.7. No production runtime changes are
-authorized until the Node upgrade is approved and the Phase 1 container boundary passes.
+production image's Node 22.14.0 cannot run SDK 2.2.7. Phase 1 is complete as a separate,
+offline deployment unit: the container boundary is verified for that configuration, but it
+does not exercise model-level adversarial behavior and is not a universal "secure" claim.
+No production runtime changes are authorized. Phase 2 (SDK runtime adapter + model egress
+proxy + full §7 adversarial suite) requires explicit approval.
