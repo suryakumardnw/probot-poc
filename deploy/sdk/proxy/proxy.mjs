@@ -34,6 +34,21 @@ export const DEFAULT_HEALTH_PORT = 3129;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 
+/**
+ * Upstream TCP connect options.
+ *
+ * `autoSelectFamily` lets a host whose DNS answers include an unreachable IPv6
+ * address still be reached over IPv4. Node's default 250 ms per-address attempt
+ * window was observed to give up with ETIMEDOUT instead of falling back (Node
+ * 26, macOS, Cloudflare-fronted allowlisted host); 1 s reliably falls through.
+ * An explicit `family` is NOT used because the allowlisted host may be
+ * IPv4-only or IPv6-only.
+ */
+export const UPSTREAM_CONNECT_OPTIONS = Object.freeze({
+  autoSelectFamily: true,
+  autoSelectFamilyAttemptTimeout: 1000,
+});
+
 function allowedHostFromEnv() {
   return (process.env.MODEL_ALLOWED_HOST ?? DEFAULT_ALLOWED_HOST).trim().toLowerCase();
 }
@@ -113,7 +128,11 @@ function handleConnect(req, clientSocket, head) {
   // Do not read client bytes until the upstream tunnel exists.
   clientSocket.pause();
 
-  const upstream = net.connect({ host: target.host, port: target.port });
+  const upstream = net.connect({
+    host: target.host,
+    port: target.port,
+    ...UPSTREAM_CONNECT_OPTIONS,
+  });
   let established = false;
   let settled = false;
 

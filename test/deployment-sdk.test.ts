@@ -345,6 +345,28 @@ describe("SDK egress proxy (Phase 2b, non-production)", () => {
     expect(proxy.isAllowedTarget({ host: "llm.nativewit.app.evil.test", port: 443 })).toBe(false);
     expect(proxy.isAllowedTarget(null)).toBe(false);
   });
+
+  it("falls back to a reachable address family when the upstream DNS is dual-stack", async () => {
+    // A real defect found during the Phase 2c run: the allowlisted host
+    // resolves to IPv6 + IPv4, the IPv6 route is absent, and Node's default
+    // per-address attempt window (250 ms) ended in ETIMEDOUT without trying
+    // IPv4 — every model call through the proxy failed. Happy Eyeballs stays
+    // enabled (no hard-coded family) with a bounded, longer attempt window.
+    const proxy = (await import(pathToFileURL(path.join(proxyDir, "proxy.mjs")).href)) as {
+      UPSTREAM_CONNECT_OPTIONS: {
+        autoSelectFamily?: boolean;
+        autoSelectFamilyAttemptTimeout?: number;
+        family?: number;
+      };
+    };
+    const options = proxy.UPSTREAM_CONNECT_OPTIONS;
+    expect(options.autoSelectFamily).toBe(true);
+    expect(options.family).toBeUndefined();
+    expect(options.autoSelectFamilyAttemptTimeout).toBeGreaterThanOrEqual(500);
+    expect(options.autoSelectFamilyAttemptTimeout).toBeLessThanOrEqual(5_000);
+    // The option must actually be applied to the upstream socket.
+    expect(proxyProxy).toContain("...UPSTREAM_CONNECT_OPTIONS");
+  });
 });
 
 describe("SDK worker image", () => {

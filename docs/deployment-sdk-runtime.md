@@ -258,6 +258,12 @@ blocked, and direct egress blocked.
 - A model-host outage or a DNS failure in the proxy is reported as a failed
   `allowlisted-connect` check; the allowlist logic can still be proven with a
   local TLS target if the public host is unreachable, but nothing is faked.
+- The proxy dials upstream with happy eyeballs enabled (`autoSelectFamily`,
+  1 s per-address attempt window). A dual-stack host with no IPv6 route must
+  still be reached over IPv4: Node's 250 ms default window was observed to end
+  in `ETIMEDOUT` instead of falling back, which failed every model call while
+  the `CONNECT` tunnel itself succeeded. No address family is hard-coded, so an
+  IPv6-only upstream keeps working.
 - Re-run **both** probes after any change to the image, compose file or proxy.
 - Production readiness is **not** claimed. Resource limits remain provisional,
   and the ADR §7 model-level adversarial suite still must run against a real

@@ -1,0 +1,14 @@
+{
+  "name": "@probot-poc/sdk-runtime-adversarial",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Phase 2c real-model adversarial suite for the OpenCode SDK runtime adapter (non-production)",
+  "license": "ISC",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "run": "node run.mjs"
+  }
+}
