@@ -1,0 +1,12 @@
+# Keep the build context minimal and secret-free.
+node_modules
+npm-debug.log*
+.env
+.env.*
+*.pem
+*.key
+.git
+.gitignore
+README.md
+Dockerfile
+.dockerignore

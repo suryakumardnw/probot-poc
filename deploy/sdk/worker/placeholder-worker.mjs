@@ -91,6 +91,12 @@ function startHttpServer() {
           node: process.version,
           uid: typeof process.getuid === "function" ? process.getuid() : null,
           host: ready ? "ready" : "starting",
+          // Presence only — never the values. Phase 2b supplies credentials
+          // via deploy/sdk/.env; this placeholder still makes no model call.
+          modelConfigured: Boolean(
+            process.env.MODEL_API_KEY && process.env.MODEL_BASE_URL && process.env.MODEL_NAME,
+          ),
+          egressProxyConfigured: Boolean(process.env.MODEL_PROXY_URL),
         });
         return;
       }

@@ -1,27 +1,29 @@
-# Experimental SDK worker stack — Phase 1 (NON-PRODUCTION).
+# Experimental SDK worker stack — Phase 2b model egress (NON-PRODUCTION).
 #
 # This is a SEPARATE Compose project (`ai-pr-reviewer-sdk`). It is deliberately
 # NOT imported by deploy/docker-compose.yml and shares no services, networks,
 # secrets or volumes with the production stack.
 #
-# Phase 1 scope: an OFFLINE placeholder worker shell that creates an OpenCode
-# SDK host, refreshes a heartbeat and serves an internal-only health endpoint.
-# There are NO model calls, NO model credentials, NO GitHub/Postgres/Redis, NO
-# queue integration, NO review adapter and NO publishing. Model egress is
-# deliberately absent until Phase 2, when an egress proxy/allowlist must be
-# added and the whole probe suite re-run.
+# Phase 1 proved the offline container boundary. Phase 2b adds exactly ONE
+# external path: a dedicated CONNECT allowlist proxy (`sdk-egress-proxy`) is
+# the only service attached to the non-internal `sdk-egress` network. The SDK
+# worker and both probes stay on `sdk-internal` (internal: true) and can reach
+# the model only through that proxy.
 #
 # Security invariants encoded here (and asserted by
 # test/deployment-sdk.test.ts):
 #   - read-only root filesystem; only /tmp (tmpfs) and /app/workspaces (named
 #     volume) are writable
 #   - all capabilities dropped, no-new-privileges, non-root uid 1000
-#   - single internal-only network; no host ports anywhere
-#   - no Docker socket, no env_file, no secrets
-#   - the one-shot probe runs under the identical hardening anchor
+#   - exactly one egress-capable service (the proxy); no host ports anywhere
+#   - no Docker socket, no secrets baked into images
+#   - model credentials (deploy/sdk/.env) go ONLY to sdk-worker; never to the
+#     proxy, never alongside GitHub/DB/Redis credentials
+#   - the one-shot probes run under the identical hardening anchor
 #
 # Validate: docker compose -f deploy/docker-compose.sdk.yml config
 # Build:    docker compose -f deploy/docker-compose.sdk.yml build
+# Egress:   docker compose -f deploy/docker-compose.sdk.yml run --rm sdk-egress-probe
 # Probe:    docker compose -f deploy/docker-compose.sdk.yml run --rm sdk-isolation-probe
 # Tear down: docker compose --profile probe -f deploy/docker-compose.sdk.yml down -v --remove-orphans
 
@@ -42,7 +44,7 @@ x-sdk-hardening: &sdk-hardening
       # Provisional guardrails for the experiment, not production thresholds.
       # Compose v5 rejects top-level `pids_limit` alongside a deploy limits
       # block (it maps both to deploy.resources.limits.pids), so the PID cap
-      # lives in the deploy block and is identical for worker and probe.
+      # lives in the deploy block and is identical for every service.
       limits:
         cpus: "1.0"
         memory: 1G
@@ -56,16 +58,26 @@ services:
       dockerfile: Dockerfile
     image: ai-pr-reviewer/sdk-worker:phase1
     restart: unless-stopped
+    # Dedicated SDK-only credential file (deploy/sdk/.env, gitignored). It must
+    # contain ONLY MODEL_BASE_URL, MODEL_NAME and MODEL_API_KEY. Never put
+    # GitHub, Postgres or Redis credentials here: the worker must not have them.
+    env_file:
+      - ./sdk/.env
     environment:
       NODE_ENV: production
       SDK_WORKER_PORT: "8081"
       LOG_LEVEL: error
+      MODEL_PROXY_URL: http://sdk-egress-proxy:3128
+      MODEL_ALLOWED_HOST: ${MODEL_ALLOWED_HOST:-llm.nativewit.app}
     # Internal-only: other containers on sdk-internal may reach 8081, the host
     # never can. No `ports:` key is allowed in this stack.
     expose:
       - "8081"
     volumes:
       - sdk-workspaces:/app/workspaces
+    depends_on:
+      sdk-egress-proxy:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "worker/healthcheck.mjs"]
       interval: 10s
@@ -74,6 +86,35 @@ services:
       start_period: 15s
     networks:
       - sdk-internal
+
+  sdk-egress-proxy:
+    <<: *sdk-hardening
+    build:
+      context: ./sdk/proxy
+      dockerfile: Dockerfile
+    image: ai-pr-reviewer/sdk-egress-proxy:phase2
+    restart: unless-stopped
+    # No env_file: the proxy holds no model credential. Only the non-secret
+    # allowlist host is configured.
+    environment:
+      NODE_ENV: production
+      MODEL_ALLOWED_HOST: ${MODEL_ALLOWED_HOST:-llm.nativewit.app}
+    # The only internal ports needed: CONNECT and the unauthenticated health
+    # endpoint. Nothing is published on the host.
+    expose:
+      - "3128"
+      - "3129"
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      # sdk-internal lets the worker/probes reach the proxy. sdk-egress is the
+      # one non-internal network in this stack, and ONLY this service is on it.
+      - sdk-internal
+      - sdk-egress
 
   sdk-isolation-probe:
     <<: *sdk-hardening
@@ -98,11 +139,37 @@ services:
     networks:
       - sdk-internal
 
+  sdk-egress-probe:
+    <<: *sdk-hardening
+    build:
+      context: ./sdk
+      dockerfile: Dockerfile
+    image: ai-pr-reviewer/sdk-worker:phase1
+    restart: "no"
+    profiles: ["probe"]
+    command: ["node", "worker/proxy-smoke.mjs"]
+    environment:
+      NODE_ENV: production
+      MODEL_PROXY_URL: http://sdk-egress-proxy:3128
+      MODEL_ALLOWED_HOST: ${MODEL_ALLOWED_HOST:-llm.nativewit.app}
+    # Deliberately no env_file and no review-data volume: the probe sees the
+    # same network boundary as the worker, without model or GitHub credentials.
+    depends_on:
+      sdk-worker:
+        condition: service_healthy
+      sdk-egress-proxy:
+        condition: service_healthy
+    networks:
+      - sdk-internal
+
 volumes:
   sdk-workspaces:
   probe-workspaces:
 
 networks:
-  # No external connectivity at all: this is what the egress probe verifies.
+  # No external connectivity at all: this is what the isolation probe verifies.
   sdk-internal:
     internal: true
+  # Default bridge: the proxy is the single egress-capable service in the stack.
+  sdk-egress:
+    driver: bridge
