@@ -284,6 +284,12 @@ export async function finalizeReview(
         publishUncertainInSummary: deps.config.review.findings.publishUncertainInSummary,
         publishCleanReview: deps.config.review.reporting.publishCleanReview,
       },
+      meta: {
+        reviewer: deps.config.application.name,
+        source: `${payload.repositoryFullName}#${payload.pullRequestNumber} @ ${workspace.headSha.slice(0, 7)}`,
+        reviewedAt: new Date(),
+        timezone: deps.config.application.timezone,
+      },
       ...(deps.publishRetry ? { retry: deps.publishRetry } : {}),
       logger,
     });

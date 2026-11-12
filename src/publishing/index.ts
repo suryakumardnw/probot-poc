@@ -19,6 +19,7 @@ export {
   buildReviewBody,
   buildInlineCommentBody,
   type FindingsBodyInput,
+  type ReviewBodyMeta,
 } from "./summary.js";
 export {
   StaleHeadError,

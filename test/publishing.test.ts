@@ -513,6 +513,22 @@ describe("diff position resolution (§7.4)", () => {
 });
 
 describe("review body generation", () => {
+  const finding = (overrides: Partial<StoredFinding> = {}): StoredFinding => ({
+    id: "f1",
+    fingerprint: "fp1:abc",
+    category: "security",
+    severity: "medium",
+    confidence: 0.9,
+    title: "Finding",
+    filePath: "src/app.js",
+    lineNumber: 2,
+    description: "a problem",
+    verified: true,
+    status: "new",
+    reopened: false,
+    ...overrides,
+  });
+
   test("inline comment bodies carry a hidden fingerprint marker that round-trips", () => {
     const f: StoredFinding = {
       id: "f1",
@@ -583,6 +599,77 @@ describe("review body generation", () => {
     expect(
       buildReviewBody({ ...input, config: { ...input.config, publishCleanReview: false } }),
     ).not.toContain("No verified findings");
+  });
+
+  test("groups verified findings by category with counts and recommendation", () => {
+    const verified = [
+      finding({ category: "maintainability", severity: "low", title: "Naming drift" }),
+      finding({ category: "security", severity: "high", title: "Unredacted dump" }),
+      finding({ category: "security", severity: "medium", title: "Unbounded write" }),
+    ];
+    const body = buildReviewBody({
+      summary: "Two domains affected.",
+      verified,
+      uncertain: [],
+      config: { publishUncertainInSummary: true, publishCleanReview: true },
+    });
+
+    // Canonical category order: security before maintainability.
+    expect(body.indexOf("## 1\\. Security")).toBeGreaterThan(-1);
+    expect(body.indexOf("## 2\\. Code Quality")).toBeGreaterThan(body.indexOf("## 1\\. Security"));
+    expect(body).toContain("**Severity:** 🟠 2 findings (1 high · 1 medium)");
+    expect(body).toContain("**Recommendation:** ⚠️ Major Comments");
+    expect(body).toContain("**Recommendation:** 💬 Optional Nits");
+  });
+
+  test("derives the review status and final decision from the most severe finding", () => {
+    const high = buildReviewBody({
+      summary: "s",
+      verified: [finding({ category: "security", severity: "high" })],
+      uncertain: [],
+      config: { publishUncertainInSummary: true, publishCleanReview: true },
+    });
+    expect(high).toContain("**Review Status:** 🔴 Significant Concerns");
+    expect(high).toContain("**Final Review Decision:** Changes requested.");
+
+    const low = buildReviewBody({
+      summary: "s",
+      verified: [finding({ category: "maintainability", severity: "low" })],
+      uncertain: [],
+      config: { publishUncertainInSummary: true, publishCleanReview: true },
+    });
+    expect(low).toContain("**Review Status:** 🔵 Minor Suggestions");
+    expect(low).toContain("**Final Review Decision:** Comment.");
+  });
+
+  test("renders header metadata when provided", () => {
+    const body = buildReviewBody({
+      summary: "s",
+      verified: [],
+      uncertain: [],
+      config: { publishUncertainInSummary: true, publishCleanReview: true },
+      meta: {
+        reviewer: "ai-pr-reviewer",
+        source: "acme/widgets#42 @ abc1234",
+        reviewedAt: new Date("2026-11-12T00:30:00Z"),
+        timezone: "UTC",
+      },
+    });
+    expect(body).toContain("# AI Code Review — ai-pr-reviewer");
+    expect(body).toContain("**Source:** acme/widgets#42 @ abc1234");
+    expect(body).toContain("**Review Date:** 12 November 2026, 00:30");
+  });
+
+  test("clean reviews report no concerns and omit category sections", () => {
+    const body = buildReviewBody({
+      summary: "no issues",
+      verified: [],
+      uncertain: [],
+      config: { publishUncertainInSummary: true, publishCleanReview: true },
+    });
+    expect(body).toContain("**Review Status:** ✅ No Concerns");
+    expect(body).not.toMatch(/^## 1\\./m);
+    expect(body).toContain("Review Actions");
   });
 
   test("the summary marker is appended exactly once", () => {

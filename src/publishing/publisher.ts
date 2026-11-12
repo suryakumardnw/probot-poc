@@ -29,6 +29,7 @@ import {
   buildInlineCommentBody,
   buildReviewBody,
   extractFingerprint,
+  type ReviewBodyMeta,
 } from "./summary.js";
 import { resolveInlinePosition, parseUnifiedDiff, type InlinePosition } from "./diff-positions.js";
 import type { StoredFinding } from "../findings/index.js";
@@ -192,6 +193,8 @@ export interface PublishReviewInput {
   /** All stored findings of this review (verified + uncertain). */
   findings: StoredFinding[];
   config: { publishUncertainInSummary: boolean; publishCleanReview: boolean };
+  /** Header metadata for the review body (reviewer, source, date). */
+  meta?: ReviewBodyMeta;
   retry?: Partial<RetryOptions>;
   logger?: { info: (obj: unknown, msg: string) => void; warn: (obj: unknown, msg: string) => void };
 }
@@ -333,6 +336,7 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
       uncertain,
       inlineFingerprints: new Set(inlineCandidates.map((c) => c.finding.fingerprint)),
       config: input.config,
+      ...(input.meta ? { meta: input.meta } : {}),
     }),
   );
 
