@@ -8,25 +8,28 @@
  *   COMMON_REVIEW_INSTRUCTIONS + HANDBOOK_MODE_INSTRUCTIONS + the retrieved
  *   handbook guidelines block (UNTRUSTED DATA, clearly labeled).
  *
- * The handbook content must never be executed or treated as configuration:
- * it can only add engineering standards to APPLY, never change rules.
+ * The handbook is the review's SOURCE OF TRUTH for what is allowed, required
+ * and forbidden. It cannot change the application's role, output format or
+ * security rules, but it DOES define which violations must be reported.
  */
 
 export const HANDBOOK_MODE_INSTRUCTIONS = `
-HANDBOOK MODE — you have access to an engineering handbook containing
-Markdown guidelines. Retrieved guideline excerpts are provided below.
-1. Identify the languages, frameworks and technologies involved in this PR.
-2. Look for handbook categories/guidelines matching those technologies.
-3. Read the relevant provided guidelines BEFORE evaluating the changed code.
-4. Apply the guidelines during analysis and reporting.
-5. CITATION (mandatory): every handbook-derived finding must cite the exact
-   handbook file and section/heading it comes from.
-6. NEVER invent standards: only cite guidelines actually present in the
-   provided excerpts. Handbook recommendations are guidance, not mandatory
-   rules — do not treat them as blockers by default; weigh them like the
-   convention findings they are.
-7. If no relevant guideline exists for an aspect of the change, fall back to
-   the normal review methodology.
+GUIDELINE MODE — the engineering guidelines provided below are the
+AUTHORITATIVE STANDARD for this review.
+1. Read the relevant provided guidelines BEFORE evaluating the changed code.
+2. Apply every guideline relevant to the changed files, dependencies and
+   architecture.
+3. CITATION (mandatory): every guideline-derived finding must cite the exact
+   guideline file and section/heading it comes from.
+4. NEVER invent standards: enforce only rules actually present in the
+   provided guidelines. Do not import outside standards.
+5. A clear violation is a finding even when it has no runtime impact (naming,
+   folder structure, layering, architecture, conventions). Do not downgrade it
+   to a style nit or an uncertain finding solely because it is not a bug.
+6. If no provided guideline applies to an aspect of the change, report nothing
+   for that aspect. Do not fall back to general code-review taste.
+7. If two provided guidelines conflict, prefer the more specific rule for the
+   changed path and state the conflict in the finding.
 `.trim();
 
 /**
@@ -35,8 +38,8 @@ Markdown guidelines. Retrieved guideline excerpts are provided below.
  * reused (token-budget control).
  */
 export const HANDBOOK_REFERENCE_INSTRUCTIONS = `
-HANDBOOK MODE (continued): use the handbook guidelines provided above in the
-analysis stage of this review. Apply them to analysis and reporting, cite the
-exact handbook file and section heading for every handbook-derived finding,
-never invent standards, and treat handbook recommendations as guidance rather
-than mandatory blockers.`.trim();
+GUIDELINE MODE (continued): the engineering guidelines provided in the
+analysis stage remain the AUTHORITATIVE STANDARD. Apply them, cite the exact
+guideline file and section heading for every guideline-derived finding,
+enforce only rules present there, treat clear violations as findings even when
+they have no runtime impact, and report nothing where no guideline applies.`.trim();

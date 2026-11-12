@@ -526,6 +526,15 @@ describe("review result schema", () => {
     }
   });
 
+  test("null evidence line is treated as unspecified", () => {
+    const withNullLine = finding({
+      evidence: [{ file: "src/utils.ts", line: null, excerpt: "return { name }", reason: "shape changed" }],
+    });
+    const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [withNullLine] });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
+  });
+
   test("out-of-range confidence and unknown enum values are rejected", () => {
     expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ confidence: 1.5 })] }).success).toBe(false);
     expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ category: "vibes" })] }).success).toBe(false);
@@ -543,6 +552,34 @@ describe("review result schema", () => {
       expect(parsed.data.tool_requests).toEqual([]);
       expect(parsed.data.no_additional_context_needed).toBe(false);
     }
+  });
+
+  test("analysis schema absorbs reporting-stage keys from model drift", () => {
+    // GLM/Haiku sometimes answer the analysis stage with reporting keys. Those
+    // are benign drift: fold findings into preliminary_findings, use summary
+    // as the objective when absent, and ignore schemaVersion.
+    const prelim = { title: "prelim", file: "a.dart", line: 1 };
+    const confident = { title: "final", file: "b.dart", line: 2 };
+    const uncertain = { title: "unsure", file: "c.dart", line: 3 };
+    const parsed = analysisOutputSchema.safeParse({
+      schemaVersion: 1,
+      summary: "PR summary",
+      preliminary_findings: [prelim],
+      findings: [confident],
+      uncertain_findings: [uncertain],
+      tool_requests: [],
+      no_additional_context_needed: true,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.objective).toBe("PR summary");
+      expect(parsed.data.preliminary_findings).toEqual([prelim, confident, uncertain]);
+      expect(parsed.data.no_additional_context_needed).toBe(true);
+    }
+  });
+
+  test("analysis schema still rejects genuinely unknown keys", () => {
+    expect(analysisOutputSchema.safeParse({ objective: "x", mystery: 1 }).success).toBe(false);
   });
 });
 

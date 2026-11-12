@@ -56,8 +56,8 @@
         "publish": true
       },
       "skill": {
-        "enabled": true,
-        "publish": true
+        "enabled": false,
+        "publish": false
       },
       "handbook": {
         "enabled": true,

@@ -7,11 +7,13 @@
  *    second, general/ categories eligible but deprioritized — and a Dart PR
  *    must not select Node.js guidelines;
  *  - token budget enforcement, dedup, deterministic ordering, truncation;
- *  - prompt profile assembly: standard = common, skill = common + skill,
- *    handbook = common + handbook profile with the guidelines block injected
- *    ONCE (analysis) and reused by reference in later stages;
- *  - the handbook instruction text mandates citations and forbids invented
- *    standards.
+ *  - prompt profile assembly: standard = common, handbook = common + handbook
+ *    profile with the guidelines block injected ONCE (analysis) and reused by
+ *    reference in later stages; non-handbook injections use the same
+ *    guideline-mode profile and re-inject the full text in later stages;
+ *  - the handbook instruction text mandates citations, forbids invented
+ *    standards, and treats clear violations as findings even without runtime
+ *    impact.
  * No network and no database: pure unit coverage.
  */
 import { describe, expect, test } from "vitest";
@@ -19,7 +21,6 @@ import type pino from "pino";
 import {
   COMMON_REVIEW_INSTRUCTIONS,
   HANDBOOK_MODE_INSTRUCTIONS,
-  SKILL_MODE_INSTRUCTIONS,
 } from "../src/review-engine/prompts/index.js";
 import {
   CHARS_PER_TOKEN,
@@ -198,33 +199,33 @@ describe("prompt profiles (§4.1)", () => {
     expect(composeInjectionStage1(undefined)).toBe("");
   });
 
-  test("skill profile: full playbook in analysis AND later stages", () => {
+  test("non-handbook injection: full guideline text in analysis AND later stages", () => {
     const stage1 = composeInjectionStage1(skillInjection);
     const later = composeInjectionLaterStages(skillInjection);
-    expect(stage1).toContain(SKILL_MODE_INSTRUCTIONS);
+    expect(stage1).toContain(HANDBOOK_MODE_INSTRUCTIONS);
     expect(stage1).toContain("PLAYBOOK-TEXT");
     expect(later).toContain("PLAYBOOK-TEXT");
-    expect(later).toContain(SKILL_MODE_INSTRUCTIONS);
+    expect(later).toContain(HANDBOOK_MODE_INSTRUCTIONS);
   });
 
   test("handbook profile: guidelines injected ONCE, later stages reference them", () => {
     const stage1 = composeInjectionStage1(handbookInjection);
     expect(stage1).toContain(HANDBOOK_MODE_INSTRUCTIONS);
     expect(stage1).toContain("GUIDELINE-TEXT");
-    expect(stage1).toContain("UNTRUSTED DATA");
+    expect(stage1).toContain("AUTHORITATIVE STANDARD");
 
     const later = composeInjectionLaterStages(handbookInjection);
     expect(later).toBe("LATER-REFERENCE");
     expect(later).not.toContain("GUIDELINE-TEXT");
   });
 
-  test("handbook instruction mandates citations and forbids invented standards", () => {
+  test("guideline instruction mandates citations and forbids invented standards", () => {
     expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("cite");
     expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("NEVER invent standards");
-    expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("guidance, not mandatory");
-    expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("fall back");
-    // Common base is shared by all modes.
-    expect(SKILL_MODE_INSTRUCTIONS.length).toBeGreaterThan(0);
+    expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("no runtime impact");
+    expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("report nothing");
+    // Common base is shared by all modes and still treats repo content as data.
     expect(COMMON_REVIEW_INSTRUCTIONS).toContain("UNTRUSTED DATA");
+    expect(COMMON_REVIEW_INSTRUCTIONS).not.toContain("Do NOT report style nits");
   });
 });

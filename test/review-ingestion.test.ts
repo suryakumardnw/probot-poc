@@ -428,46 +428,46 @@ describe("review ingestion", () => {
     expect(new Set(jobs.map((j) => j.jobKey)).size).toBe(3);
   });
 
-  test("/review type:skill ingests a skill review with its own attempt counter", async () => {
+  test("/review type:handbook ingests a handbook review with its own attempt counter", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-skill-open-1");
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:skill"), "delivery-skill-1");
+    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:handbook"), "delivery-skill-1");
 
     const reviews = await prisma.review.findMany({ orderBy: { createdAt: "asc" } });
     expect(reviews).toHaveLength(2);
-    const skill = reviews[1]!;
-    expect(skill.reviewType).toBe("skill");
-    expect(skill.trigger).toBe("manual");
-    expect(skill.attempt).toBe(1);
-    const job = await prisma.reviewJob.findFirstOrThrow({ where: { reviewId: skill.id } });
-    expect(job.jobKey).toBe(`${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:skill:a1`);
+    const handbook = reviews[1]!;
+    expect(handbook.reviewType).toBe("handbook");
+    expect(handbook.trigger).toBe("manual");
+    expect(handbook.attempt).toBe(1);
+    const job = await prisma.reviewJob.findFirstOrThrow({ where: { reviewId: handbook.id } });
+    expect(job.jobKey).toBe(`${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:handbook:a1`);
 
-    // Repeating the skill command increments the skill attempt counter.
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review skill"), "delivery-skill-2");
-    const skillReviews = await prisma.review.findMany({ where: { reviewType: "skill" }, orderBy: { createdAt: "asc" } });
-    expect(skillReviews.map((r) => r.attempt)).toEqual([1, 2]);
+    // Repeating the handbook command increments the handbook attempt counter.
+    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review handbook"), "delivery-skill-2");
+    const handbookReviews = await prisma.review.findMany({ where: { reviewType: "handbook" }, orderBy: { createdAt: "asc" } });
+    expect(handbookReviews.map((r) => r.attempt)).toEqual([1, 2]);
   });
 
-  test("the same head SHA can have standard and skill reviews concurrently (distinct identity)", async () => {
+  test("the same head SHA can have standard and handbook reviews concurrently (distinct identity)", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-types-open-1");
     // A bare /review creates ANOTHER standard review (attempt 1, forced).
     await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review"), "delivery-types-1");
-    // A skill review of the SAME head SHA is an independent identity.
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:skill"), "delivery-types-2");
+    // A handbook review of the SAME head SHA is an independent identity.
+    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:handbook"), "delivery-types-2");
 
     const reviews = await prisma.review.findMany();
     expect(reviews).toHaveLength(3);
     // §4.4: the forced standard re-review supersedes the in-flight standard
-    // review of the same PR — but the skill review of the same commit is an
+    // review of the same PR — but the handbook review of the same commit is an
     // independent identity and keeps running.
     const standardReviews = reviews.filter((r) => r.reviewType === "standard");
     expect(standardReviews.map((r) => r.state).sort()).toEqual(["queued", "superseded"]);
-    const skillReview = reviews.find((r) => r.reviewType === "skill");
-    expect(skillReview?.state).toBe("queued");
+    const handbookReview = reviews.find((r) => r.reviewType === "handbook");
+    expect(handbookReview?.state).toBe("queued");
 
     const jobs = await prisma.reviewJob.findMany();
     expect(new Set(jobs.map((j) => j.jobKey)).size).toBe(3);
     // §4.4: the forced standard re-review supersedes only the standard
-    // in-flight review; the skill job keeps running.
+    // in-flight review; the handbook job keeps running.
     expect(jobs.filter((j) => j.status === "superseded")).toHaveLength(1);
     expect(jobs.filter((j) => j.status === "enqueued")).toHaveLength(2);
     // No review of one type bleeds into another type's identity.
@@ -475,7 +475,7 @@ describe("review ingestion", () => {
       acc[r.reviewType] = (acc[r.reviewType] ?? 0) + 1;
       return acc;
     }, {});
-    expect(byType).toEqual({ standard: 2, skill: 1 });
+    expect(byType).toEqual({ standard: 2, handbook: 1 });
   });
   test("unknown review type posts help and does not ingest", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-unknown-open-1");
@@ -605,10 +605,10 @@ describe("review ingestion", () => {
 
     // Manual ingestion accepts a review type (§4.1): same PR/SHA, independent
     // identity.
-    const skillResult = await ingestManualReview({ repository: "octo-org/gamma", pullRequestNumber: 7, reviewType: "skill" });
-    expect(skillResult.outcome).toBe("created");
-    const skillReview = await prisma.review.findUniqueOrThrow({ where: { id: skillResult.reviewId! } });
-    expect(skillReview.reviewType).toBe("skill");
+    const handbookResult = await ingestManualReview({ repository: "octo-org/gamma", pullRequestNumber: 7, reviewType: "handbook" });
+    expect(handbookResult.outcome).toBe("created");
+    const handbookReview = await prisma.review.findUniqueOrThrow({ where: { id: handbookResult.reviewId! } });
+    expect(handbookReview.reviewType).toBe("handbook");
 
     const status = await getReviewStatus(result.reviewId!);
     expect(status?.review.state).toBe("queued");

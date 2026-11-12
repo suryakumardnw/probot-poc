@@ -616,15 +616,15 @@ describe("admin api (ticket 10)", () => {
     try {
       const triggered = await callAdmin(handler, "POST", "/api/admin/reviews/trigger", {
         headers: authedHeaders(session),
-        body: { repository: "octo-org/trigger-test", pullRequestNumber: 21, reviewType: "skill" },
+        body: { repository: "octo-org/trigger-test", pullRequestNumber: 21, reviewType: "handbook" },
       });
       expect(triggered.statusCode, triggered.body + " LOGS: " + JSON.stringify(logs)).toBe(202);
       const body = JSON.parse(triggered.body) as { outcome: string; reviewType: string; reviewId: string };
       expect(body.outcome).toBe("created");
-      expect(body.reviewType).toBe("skill");
+      expect(body.reviewType).toBe("handbook");
 
       const review = await prisma.review.findUniqueOrThrow({ where: { id: body.reviewId } });
-      expect(review.reviewType).toBe("skill");
+      expect(review.reviewType).toBe("handbook");
       expect(review.pullRequestId).toBe(pullRequest.id);
       expect(review.trigger).toBe("manual");
 

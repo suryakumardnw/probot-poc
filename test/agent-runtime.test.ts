@@ -139,6 +139,16 @@ const stepFinish = JSON.stringify({
   part: { type: "step_finish", tokens: { usage: { input: 120, output: 64, reasoning: 10, cache: {} } } },
 });
 const textEvent = (t: string) => JSON.stringify({ type: "text", part: { type: "text", text: t } });
+/** Step-aware variants: OpenCode may run several steps inside one `run`. */
+const stepStartFor = (messageID: string) =>
+  JSON.stringify({ type: "step_start", part: { type: "step_start", messageID } });
+const stepFinishFor = (messageID: string) =>
+  JSON.stringify({
+    type: "step_finish",
+    part: { type: "step_finish", messageID, tokens: { usage: { input: 120, output: 8192, reasoning: 0, cache: {} } } },
+  });
+const textEventFor = (messageID: string, t: string) =>
+  JSON.stringify({ type: "text", part: { type: "text", messageID, text: t } });
 
 async function startedSession(
   runtime: OpenCodeAgentRuntime,
@@ -480,6 +490,65 @@ describe("execute: successful tasks", () => {
     expect(result.value).toEqual(payload);
     // The JSON format requirement must travel inside the prompt.
     expect(calls[0][1].join(" ")).toContain("JSON");
+  });
+
+  it("recovers the complete JSON when an earlier step was truncated at the output cap", async () => {
+    const child = new FakeChild();
+    const { runtime, calls } = makeRuntime(child);
+    const { session } = await startedSession(runtime);
+
+    const resultPromise = runtime.execute(session, {
+      instruction: "review",
+      output: "json",
+      validate: (v) =>
+        typeof v === "object" && v !== null && "verdict" in v
+          ? { ok: true, value: v }
+          : { ok: false, error: "missing verdict" },
+    });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+
+    const payload = { verdict: "approve", findings: [] };
+    // Real opencode shape when the output cap is hit: step 1 emits a partial
+    // JSON object, step 2 restarts and emits the complete answer. The runtime
+    // used to join both text parts and fail to parse the concatenation.
+    child.writeOut(
+      [
+        stepStartFor("msg_partial"),
+        textEventFor("msg_partial", '{"verdict":"approve","findings":[{"title":"tru'),
+        stepFinishFor("msg_partial"),
+        stepStartFor("msg_complete"),
+        textEventFor("msg_complete", JSON.stringify(payload)),
+        stepFinishFor("msg_complete"),
+      ].join("\n") + "\n",
+    );
+    child.close(0);
+
+    const result = await resultPromise;
+    expect(result.json).toEqual(payload);
+    expect(result.value).toEqual(payload);
+  });
+
+  it("uses the final assistant message for text tasks instead of concatenating steps", async () => {
+    const child = new FakeChild();
+    const { runtime, calls } = makeRuntime(child);
+    const { session } = await startedSession(runtime);
+
+    const resultPromise = runtime.execute(session, { instruction: "summarize", output: "text" });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    child.writeOut(
+      [
+        stepStartFor("msg_first"),
+        textEventFor("msg_first", "I will inspect the diff first."),
+        stepFinishFor("msg_first"),
+        stepStartFor("msg_final"),
+        textEventFor("msg_final", "The change looks fine."),
+        stepFinishFor("msg_final"),
+      ].join("\n") + "\n",
+    );
+    child.close(0);
+
+    const result = await resultPromise;
+    expect(result.text).toBe("The change looks fine.");
   });
 
   it("recovers JSON embedded in surrounding prose", () => {

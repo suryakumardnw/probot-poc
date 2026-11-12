@@ -91,6 +91,7 @@ interface OpenCodeEvent {
   type: string;
   part?: {
     type?: string;
+    messageID?: string;
     text?: string;
     tokens?: {
       usage?: { input?: number; output?: number; reasoning?: number; cache?: unknown };
@@ -745,47 +746,71 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       });
     }
 
-    const text = parsed.text.trim();
-    if (!text) {
+    const hasText = parsed.textMessages.some((message) => message.trim().length > 0);
+    if (!hasText) {
       throw new AgentRuntimeError("invalid_output", "agent produced no output", { sessionId });
     }
 
     const result: AgentResult = {
       sessionId,
-      text,
+      text: parsed.text.trim(),
       usage: parsed.usage,
       durationMs,
     };
 
     if (task.output === "json") {
-      const extracted = extractJson(text);
-      if (extracted === undefined) {
+      // Try the newest assistant message first, then fall back to earlier
+      // steps. This recovers the scenario where a step was cut off at the
+      // output cap and OpenCode immediately ran a second step that produced
+      // the complete answer.
+      const candidates = [...parsed.textMessages].reverse().filter((m) => m.trim().length > 0);
+      let parseFailure: string | undefined;
+      let validationFailure: string | undefined;
+      let chosen: { text: string; value: unknown } | undefined;
+
+      for (const candidate of candidates) {
+        const extracted = extractJson(candidate);
+        if (extracted === undefined) continue;
+        let value: unknown;
+        try {
+          value = JSON.parse(extracted);
+        } catch {
+          parseFailure = extracted;
+          continue;
+        }
+        if (task.validate) {
+          const verdict = task.validate(value);
+          if (!verdict.ok) {
+            validationFailure = verdict.error;
+            continue;
+          }
+          result.value = verdict.value;
+        }
+        chosen = { text: candidate, value };
+        break;
+      }
+
+      if (!chosen) {
+        if (validationFailure !== undefined) {
+          throw new AgentRuntimeError("invalid_output", "agent output failed validation", {
+            sessionId,
+            detail: truncate(validationFailure, MAX_DETAIL_LENGTH),
+          });
+        }
+        if (parseFailure !== undefined) {
+          throw new AgentRuntimeError("invalid_output", "agent JSON output failed to parse", {
+            sessionId,
+            detail: truncate(scrub(parseFailure, this.config)),
+          });
+        }
         throw new AgentRuntimeError(
           "invalid_output",
           "agent output did not contain a JSON object",
-          { sessionId, detail: truncate(scrub(text, this.config)) },
+          { sessionId, detail: truncate(scrub(candidates[0] ?? parsed.text, this.config)) },
         );
       }
-      let value: unknown;
-      try {
-        value = JSON.parse(extracted);
-      } catch {
-        throw new AgentRuntimeError("invalid_output", "agent JSON output failed to parse", {
-          sessionId,
-          detail: truncate(scrub(extracted, this.config)),
-        });
-      }
-      if (task.validate) {
-        const verdict = task.validate(value);
-        if (!verdict.ok) {
-          throw new AgentRuntimeError("invalid_output", "agent output failed validation", {
-            sessionId,
-            detail: truncate(verdict.error, MAX_DETAIL_LENGTH),
-          });
-        }
-        result.value = verdict.value;
-      }
-      result.json = value;
+      result.text = chosen.text.trim();
+      result.json = chosen.value;
     }
 
     this.logger?.info("agent execute finished", {
@@ -814,11 +839,19 @@ function buildPrompt(task: AgentTask): string {
 
 function parseEvents(stdout: string): {
   text: string;
+  /** One entry per assistant message, in stream order (see `interpret`). */
+  textMessages: string[];
   usage: { inputTokens?: number; outputTokens?: number; reasoningTokens?: number } | undefined;
   errorMessages: string[];
   errors: string[];
 } {
-  const textParts: string[] = [];
+  // OpenCode may run MORE than one agent step inside a single `run`: when a
+  // step hits the output-token cap it starts another step, and the model often
+  // restarts its answer from scratch. Text parts therefore belong to distinct
+  // assistant messages and must NOT be concatenated blindly — doing so turns
+  // `{partial}{complete}` into unparseable JSON. Group by messageID and let
+  // `interpret` choose the usable message.
+  const textByMessage = new Map<string, string[]>();
   let usage: { inputTokens?: number; outputTokens?: number; reasoningTokens?: number } | undefined;
   const errorMessages: string[] = [];
   const errors: string[] = [];
@@ -835,7 +868,14 @@ function parseEvents(stdout: string): {
     }
     switch (event.type) {
       case "text":
-        if (typeof event.part?.text === "string") textParts.push(event.part.text);
+        if (typeof event.part?.text === "string") {
+          // Events without a messageID (older runtimes / tests) share one
+          // logical message so streaming chunks still combine.
+          const key = event.part.messageID ?? "__anonymous__";
+          const parts = textByMessage.get(key);
+          if (parts) parts.push(event.part.text);
+          else textByMessage.set(key, [event.part.text]);
+        }
         break;
       case "step_finish": {
         const u = event.part?.tokens?.usage;
@@ -857,7 +897,14 @@ function parseEvents(stdout: string): {
         break; // step_start, tool, … are ignored
     }
   }
-  return { text: textParts.join(""), usage, errorMessages, errors };
+  const textMessages = [...textByMessage.values()].map((parts) => parts.join(""));
+  return {
+    text: textMessages[textMessages.length - 1] ?? "",
+    textMessages,
+    usage,
+    errorMessages,
+    errors,
+  };
 }
 
 /** Map a runtime `type:"error"` event onto a normalized AgentErrorCode. */

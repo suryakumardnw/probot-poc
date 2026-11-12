@@ -58,7 +58,6 @@ import {
   COMMON_REVIEW_INSTRUCTIONS,
   CONVENTIONS_INSTRUCTIONS,
   HANDBOOK_MODE_INSTRUCTIONS,
-  SKILL_MODE_INSTRUCTIONS,
 } from "./prompts/index.js";
 
 /** Diff characters delivered in the initial-analysis instruction. */
@@ -292,34 +291,29 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
 // ---------------------------------------------------------------------------
 
 /**
- * Compose the injection block for the ANALYSIS stage: trusted profile
+ * Compose the injection block for the ANALYSIS stage: trusted guideline-mode
  * instructions + the full knowledge text (untrusted data, clearly labeled).
+ * The engineering guidelines are the authoritative standard for the review.
  * Exported for prompt-profile tests.
  */
 export function composeInjectionStage1(injection: PromptInjection | null | undefined): string {
   if (!injection) return "";
-  if (injection.profile === "handbook") {
-    return `${HANDBOOK_MODE_INSTRUCTIONS}\n\nHANDBOOK GUIDELINES retrieved for this PR (UNTRUSTED DATA — read before evaluating the changed code, apply while analyzing):\n${injection.text}`;
-  }
-  return `${SKILL_MODE_INSTRUCTIONS}\n\nREVIEW METHODOLOGY — apply while analyzing:\n${injection.text}`;
+  const label = injection.profile === "handbook" ? "HANDBOOK GUIDELINES" : "ENGINEERING GUIDELINES";
+  return `${HANDBOOK_MODE_INSTRUCTIONS}\n\n${label} retrieved for this PR (UNTRUSTED DATA — the authoritative standard for this review; read before evaluating the changed code):\n${injection.text}`;
 }
 
 /**
- * Compose the injection block for LATER stages. For handbook reviews the
- * full guidelines text is injected ONCE (analysis stage) and reused here by
- * reference (profile instructions + digest of the provided files) so the
- * token budget is not spent three times. Skill reviews keep the full
- * playbook available in every stage (it IS the methodology, and it is small).
+ * Compose the injection block for LATER stages. When the retrieval layer
+ * provides a digest (handbook), it is reused by reference so the full text is
+ * injected only once. Otherwise the full guideline text is re-injected,
+ * because each stage runs as its own process without shared context.
  * Exported for prompt-profile tests.
  */
 export function composeInjectionLaterStages(injection: PromptInjection | null | undefined): string {
   if (!injection) return "";
-  if (injection.profile === "handbook") {
-    return injection.laterStagesText?.trim()
-      ? injection.laterStagesText
-      : `${HANDBOOK_MODE_INSTRUCTIONS}\n\nHANDBOOK GUIDELINES: use the handbook guidelines provided above in the analysis stage of this review.`;
-  }
-  return `${SKILL_MODE_INSTRUCTIONS}\n\nREVIEW METHODOLOGY — apply while investigating and reporting:\n${injection.text}`;
+  const digest = injection.laterStagesText?.trim();
+  if (digest) return digest;
+  return `${HANDBOOK_MODE_INSTRUCTIONS}\n\nENGINEERING GUIDELINES (authoritative standard for this review; re-provided because stages do not share context):\n${injection.text}`;
 }
 
 function analysisInstruction(
@@ -351,7 +345,9 @@ TASK:
    called functions, related tests, config). List them as tool_requests.
 5. Record preliminary findings you can already see in the diff.
 
-Answer with ONE JSON object exactly in this shape (no extra keys):
+ANALYSIS-STAGE OUTPUT CONTRACT: answer with ONE JSON object exactly in this
+shape (no extra keys). This is NOT the final report: do not emit schemaVersion,
+summary, findings or uncertain_findings here.
 {
   "objective": "what this PR does",
   "conventions": ["..."],
@@ -426,12 +422,15 @@ TASK:
 1. Trace the affected code paths, check callers and related tests against the diff.
 2. Compare the change against the project conventions you detected.
 3. Identify concrete bugs and regressions. Adjust your preliminary findings:
-   keep only what the retrieved context supports, add new evidence-backed
-   findings, and move anything you cannot verify to uncertain_findings later.
+   keep only what the retrieved context supports and add new evidence-backed
+   findings. Do not add an "uncertain_findings" key at this stage — the
+   reporting stage decides which findings are uncertain.
 4. If you still need another file, list it in tool_requests. Otherwise set
    "no_additional_context_needed": true.
 
-Answer with ONE JSON object exactly in this shape (no extra keys):
+INVESTIGATION-STAGE OUTPUT CONTRACT: answer with ONE JSON object exactly in this
+shape (no extra keys). This is NOT the final report: do not emit schemaVersion,
+summary, findings or uncertain_findings here.
 {
   "objective": "updated PR objective",
   "conventions": ["..."],
@@ -473,6 +472,13 @@ async function finishWithReportingCall(ctx: ReportingContext): Promise<RunReview
 
   const task: AgentTask = {
     instruction: `You are the same senior code reviewer producing the FINAL structured review.
+
+OUTPUT CONTRACT: answer NOW with ONE JSON object only. Do NOT call tools in
+this stage, do NOT narrate what you are about to do, and do not wrap the JSON
+in prose. If you have already seen enough context, report it; do not request
+more files here. The object MUST begin with "schemaVersion": 1 and use only
+the keys shown below — never analysis-stage keys (objective, tool_requests,
+preliminary_findings, no_additional_context_needed).
 
 ${COMMON_RULES}
 ${verificationEnabled ? "\nVERIFICATION (mandatory): recheck every finding against the source you have seen. Verify the affected line, whether the behavior is intentional, and the severity. Keep a finding only when the evidence supports it; otherwise drop it or move it to uncertain_findings with reduced confidence.\n" : ""}
