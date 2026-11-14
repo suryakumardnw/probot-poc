@@ -349,28 +349,34 @@ before any deletion or move. Tests only; no production code.
 
 ---
 
-### PR 0.5 — Delete the dead legacy path and unused `effect`
+### PR 0.5 — Delete the dead legacy path; keep the `effect` pin
 
-**Objective and scope:** Remove code that no live path uses and the unused dependency,
-after the baseline is green. Deletion only.
+**Objective and scope:** Remove code that no live path uses, after the baseline is
+green. Deletion only. Keep `effect`: it is a transitive dependency of
+`@opencode/sdk`, not an unused import (ruling 2026-11-15).
 
 **Files / modules affected:**
 - Delete: `src/controllers/pull-request.controller.ts`
 - Delete: `src/services/review.service.ts`
 - Delete: `src/views/review.view.ts`
-- Modify: `package.json`, `package-lock.json`
+- Delete: `src/models/review.ts` (orphaned by the deletions above)
+- Modify: docs that describe the dead path or the `effect` decision
 
 **Implementation steps:**
 - [ ] Confirm with `rg` that `handlePullRequest`, `reviewPullRequest`, and
       `renderReviewComment` have no importers outside the deleted files.
 - [ ] Confirm `src/controllers/issue.controller.ts` and the triage path remain
       live; do not delete them.
-- [ ] Delete the three files. Remove the now-empty `src/views/` directory only
-      if `triage.view.ts` has moved; otherwise leave it.
-- [ ] Confirm `effect` has no imports in `src`, `test`, `scripts`, or config;
-      run `npm uninstall effect`.
+- [ ] Delete the three files, then delete `src/models/review.ts` if it has no
+      importers. Remove the now-empty `src/views/` directory only if
+      `triage.view.ts` has moved; otherwise leave it.
+- [ ] Confirm `effect` has no direct imports in `src`, `test`, `scripts`, or
+      config. Do **not** run `npm uninstall effect`: `@opencode/sdk@2.3.0`
+      depends on `effect@4.1.0`, and the root pin keeps Prisma's
+      `effect@3.21.0` out of its peer slot. `test/deployment-node.test.ts`
+      guards the pin.
 - [ ] Run the full suite and build.
-- [ ] Commit: `refactor: remove dead review path and unused effect dependency`.
+- [ ] Commit: `refactor: remove dead legacy review path`.
 
 **Tests / verification:**
 - [ ] `npm test` passes.
@@ -380,7 +386,9 @@ after the baseline is green. Deletion only.
 
 **Acceptance criteria:**
 - [ ] No live behavior changes.
-- [ ] `effect` is absent from `package.json` and the lockfile.
+- [ ] `effect` stays pinned at `4.1.0` in `package.json`; no direct imports in
+      `src`, `test`, `scripts`, or config. It remains in the lockfile as the
+      SDK's transitive dependency.
 - [ ] The dead path no longer appears in docs that describe the live flow (note
       follow-up in PR 5.1 if needed).
 

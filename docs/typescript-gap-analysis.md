@@ -81,6 +81,11 @@ Status: **red** = non-compliant, **amber** = partial or adaptation needed,
 - Consequence: two architectures in one repo; readers cannot tell which is
   authoritative.
 - Fix: delete the dead path before moving anything else.
+- Status (2026-11-15, PR 0.5): resolved. The controller, service, view, and
+  orphaned `src/models/review.ts` are deleted. `effect` is **kept**, not
+  removed: it has no direct imports, but `@opencode/sdk@2.3.0` depends on
+  `effect@4.1.0` and the root pin prevents Prisma's `effect@3.21.0` from
+  winning peer resolution; `test/deployment-node.test.ts` guards the pin.
 
 ### 3. Persistence is not behind a seam
 

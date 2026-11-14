@@ -46,6 +46,7 @@ an adaptation or deviation is accepted.
 | TanStack Query / Zustand | N/A. Process state is explicit and injected, not a UI store. |
 | “Features” in `apps/web/features` | Vertical modules aligned to capabilities: webhooks, ingestion, review engine, publishing, admin, execution, knowledge. |
 | React components, design tokens, forms | N/A — no frontend. |
+| “Unused dependency must be removed” | `effect` stays pinned at `4.1.0`. It has no direct imports, but `@opencode/sdk@2.3.0` depends on it and the root pin keeps Prisma's `effect@3.21.0` from winning peer resolution. Guarded by `test/deployment-node.test.ts`; ruling 2026-11-15 (PR 0.5). |
 
 ## Compiler strictness
 
@@ -88,8 +89,9 @@ These are tracked in full in the [gap analysis](./typescript-gap-analysis.md).
   `src/ingestion/outbox.ts`; hidden `getPrisma()`/`getRedis()` call sites.
 - 10 test files require real Postgres/Redis; `fileParallelism: false` works
   around shared-database fixtures.
-- Dead legacy path: `src/controllers/pull-request.controller.ts` and
-  `src/services/review.service.ts` are unreferenced by the live ingestion path.
+- Dead legacy review path removed in PR 0.5 (2026-11-15): the controller,
+  service, view, and `src/models/review.ts` are deleted. `effect` is kept as a
+  transitive pin for `@opencode/sdk`, not removed.
 - Large files: `opencode-runtime.ts` 1,200 lines, `opencode-sdk-runtime.ts` 866,
   `admin/api.ts` 820, `admin/panel.ts` 770, `review-engine/engine.ts` 637.
 

@@ -471,7 +471,9 @@ application buildable, testable, and deployable.
 - Capture the quality baseline and per-PR metrics script.
 - Add ESLint, Prettier, scripts, stricter tsconfig, and CI.
 - **Capture characterization tests before deleting or moving anything.**
-- Delete only the verified dead legacy review path; remove unused `effect`.
+- Delete only the verified dead legacy review path. Keep `effect` pinned at the
+  root: it has no direct imports, but `@opencode/sdk` depends on it (ruling
+  2026-11-15, PR 0.5).
 
 **Exit:** CI green; characterization tests green against the current code; dead
 path gone; no behavior change.
@@ -598,8 +600,12 @@ Quality metrics tracked per PR:
    `src/platform/models/`, behind `src/ports/agent-runtime.ts` and
    `src/ports/model-provider.ts`.
 6. **Eval placement:** `src/scripts/eval/`; it is tooling, not a runtime module.
-7. **`effect` dependency:** remove it in Phase 0. It is declared in
-   `package.json` but not imported anywhere in `src` or `test`.
+7. **`effect` dependency:** keep it. It is not imported directly in `src`,
+   `test`, `scripts`, or config, but `@opencode/sdk@2.3.0` depends on
+   `effect@4.1.0`; the root pin keeps npm from resolving Prisma's
+   `effect@3.21.0` into the SDK's peer slot and is guarded by
+   `test/deployment-node.test.ts`. Ruling 2026-11-15 (PR 0.5): do not
+   uninstall it.
 8. **Triage:** keep it as a live module under `src/modules/triage/`; it is not
    part of the dead legacy path.
 9. **Boundary enforcement:** mandatory ESLint boundary rules, not optional.
