@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { PrismaClient } from "@prisma/client";
-import { z } from "zod";
+import type { z } from "zod";
 import type { Env } from "../config/env.js";
 import {
   DEFAULT_CONFIG_PATH,
@@ -18,13 +18,47 @@ import {
   validateRawConfig,
 } from "../config/review-loader.js";
 import {
+  adminErrorEnvelopeSchema,
+  compareQuerySchema,
+  compareReviewsResponseSchema,
+  configDryRunResponseSchema,
+  configReadResponseSchema,
+  configReloadResponseSchema,
+  configRollbackResponseSchema,
+  configUpdateBodySchema,
+  configUpdateResponseSchema,
+  configValidateResponseSchema,
+  loginResponseSchema,
+  logoutResponseSchema,
+  oauthCallbackQuerySchema,
+  reviewListQuerySchema,
+  reviewListResponseSchema,
+  reviewStatusResponseSchema,
+  reviewTriggerResponseSchema,
+  sessionResponseSchema,
+  triggerReviewBodySchema,
+  type AdminErrorEnvelope,
+} from "../contracts/admin.js";
+import { ERROR_CODES } from "../contracts/errors.js";
+import {
   getReviewStatus,
   ingestManualReview,
   ManualIngestionError,
-  REVIEW_TYPES,
   type ReviewTypeValue,
 } from "../ingestion/orchestrator.js";
 import { summarizeKnowledgeMetrics, summarizeKnowledgeSnapshot } from "../knowledge/index.js";
+import { toErrorLogPayload, toHttpEnvelope } from "../platform/http/error-mapper.js";
+import {
+  AppError,
+  AuthError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  RateLimitError,
+  ValidationError,
+  redactDetails,
+  redactSecrets,
+} from "../shared/errors/index.js";
 import { recordAuditLog, type AuditAction } from "./audit.js";
 import {
   buildAuthorizeUrl,
@@ -78,13 +112,65 @@ export function isAdminConfigured(env: Env): boolean {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+function sendJson<T>(
+  res: ServerResponse,
+  status: number,
+  schema: z.ZodType<T>,
+  body: T,
+  headers: Record<string, string> = {},
+): void {
+  // Parse before writing anything: a response that violates its own contract
+  // must fail the request (and map to the internal envelope) instead of
+  // leaking an unvalidated shape.
+  const payload = schema.parse(body);
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   for (const [name, value] of Object.entries(headers)) {
     res.setHeader(name, value);
   }
-  res.end(JSON.stringify(body));
+  res.end(JSON.stringify(payload));
+}
+
+/** Map any error through the shared HTTP projection and send the envelope. */
+function sendError(res: ServerResponse, error: unknown, headers: Record<string, string> = {}): void {
+  const envelope = toHttpEnvelope(error);
+  sendJson(res, envelope.statusCode, adminErrorEnvelopeSchema, envelope.body, headers);
+}
+
+/**
+ * A known operational 5xx that must keep its status. The shared mapper
+ * intentionally collapses caller-authored 5xx text to a generic 500, so these
+ * few envelopes are built from literal, developer-authored messages only.
+ */
+function sendOperationalError(
+  res: ServerResponse,
+  statusCode: number,
+  code: string,
+  message: string,
+  details?: AdminErrorEnvelope["details"],
+): void {
+  const body = adminErrorEnvelopeSchema.parse({
+    code: redactSecrets(code),
+    message: redactSecrets(message),
+    statusCode,
+    ...(details === undefined ? {} : { details: redactDetails(details) }),
+  });
+  sendJson(res, statusCode, adminErrorEnvelopeSchema, body);
+}
+
+/** Turn a boundary Zod failure into the standard 400 envelope. */
+function sendValidationFailure(res: ServerResponse, error: z.ZodError): void {
+  sendError(
+    res,
+    new ValidationError("invalid request", {
+      code: ERROR_CODES.ADMIN_INVALID_REQUEST,
+      details: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
+    }),
+  );
+}
+
+function parseQuery<T>(schema: z.ZodType<T>, url: URL) {
+  return schema.safeParse(Object.fromEntries(url.searchParams));
 }
 
 async function readJsonBody(req: IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
@@ -217,14 +303,6 @@ export function authorizeAdmin(
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-// Review types (§4.1): body schema for POST /api/admin/reviews/trigger.
-const triggerReviewBodySchema = z.object({
-  repository: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "must be 'owner/repo'"),
-  pullRequestNumber: z.number().int().min(1).max(1_000_000),
-  /** Which review methodology runs; defaults to github.defaultReviewType. */
-  reviewType: z.enum(REVIEW_TYPES).optional(),
-});
-
 function headerValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -278,12 +356,15 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     res.setHeader("X-RateLimit-Remaining", String(limit.remaining));
     if (!limit.allowed) {
       res.setHeader("Retry-After", String(limit.retryAfterSeconds));
-      sendJson(res, 429, { error: "rate limit exceeded", retryAfterSeconds: limit.retryAfterSeconds });
+      sendError(
+        res,
+        new RateLimitError("rate limit exceeded", { details: { retryAfterSeconds: limit.retryAfterSeconds } }),
+      );
       return true;
     }
 
     if (!configured) {
-      sendJson(res, 503, { error: "admin API is not configured" });
+      sendOperationalError(res, 503, ERROR_CODES.ADMIN_NOT_CONFIGURED, "admin API is not configured");
       return true;
     }
 
@@ -291,25 +372,36 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       await route(ctx);
     } catch (error) {
       if (error instanceof BodyTooLargeError) {
-        sendJson(res, 413, { error: "request body too large" });
+        sendError(
+          res,
+          new AppError("request body too large", {
+            code: ERROR_CODES.ADMIN_BODY_TOO_LARGE,
+            statusCode: 413,
+          }),
+        );
         return true;
       }
       if (error instanceof InvalidBodyError) {
-        sendJson(res, 400, { error: "request body must be JSON" });
+        sendError(res, new ValidationError("request body must be JSON", { code: ERROR_CODES.ADMIN_INVALID_BODY }));
         return true;
       }
       if (error instanceof GithubOauthError) {
         // GitHub's own error descriptions are safe to surface; they never
         // include the client secret.
-        sendJson(res, 502, { error: "github oauth failure", code: error.code, description: error.message });
+        sendOperationalError(res, 502, ERROR_CODES.GITHUB_OAUTH_FAILED, "github oauth failure", {
+          providerCode: error.code,
+          description: error.message,
+        });
         return true;
       }
       if (error instanceof ConfigValidationError) {
-        sendJson(res, 400, { error: error.message });
+        sendError(res, new ValidationError(error.message, { code: ERROR_CODES.CONFIG_INVALID }));
         return true;
       }
-      deps.logger.error({ err: (error as Error).stack ?? String(error) }, "Admin API request failed");
-      sendJson(res, 500, { error: "internal admin error" });
+      // Never log unknown error text or stacks: they can carry SQL, secrets, or
+      // filesystem paths. The shared log projection keeps code/status only.
+      deps.logger.error(toErrorLogPayload(error, "http"), "Admin API request failed");
+      sendError(res, error);
     }
     return true;
   };
@@ -351,25 +443,25 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
 
     if (req.method === "POST" && path === "/api/admin/auth/logout") {
       if (!session) {
-        sendJson(res, 401, { error: "authentication required" });
+        sendError(res, new AuthError("authentication required"));
         return;
       }
       if (!verifyCsrfToken(session, headerValue(req.headers[CSRF_HEADER]))) {
-        sendJson(res, 403, { error: "csrf validation failed" });
+        sendError(res, new ForbiddenError("csrf validation failed", { code: ERROR_CODES.ADMIN_CSRF_FAILED }));
         return;
       }
       destroySession(session.id);
       await audit(session.login, "admin.logout", "admin_session", {});
-      sendJson(res, 200, { ok: true }, { "Set-Cookie": buildClearCookieHeader(env) });
+      sendJson(res, 200, logoutResponseSchema, { ok: true }, { "Set-Cookie": buildClearCookieHeader(env) });
       return;
     }
 
     if (req.method === "GET" && path === "/api/admin/session") {
       if (!session) {
-        sendJson(res, 401, { error: "authentication required" });
+        sendError(res, new AuthError("authentication required"));
         return;
       }
-      sendJson(res, 200, {
+      sendJson(res, 200, sessionResponseSchema, {
         authenticated: true,
         user: { login: session.login, id: session.githubUserId },
         rolePolicy: session.rolePolicy,
@@ -380,14 +472,14 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     }
 
     if (!session) {
-      sendJson(res, 401, { error: "authentication required" });
+      sendError(res, new AuthError("authentication required"));
       return;
     }
 
     // --- CSRF protection on every unsafe method (§14.2) --------------------
 
     if (UNSAFE_METHODS.has(req.method ?? "") && !verifyCsrfToken(session, headerValue(req.headers[CSRF_HEADER]))) {
-      sendJson(res, 403, { error: "csrf validation failed" });
+      sendError(res, new ForbiddenError("csrf validation failed", { code: ERROR_CODES.ADMIN_CSRF_FAILED }));
       return;
     }
 
@@ -443,12 +535,13 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     }
 
     const reviewMatch = /^\/api\/admin\/reviews\/([A-Za-z0-9_-]+)$/.exec(path);
-    if (req.method === "GET" && reviewMatch) {
-      await handleReviewDetail(res, reviewMatch[1]!);
+    const reviewId = reviewMatch?.[1];
+    if (req.method === "GET" && reviewId !== undefined) {
+      await handleReviewDetail(res, reviewId);
       return;
     }
 
-    sendJson(res, 404, { error: "not found" });
+    sendError(res, new NotFoundError("not found", { code: ERROR_CODES.ADMIN_ROUTE_NOT_FOUND }));
   }
 
   // -------------------------------------------------------------------------
@@ -456,17 +549,18 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
   // -------------------------------------------------------------------------
 
   async function handleOAuthCallback(ctx: AdminRequestContext): Promise<void> {
-    const { res, url } = ctx;
-    const code = url.searchParams.get("code");
-    const state = url.searchParams.get("state");
+    const { res } = ctx;
+    const query = parseQuery(oauthCallbackQuerySchema, ctx.url);
+    const code = query.success ? query.data.code : undefined;
+    const state = query.success ? query.data.state : undefined;
 
-    if (!consumeOauthState(state, now())) {
+    if (!consumeOauthState(state ?? null, now())) {
       await audit("anonymous", "admin.login_denied", "admin_session", { reason: "invalid or expired oauth state" });
-      sendJson(res, 400, { error: "invalid or expired oauth state" });
+      sendError(res, new ValidationError("invalid or expired oauth state"));
       return;
     }
     if (!code) {
-      sendJson(res, 400, { error: "missing oauth code" });
+      sendError(res, new ValidationError("missing oauth code"));
       return;
     }
 
@@ -480,7 +574,13 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         reason: decision.reason,
         rolePolicy: decision.rolePolicy,
       });
-      sendJson(res, 403, { error: "admin access denied", reason: decision.reason });
+      sendError(
+        res,
+        new ForbiddenError("admin access denied", {
+          code: ERROR_CODES.ADMIN_ACCESS_DENIED,
+          details: { reason: decision.reason },
+        }),
+      );
       return;
     }
 
@@ -493,6 +593,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     sendJson(
       res,
       200,
+      loginResponseSchema,
       {
         authenticated: true,
         user: { login: user.login, id: user.id },
@@ -509,7 +610,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
 
   async function handleReadConfig(ctx: AdminRequestContext): Promise<void> {
     const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
-    sendJson(ctx.res, 200, {
+    sendJson(ctx.res, 200, configReadResponseSchema, {
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
       schemaVersion: loaded.snapshot.schemaVersion,
@@ -518,12 +619,17 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
   }
 
   async function handleValidateConfig(ctx: AdminRequestContext): Promise<void> {
-    const candidate = await readJsonBody(ctx.req);
+    const parsed = configUpdateBodySchema.safeParse(await readJsonBody(ctx.req));
+    if (!parsed.success) {
+      sendValidationFailure(ctx.res, parsed.error);
+      return;
+    }
+    const candidate = parsed.data;
     try {
       checkForEmbeddedSecrets(candidate);
       const resolved = resolveEnvReferences(candidate, processEnv);
       const config = validateRawConfig(resolved);
-      sendJson(ctx.res, 200, {
+      sendJson(ctx.res, 200, configValidateResponseSchema, {
         valid: true,
         hash: createConfigurationSnapshot(config).hash,
         configuration: redactConfiguration(config),
@@ -531,7 +637,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         // Zod/embedded-secret messages name property paths, never secret values.
-        sendJson(ctx.res, 200, { valid: false, error: error.message });
+        sendJson(ctx.res, 200, configValidateResponseSchema, { valid: false, error: error.message });
         return;
       }
       throw error;
@@ -539,13 +645,18 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
   }
 
   async function handleDryRunConfig(ctx: AdminRequestContext): Promise<void> {
-    const candidate = await readJsonBody(ctx.req);
+    const parsed = configUpdateBodySchema.safeParse(await readJsonBody(ctx.req));
+    if (!parsed.success) {
+      sendValidationFailure(ctx.res, parsed.error);
+      return;
+    }
+    const candidate = parsed.data;
     try {
       checkForEmbeddedSecrets(candidate);
       const resolved = resolveEnvReferences(candidate, processEnv);
       const config = validateRawConfig(resolved);
       const snapshot = createConfigurationSnapshot(config);
-      sendJson(ctx.res, 200, {
+      sendJson(ctx.res, 200, configDryRunResponseSchema, {
         valid: true,
         hash: snapshot.hash,
         schemaVersion: snapshot.schemaVersion,
@@ -554,7 +665,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       });
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        sendJson(ctx.res, 200, { valid: false, applied: false, error: error.message });
+        sendJson(ctx.res, 200, configDryRunResponseSchema, { valid: false, applied: false, error: error.message });
         return;
       }
       throw error;
@@ -562,7 +673,12 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
   }
 
   async function handleUpdateConfig(ctx: AdminRequestContext, session: AdminSession): Promise<void> {
-    const candidate = await readJsonBody(ctx.req);
+    const parsed = configUpdateBodySchema.safeParse(await readJsonBody(ctx.req));
+    if (!parsed.success) {
+      sendValidationFailure(ctx.res, parsed.error);
+      return;
+    }
+    const candidate = parsed.data;
     try {
       const result = updateReviewConfig(configPath, candidate, { env: processEnv });
       const resource = "configuration";
@@ -571,7 +687,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         nextHash: result.next.snapshot.hash,
         nextCapturedAt: result.next.snapshot.capturedAt,
       });
-      sendJson(ctx.res, 200, {
+      sendJson(ctx.res, 200, configUpdateResponseSchema, {
         updated: true,
         previousHash: result.previous.snapshot.hash,
         hash: result.next.snapshot.hash,
@@ -582,7 +698,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         // Atomic guarantee: updateReviewConfig validated BEFORE any write, so
         // review.json and the last-known-good snapshot are untouched here.
         await audit(session.login, "config.update_rejected", "configuration", { reason: "validation failed" });
-        sendJson(ctx.res, 400, { updated: false, error: error.message });
+        sendError(ctx.res, new ValidationError(error.message, { code: ERROR_CODES.CONFIG_INVALID }));
         return;
       }
       throw error;
@@ -602,7 +718,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
     });
-    sendJson(ctx.res, 200, {
+    sendJson(ctx.res, 200, configReloadResponseSchema, {
       reloaded: true,
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
@@ -616,7 +732,12 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       JSON.parse(readFileSync(lkgPath, "utf8")); // existence probe only
     } catch {
       await audit(session.login, "config.rollback_failed", "configuration", { reason: "no last-known-good snapshot" });
-      sendJson(ctx.res, 409, { error: "no last-known-good configuration available" });
+      sendError(
+        ctx.res,
+        new ConflictError("no last-known-good configuration available", {
+          code: ERROR_CODES.CONFIG_ROLLBACK_UNAVAILABLE,
+        }),
+      );
       return;
     }
     try {
@@ -627,7 +748,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       await audit(session.login, "config.rollback", "configuration", {
         restoredHash: restored.snapshot.hash,
       });
-      sendJson(ctx.res, 200, {
+      sendJson(ctx.res, 200, configRollbackResponseSchema, {
         rolledBack: true,
         hash: restored.snapshot.hash,
         configuration: redactConfiguration(restored.config),
@@ -637,7 +758,12 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         await audit(session.login, "config.rollback_failed", "configuration", {
           reason: "last-known-good snapshot failed validation",
         });
-        sendJson(ctx.res, 409, { error: "last-known-good snapshot failed validation" });
+        sendError(
+          ctx.res,
+          new ConflictError("last-known-good snapshot failed validation", {
+            code: ERROR_CODES.CONFIG_ROLLBACK_INVALID,
+          }),
+        );
         return;
       }
       throw error;
@@ -649,13 +775,15 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
   // -------------------------------------------------------------------------
 
   async function handleListReviews(ctx: AdminRequestContext): Promise<void> {
-    const state = ctx.url.searchParams.get("state");
-    const limitRaw = Number(ctx.url.searchParams.get("limit") ?? "20");
-    const offsetRaw = Number(ctx.url.searchParams.get("offset") ?? "0");
-    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 100) : 20;
-    const offset = Number.isFinite(offsetRaw) ? Math.max(Math.trunc(offsetRaw), 0) : 0;
+    const query = parseQuery(reviewListQuerySchema, ctx.url);
+    if (!query.success) {
+      sendValidationFailure(ctx.res, query.error);
+      return;
+    }
+    const limit = query.data.limit ?? 20;
+    const offset = query.data.offset ?? 0;
+    const where = query.data.state === undefined ? {} : { state: query.data.state };
 
-    const where = state ? { state: state as never } : {};
     const [rows, total] = await Promise.all([
       deps.prisma.review.findMany({
         where,
@@ -667,7 +795,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       deps.prisma.review.count({ where }),
     ]);
 
-    sendJson(ctx.res, 200, {
+    sendJson(ctx.res, 200, reviewListResponseSchema, {
       total,
       limit,
       offset,
@@ -682,10 +810,10 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         trigger: row.trigger,
         provider: row.provider,
         model: row.model,
-        startedAt: row.startedAt,
-        completedAt: row.completedAt,
+        startedAt: row.startedAt?.toISOString() ?? null,
+        completedAt: row.completedAt?.toISOString() ?? null,
         errorCode: row.errorCode,
-        createdAt: row.createdAt,
+        createdAt: row.createdAt.toISOString(),
       })),
     });
   }
@@ -693,10 +821,22 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
   async function handleReviewDetail(res: ServerResponse, reviewId: string): Promise<void> {
     const report = await getReviewStatus(reviewId);
     if (!report) {
-      sendJson(res, 404, { error: "review not found" });
+      sendError(res, new NotFoundError("review not found", { code: ERROR_CODES.REVIEW_NOT_FOUND }));
       return;
     }
-    sendJson(res, 200, report);
+    sendJson(res, 200, reviewStatusResponseSchema, {
+      review: {
+        ...report.review,
+        createdAt: report.review.createdAt.toISOString(),
+        completedAt: report.review.completedAt?.toISOString() ?? null,
+      },
+      job: report.job,
+      transitions: report.transitions.map((transition) => ({
+        fromState: transition.fromState,
+        toState: transition.toState,
+        at: transition.at.toISOString(),
+      })),
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -705,13 +845,9 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
 
   /** POST /api/admin/reviews/trigger — manual ingestion for one review type. */
   async function handleTriggerReview(ctx: AdminRequestContext, session: AdminSession): Promise<void> {
-    const body = await readJsonBody(ctx.req);
-    const parsed = triggerReviewBodySchema.safeParse(body);
+    const parsed = triggerReviewBodySchema.safeParse(await readJsonBody(ctx.req));
     if (!parsed.success) {
-      sendJson(ctx.res, 400, {
-        error: "invalid request",
-        details: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
-      });
+      sendValidationFailure(ctx.res, parsed.error);
       return;
     }
     // Respect the configured default when no type is supplied, and refuse
@@ -722,7 +858,10 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       reviewType = parsed.data.reviewType ?? config.github.defaultReviewType;
       const settings = config.review.types[reviewType];
       if (settings && settings.enabled === false) {
-        sendJson(ctx.res, 409, { error: `review type '${reviewType}' is disabled` });
+        sendError(
+          ctx.res,
+          new ConflictError(`review type '${reviewType}' is disabled`, { code: ERROR_CODES.REVIEW_TYPE_DISABLED }),
+        );
         return;
       }
     } catch (error) {
@@ -741,10 +880,13 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         outcome: result.outcome,
         reviewId: result.reviewId,
       });
-      sendJson(ctx.res, result.outcome === "created" ? 202 : 200, { ...result, reviewType });
+      sendJson(ctx.res, result.outcome === "created" ? 202 : 200, reviewTriggerResponseSchema, {
+        ...result,
+        reviewType,
+      });
     } catch (error) {
       if (error instanceof ManualIngestionError) {
-        sendJson(ctx.res, 404, { error: error.message });
+        sendError(ctx.res, new NotFoundError(error.message, { code: ERROR_CODES.REVIEW_TARGET_NOT_FOUND }));
         return;
       }
       throw error;
@@ -761,23 +903,34 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
    * the run predates token persistence).
    */
   async function handleCompareReviews(ctx: AdminRequestContext): Promise<void> {
-    const repositoryName = ctx.url.searchParams.get("repository");
-    const prRaw = Number(ctx.url.searchParams.get("pr"));
-    if (!repositoryName || !/^[^/\s]+\/[^/\s]+$/.test(repositoryName) || !Number.isInteger(prRaw) || prRaw < 1) {
-      sendJson(ctx.res, 400, { error: "repository ('owner/repo') and pr (integer) query parameters are required" });
+    const query = parseQuery(compareQuerySchema, ctx.url);
+    if (!query.success) {
+      sendValidationFailure(ctx.res, query.error);
       return;
     }
+    const repositoryName = query.data.repository;
+    const prRaw = query.data.pr;
 
     const repository = await deps.prisma.repository.findUnique({ where: { fullName: repositoryName } });
     if (!repository) {
-      sendJson(ctx.res, 404, { error: `repository '${repositoryName}' is not registered` });
+      sendError(
+        ctx.res,
+        new NotFoundError(`repository '${repositoryName}' is not registered`, {
+          code: ERROR_CODES.REPOSITORY_NOT_FOUND,
+        }),
+      );
       return;
     }
     const pullRequest = await deps.prisma.pullRequest.findUnique({
       where: { repositoryId_githubPrNumber: { repositoryId: repository.id, githubPrNumber: prRaw } },
     });
     if (!pullRequest) {
-      sendJson(ctx.res, 404, { error: `pull request #${prRaw} not found on '${repositoryName}'` });
+      sendError(
+        ctx.res,
+        new NotFoundError(`pull request #${prRaw} not found on '${repositoryName}'`, {
+          code: ERROR_CODES.PULL_REQUEST_NOT_FOUND,
+        }),
+      );
       return;
     }
 
@@ -838,9 +991,9 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         attempt: review.attempt,
         trigger: review.trigger,
         headSha: review.headSha,
-        createdAt: review.createdAt,
-        startedAt: review.startedAt,
-        completedAt,
+        createdAt: review.createdAt.toISOString(),
+        startedAt: review.startedAt?.toISOString() ?? null,
+        completedAt: completedAt?.toISOString() ?? null,
         durationMs,
         publishSkipped: review.publishSkipped,
         findingCount: review.findings.length,
@@ -861,7 +1014,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       };
     });
 
-    sendJson(ctx.res, 200, {
+    sendJson(ctx.res, 200, compareReviewsResponseSchema, {
       repository: repositoryName,
       pullRequestNumber: prRaw,
       headShas: [...new Set(reviews.map((r) => r.headSha))],

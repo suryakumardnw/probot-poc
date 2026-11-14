@@ -19,6 +19,7 @@ import {
   validateRawConfig,
 } from "../config/review-loader.js";
 import type { ReviewConfig } from "../config/review-schema.js";
+import { toErrorLogPayload } from "../platform/http/error-mapper.js";
 import { isAdminConfigured } from "./api.js";
 import { recordAuditLog, type AuditAction } from "./audit.js";
 import {
@@ -498,7 +499,9 @@ export function createAdminPanel(
     try {
       await dispatch(req, res, url, path, session);
     } catch (error) {
-      deps.logger.error({ err: (error as Error).stack ?? String(error) }, "Admin panel request failed");
+      // Panel failures stay HTML, but the log projection still suppresses
+      // stacks, SQL, paths, and caller-controlled 5xx text.
+      deps.logger.error(toErrorLogPayload(error, "http"), "Admin panel request failed");
       messagePage(res, 500, "Internal error", "The admin panel could not complete the request.", "error", session);
     }
     return true;

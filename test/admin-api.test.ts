@@ -9,6 +9,8 @@ import { clearRateLimitBuckets } from "../src/admin/rate-limit.js";
 import { clearSessions } from "../src/admin/session.js";
 import { loadEnv, type Env } from "../src/config/env.js";
 import { DEFAULT_CONFIG_PATH } from "../src/config/review-loader.js";
+import { ADMIN_REVIEW_STATES, adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../src/contracts/admin.js";
+import { REVIEW_STATES } from "../src/ingestion/review-state.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { disconnectRedis } from "../src/lib/redis.js";
 
@@ -63,9 +65,14 @@ interface MockResponse {
 function mockRequest(
   method: string,
   url: string,
-  options: { headers?: Record<string, string>; body?: unknown } = {},
+  options: { headers?: Record<string, string>; body?: unknown; rawBody?: string } = {},
 ): IncomingMessage {
-  const chunks = options.body === undefined ? [] : [Buffer.from(JSON.stringify(options.body))];
+  const chunks =
+    options.rawBody !== undefined
+      ? [Buffer.from(options.rawBody)]
+      : options.body === undefined
+        ? []
+        : [Buffer.from(JSON.stringify(options.body))];
   const req = {
     method,
     url,
@@ -198,7 +205,7 @@ async function callAdmin(
   handler: ReturnType<typeof makeHandler>["handler"],
   method: string,
   url: string,
-  options: { headers?: Record<string, string>; body?: unknown } = {},
+  options: { headers?: Record<string, string>; body?: unknown; rawBody?: string } = {},
 ): Promise<MockResponse> {
   const { res, result } = mockResponse();
   await handler(mockRequest(method, url, options), res);
@@ -219,6 +226,18 @@ async function login(handler: ReturnType<typeof makeHandler>["handler"]): Promis
 /** Authenticated request helper. */
 function authedHeaders(session: { cookie: string; csrfToken: string }, extra: Record<string, string> = {}) {
   return { cookie: session.cookie, "x-csrf-token": session.csrfToken, ...extra };
+}
+
+/** Assert the one admin error envelope and return its parsed body. */
+function expectEnvelope(body: string, code: string, statusCode: number): AdminErrorEnvelope {
+  const parsed = adminErrorEnvelopeSchema.parse(JSON.parse(body));
+  expect(parsed.code).toBe(code);
+  expect(parsed.statusCode).toBe(statusCode);
+  expect(parsed.message.length).toBeGreaterThan(0);
+  expect(parsed).not.toHaveProperty("error");
+  expect(parsed).not.toHaveProperty("stack");
+  expect(Object.keys(parsed).every((key) => ["code", "message", "statusCode", "details"].includes(key))).toBe(true);
+  return parsed;
 }
 
 // Suite ----------------------------------------------------------------------------
@@ -254,7 +273,8 @@ describe("admin api (ticket 10)", () => {
     const { handler: bare } = makeHandler(UNCONFIGURED_ENV, path.join(configDir, "review.json"));
     const result = await callAdmin(bare, "GET", "/api/admin/config");
     expect(result.statusCode).toBe(503);
-    expect(JSON.parse(result.body).error).toMatch(/not configured/);
+    const envelope = expectEnvelope(result.body, "ADMIN_NOT_CONFIGURED", 503);
+    expect(envelope.message).toMatch(/not configured/);
     const nonAdmin = await callAdmin(bare, "GET", "/api/reviews");
     expect(nonAdmin.statusCode).toBe(0); // fell through (not handled)
   });
@@ -322,7 +342,8 @@ describe("admin api (ticket 10)", () => {
     githubUsers = { login: "outsider", membership: null };
     const outsider = await login(allowlistHandler);
     expect(outsider.statusCode).toBe(403);
-    expect(JSON.parse(outsider.body).reason).toMatch(/not an organization member/);
+    const outsiderEnvelope = expectEnvelope(outsider.body, "ADMIN_ACCESS_DENIED", 403);
+    expect(outsiderEnvelope.details).toMatchObject({ reason: expect.stringMatching(/not an organization member/) });
 
     const denied = await prisma.auditLog.findMany({ where: { action: "admin.login_denied" } });
     expect(denied.length).toBe(2);
@@ -332,12 +353,14 @@ describe("admin api (ticket 10)", () => {
     githubUsers = { login: "octoadmin", membership: { role: "admin", state: "pending" } };
     const result = await login(handler);
     expect(result.statusCode).toBe(403);
-    expect(JSON.parse(result.body).reason).toMatch(/pending/);
+    const envelope = expectEnvelope(result.body, "ADMIN_ACCESS_DENIED", 403);
+    expect(envelope.details).toMatchObject({ reason: expect.stringMatching(/pending/) });
   });
 
   test("invalid / expired / replayed OAuth state is rejected", async () => {
     const bad = await callAdmin(handler, "GET", "/api/admin/auth/github/callback?code=x&state=forged-state");
     expect(bad.statusCode).toBe(400);
+    expectEnvelope(bad.body, "VALIDATION_ERROR", 400);
 
     // Replayed: the same state can only be consumed once.
     githubUsers = { login: "octoadmin", membership: { role: "admin", state: "active" } };
@@ -347,6 +370,7 @@ describe("admin api (ticket 10)", () => {
     expect(first.statusCode).toBe(200);
     const replay = await callAdmin(handler, "GET", `/api/admin/auth/github/callback?code=c&state=${state}`);
     expect(replay.statusCode).toBe(400);
+    expectEnvelope(replay.body, "VALIDATION_ERROR", 400);
   });
 
   test("token exchange failure maps to 502 and never leaks the client secret", async () => {
@@ -354,7 +378,11 @@ describe("admin api (ticket 10)", () => {
     githubUsers = { login: "octoadmin", membership: { role: "admin", state: "active" } };
     const result = await login(handler);
     expect(result.statusCode).toBe(502);
-    expect(result.body).toMatch(/incorrect or expired/);
+    const envelope = expectEnvelope(result.body, "GITHUB_OAUTH_FAILED", 502);
+    expect(envelope.details).toMatchObject({
+      providerCode: "bad_verification_code",
+      description: expect.stringMatching(/incorrect or expired/),
+    });
     expect(result.body).not.toContain("test-client-secret");
   });
 
@@ -374,6 +402,7 @@ describe("admin api (ticket 10)", () => {
     clearSessions();
     const after = await callAdmin(shortHandler, "GET", "/api/admin/session", { headers: { cookie: session.cookie } });
     expect(after.statusCode).toBe(401);
+    expectEnvelope(after.body, "UNAUTHORIZED", 401);
   });
 
   test("forged session cookie (bad HMAC signature) is rejected", async () => {
@@ -383,6 +412,7 @@ describe("admin api (ticket 10)", () => {
       headers: { cookie: `admin_session=${forged}` },
     });
     expect(result.statusCode).toBe(401);
+    expectEnvelope(result.body, "UNAUTHORIZED", 401);
   });
 
   test("CSRF attempt on unsafe method is rejected with 403", async () => {
@@ -394,12 +424,47 @@ describe("admin api (ticket 10)", () => {
       headers: { cookie: session.cookie },
     });
     expect(noHeader.statusCode).toBe(403);
+    expectEnvelope(noHeader.body, "ADMIN_CSRF_FAILED", 403);
 
     const wrongHeader = await callAdmin(handler, "PUT", "/api/admin/config", {
       headers: authedHeaders(session, { "x-csrf-token": "wrong-token" }),
       body: {},
     });
     expect(wrongHeader.statusCode).toBe(403);
+    expectEnvelope(wrongHeader.body, "ADMIN_CSRF_FAILED", 403);
+  });
+
+  test("body and route boundary failures use the error envelope", async () => {
+    githubUsers = { login: "octoadmin", membership: { role: "admin", state: "active" } };
+    const login1 = await login(handler);
+    const session = csrfCookiePair(login1);
+
+    const malformedJson = await callAdmin(handler, "POST", "/api/admin/config/validate", {
+      headers: authedHeaders(session),
+      rawBody: "{ not json",
+    });
+    expect(malformedJson.statusCode).toBe(400);
+    expectEnvelope(malformedJson.body, "ADMIN_INVALID_BODY", 400);
+
+    const tooLarge = await callAdmin(handler, "POST", "/api/admin/config/validate", {
+      headers: authedHeaders(session),
+      rawBody: `{"padding":"${"a".repeat(65 * 1024)}"}`,
+    });
+    expect(tooLarge.statusCode).toBe(413);
+    expectEnvelope(tooLarge.body, "ADMIN_BODY_TOO_LARGE", 413);
+
+    const unknownRoute = await callAdmin(handler, "GET", "/api/admin/not-a-route", {
+      headers: { cookie: session.cookie },
+    });
+    expect(unknownRoute.statusCode).toBe(404);
+    expectEnvelope(unknownRoute.body, "ADMIN_ROUTE_NOT_FOUND", 404);
+
+    const nonObjectConfig = await callAdmin(handler, "POST", "/api/admin/config/validate", {
+      headers: authedHeaders(session),
+      body: [],
+    });
+    expect(nonObjectConfig.statusCode).toBe(400);
+    expectEnvelope(nonObjectConfig.body, "ADMIN_INVALID_REQUEST", 400);
   });
 
   test("GET config redacts secret-like values", async () => {
@@ -436,7 +501,9 @@ describe("admin api (ticket 10)", () => {
       body: { schemaVersion: 1, review: { confidence: { minimumInline: "not-a-number" } } },
     });
     expect(bad.statusCode).toBe(400);
-    expect(JSON.parse(bad.body).updated).toBe(false);
+    const rejectedEnvelope = expectEnvelope(bad.body, "CONFIG_INVALID", 400);
+    expect(rejectedEnvelope.message).toMatch(/Invalid review configuration/);
+    expect(bad.body).not.toContain("not-a-number");
 
     const after = fs.readFileSync(path.join(configDir, "review.json"), "utf8");
     expect(after).toBe(before); // atomic: file untouched
@@ -523,6 +590,7 @@ describe("admin api (ticket 10)", () => {
 
     const none = await callAdmin(handler, "POST", "/api/admin/config/rollback", { headers: authedHeaders(session) });
     expect(none.statusCode).toBe(409);
+    expectEnvelope(none.body, "CONFIG_ROLLBACK_UNAVAILABLE", 409);
 
     // Seed LKG via a valid PUT (which also writes LKG), then change review.json,
     // then roll back.
@@ -548,6 +616,7 @@ describe("admin api (ticket 10)", () => {
     expect(cookieOf(out)).toMatch(/Max-Age=0/);
     const after = await callAdmin(handler, "GET", "/api/admin/session", { headers: { cookie: session.cookie } });
     expect(after.statusCode).toBe(401);
+    expectEnvelope(after.body, "UNAUTHORIZED", 401);
   });
 
   test("rate limiting returns 429 with Retry-After", async () => {
@@ -557,10 +626,16 @@ describe("admin api (ticket 10)", () => {
     for (let i = 0; i < 5; i += 1) {
       responses.push(await callAdmin(tight, "GET", "/api/admin/session"));
     }
-    expect(responses[0]!.statusCode).toBe(401); // unauthenticated but counted
-    expect(responses[3]!.statusCode).toBe(429);
-    expect(responses[3]!.headers["retry-after"]).toBeTruthy();
-    expect(responses[3]!.headers["x-ratelimit-limit"]).toBe("3");
+    expect(responses[0]?.statusCode).toBe(401); // unauthenticated but counted
+    const limited = responses[3];
+    if (!limited) {
+      throw new Error("expected the fourth request to be rate-limited");
+    }
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBeTruthy();
+    expect(limited.headers["x-ratelimit-limit"]).toBe("3");
+    const envelope = expectEnvelope(limited.body, "RATE_LIMITED", 429);
+    expect(envelope.details).toMatchObject({ retryAfterSeconds: expect.any(Number) });
   });
 
   test("reviews list + detail endpoints", async () => {
@@ -608,12 +683,32 @@ describe("admin api (ticket 10)", () => {
         headers: { cookie: session.cookie },
       });
       expect(missing.statusCode).toBe(404);
+      expectEnvelope(missing.body, "REVIEW_NOT_FOUND", 404);
+
+      const invalidState = await callAdmin(handler, "GET", "/api/admin/reviews?state=unfinished", {
+        headers: { cookie: session.cookie },
+      });
+      expect(invalidState.statusCode).toBe(400);
+      const invalidStateEnvelope = expectEnvelope(invalidState.body, "ADMIN_INVALID_REQUEST", 400);
+      expect(invalidStateEnvelope.details).toEqual(
+        expect.arrayContaining([expect.objectContaining({ path: "state" })]),
+      );
+
+      const invalidLimit = await callAdmin(handler, "GET", "/api/admin/reviews?limit=1000", {
+        headers: { cookie: session.cookie },
+      });
+      expect(invalidLimit.statusCode).toBe(400);
+      expectEnvelope(invalidLimit.body, "ADMIN_INVALID_REQUEST", 400);
     } finally {
       await prisma.review.delete({ where: { id: review.id } });
       await prisma.pullRequest.delete({ where: { id: pullRequest.id } });
       await prisma.repository.delete({ where: { id: repository.id } });
       await prisma.installation.delete({ where: { id: installation.id } });
     }
+  });
+
+  test("admin review-state contract mirrors the lifecycle state machine", () => {
+    expect(ADMIN_REVIEW_STATES).toEqual(REVIEW_STATES);
   });
 
   test("authorizeAdmin policy matrix", () => {
@@ -678,13 +773,28 @@ describe("admin api (ticket 10)", () => {
         body: { repository: "octo-org/missing", pullRequestNumber: 1 },
       });
       expect(missing.statusCode).toBe(404);
+      expectEnvelope(missing.body, "REVIEW_TARGET_NOT_FOUND", 404);
 
-      // Invalid body → 400.
+      // Invalid body → 400 with safe issue details.
       const invalid = await callAdmin(handler, "POST", "/api/admin/reviews/trigger", {
         headers: authedHeaders(session),
         body: { repository: "not-a-slug", pullRequestNumber: 1 },
       });
       expect(invalid.statusCode).toBe(400);
+      const invalidEnvelope = expectEnvelope(invalid.body, "ADMIN_INVALID_REQUEST", 400);
+      expect(invalidEnvelope.details).toEqual(
+        expect.arrayContaining([expect.objectContaining({ path: "repository" })]),
+      );
+
+      // A malformed value is never echoed back inside the envelope.
+      const token = "ghp_adminApiSecret1234567890";
+      const secretShaped = await callAdmin(handler, "POST", "/api/admin/reviews/trigger", {
+        headers: authedHeaders(session),
+        body: { repository: token, pullRequestNumber: 1 },
+      });
+      expect(secretShaped.statusCode).toBe(400);
+      expectEnvelope(secretShaped.body, "ADMIN_INVALID_REQUEST", 400);
+      expect(secretShaped.body).not.toContain(token);
     } finally {
       await prisma.outboxEvent.deleteMany({ where: { reviewJob: { review: { pullRequestId: pullRequest.id } } } });
       await prisma.reviewJob.deleteMany({ where: { review: { pullRequestId: pullRequest.id } } });
@@ -861,10 +971,18 @@ describe("admin api (ticket 10)", () => {
         headers: { cookie: session.cookie },
       });
       expect(badQuery.statusCode).toBe(400);
+      const badQueryEnvelope = expectEnvelope(badQuery.body, "ADMIN_INVALID_REQUEST", 400);
+      expect(badQueryEnvelope.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "repository" }),
+          expect.objectContaining({ path: "pr" }),
+        ]),
+      );
       const unknown = await callAdmin(handler, "GET", "/api/admin/reviews/compare?repository=octo-org/nope&pr=1", {
         headers: { cookie: session.cookie },
       });
       expect(unknown.statusCode).toBe(404);
+      expectEnvelope(unknown.body, "REPOSITORY_NOT_FOUND", 404);
     } finally {
       await prisma.finding.deleteMany({ where: { reviewId: { in: [standard.id, skill.id] } } });
       await prisma.review.deleteMany({ where: { id: { in: [standard.id, skill.id] } } });

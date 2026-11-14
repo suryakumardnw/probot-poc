@@ -9,6 +9,7 @@ import { clearRateLimitBuckets } from "../../src/admin/rate-limit.js";
 import { clearSessions } from "../../src/admin/session.js";
 import { loadEnv, type Env } from "../../src/config/env.js";
 import { DEFAULT_CONFIG_PATH } from "../../src/config/review-loader.js";
+import { adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../../src/contracts/admin.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
 /**
@@ -173,6 +174,16 @@ function sessionOf(result: MockResponse): { cookie: string; csrfToken: string } 
   return { cookie: cookieOf(result).split(";")[0]!, csrfToken: body.csrfToken };
 }
 
+/** The admin API contract change: every failure is `{ code, message, statusCode, details? }`. */
+function errorEnvelope(result: MockResponse, code: string, statusCode: number): AdminErrorEnvelope {
+  const body = adminErrorEnvelopeSchema.parse(JSON.parse(result.body));
+  expect(body.code).toBe(code);
+  expect(body.statusCode).toBe(statusCode);
+  expect(body.message.length).toBeGreaterThan(0);
+  expect(body).not.toHaveProperty("error");
+  return body;
+}
+
 let configDir: string;
 let handler: Handler["handler"];
 
@@ -228,7 +239,7 @@ describe("OAuth state and CSRF (§14.2)", () => {
       `/api/admin/auth/github/callback?code=good-code&state=${encodeURIComponent(state!)}`,
     );
     expect(replay.statusCode).toBe(400);
-    expect(JSON.parse(replay.body).error).toMatch(/oauth state/);
+    expect(errorEnvelope(replay, "VALIDATION_ERROR", 400).message).toMatch(/oauth state/);
 
     const denied = await prisma.auditLog.findMany({ where: { action: "admin.login_denied" } });
     expect(denied.some((row) => row.actor === "anonymous")).toBe(true);
@@ -237,7 +248,7 @@ describe("OAuth state and CSRF (§14.2)", () => {
   test("a callback without state is rejected and audited", async () => {
     const result = await call(handler, "GET", "/api/admin/auth/github/callback?code=good-code");
     expect(result.statusCode).toBe(400);
-    expect(JSON.parse(result.body).error).toMatch(/oauth state/);
+    expect(errorEnvelope(result, "VALIDATION_ERROR", 400).message).toMatch(/oauth state/);
     expect(await prisma.auditLog.count({ where: { action: "admin.login_denied" } })).toBe(1);
   });
 });
@@ -297,7 +308,7 @@ describe("session cookie and logout (§14.2)", () => {
       headers: { cookie: session.cookie },
     });
     expect(missingCsrf.statusCode).toBe(403);
-    expect(JSON.parse(missingCsrf.body).error).toMatch(/csrf/);
+    expect(errorEnvelope(missingCsrf, "ADMIN_CSRF_FAILED", 403).message).toMatch(/csrf/);
 
     const loggedOut = await call(handler, "POST", "/api/admin/auth/logout", {
       headers: { cookie: session.cookie, "x-csrf-token": session.csrfToken },
@@ -317,7 +328,7 @@ describe("session cookie and logout (§14.2)", () => {
   test("unauthenticated admin requests get 401 and non-admin paths fall through", async () => {
     const unauthenticated = await call(handler, "GET", "/api/admin/config");
     expect(unauthenticated.statusCode).toBe(401);
-    expect(JSON.parse(unauthenticated.body).error).toMatch(/authentication required/);
+    expect(errorEnvelope(unauthenticated, "UNAUTHORIZED", 401).message).toMatch(/authentication required/);
 
     const session = await call(handler, "GET", "/api/admin/session");
     expect(session.statusCode).toBe(401);
@@ -331,15 +342,20 @@ describe("organization membership and admin role policy (§14.2)", () => {
   test("non-members and pending members are forbidden and audited", async () => {
     const nonMember = await loginWith(handler, { login: "outsider", membership: null });
     expect(nonMember.statusCode).toBe(403);
-    expect(JSON.parse(nonMember.body)).toMatchObject({ error: "admin access denied" });
-    expect(JSON.parse(nonMember.body).reason).toMatch(/not an organization member/);
+    const nonMemberEnvelope = errorEnvelope(nonMember, "ADMIN_ACCESS_DENIED", 403);
+    expect(nonMemberEnvelope.message).toBe("admin access denied");
+    expect(nonMemberEnvelope.details).toMatchObject({
+      reason: expect.stringMatching(/not an organization member/),
+    });
 
     const pending = await loginWith(handler, {
       login: "pending-user",
       membership: { role: "member", state: "pending" },
     });
     expect(pending.statusCode).toBe(403);
-    expect(JSON.parse(pending.body).reason).toMatch(/pending/);
+    expect(errorEnvelope(pending, "ADMIN_ACCESS_DENIED", 403).details).toMatchObject({
+      reason: expect.stringMatching(/pending/),
+    });
 
     const denied = await prisma.auditLog.findMany({ where: { action: "admin.login_denied" } });
     expect(denied.map((row) => row.actor).sort()).toEqual(["outsider", "pending-user"]);
@@ -368,7 +384,9 @@ describe("organization membership and admin role policy (§14.2)", () => {
       membership: { role: "admin", state: "active" },
     });
     expect(orgOwner.statusCode).toBe(403);
-    expect(JSON.parse(orgOwner.body).reason).toMatch(/allowlist/);
+    expect(errorEnvelope(orgOwner, "ADMIN_ACCESS_DENIED", 403).details).toMatchObject({
+      reason: expect.stringMatching(/allowlist/),
+    });
 
     // The allowlist still requires organization membership.
     const notMember = await loginWith(handler, { login: "listed-admin", membership: null });
@@ -388,7 +406,9 @@ describe("organization membership and admin role policy (§14.2)", () => {
       membership: { role: "member", state: "active" },
     });
     expect(plainMember.statusCode).toBe(403);
-    expect(JSON.parse(plainMember.body).reason).toMatch(/does not grant admin/);
+    expect(errorEnvelope(plainMember, "ADMIN_ACCESS_DENIED", 403).details).toMatchObject({
+      reason: expect.stringMatching(/does not grant admin/),
+    });
   });
 });
 
@@ -410,9 +430,14 @@ describe("rate limiting (§14.2)", () => {
 
     const third = await call(handler, "GET", "/api/admin/session", { headers });
     expect(third.statusCode).toBe(429);
-    const body = JSON.parse(third.body) as { error: string; retryAfterSeconds: number };
-    expect(body.error).toMatch(/rate limit/);
-    expect(body.retryAfterSeconds).toBeGreaterThan(0);
-    expect(third.headers["retry-after"]).toBe(String(body.retryAfterSeconds));
+    const body = errorEnvelope(third, "RATE_LIMITED", 429);
+    expect(body.message).toMatch(/rate limit/);
+    const details = body.details;
+    if (typeof details !== "object" || details === null || Array.isArray(details)) {
+      throw new Error("rate limit details must be an object");
+    }
+    const retryAfterSeconds = Number(details.retryAfterSeconds);
+    expect(retryAfterSeconds).toBeGreaterThan(0);
+    expect(third.headers["retry-after"]).toBe(String(retryAfterSeconds));
   });
 });

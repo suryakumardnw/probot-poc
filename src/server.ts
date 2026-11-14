@@ -5,6 +5,9 @@ import { z } from "zod";
 import { createAdminApi, isAdminConfigured } from "./admin/api.js";
 import { createAdminPanel } from "./admin/panel.js";
 import { loadEnv } from "./config/env.js";
+import { adminErrorEnvelopeSchema } from "./contracts/admin.js";
+import { ERROR_CODES } from "./contracts/errors.js";
+import { ingestOutcomeSchema } from "./contracts/queue.js";
 import { getReviewStatus, ingestManualReview, ManualIngestionError } from "./ingestion/orchestrator.js";
 import { checkDependencies } from "./lib/health.js";
 import { createLogger } from "./lib/logger.js";
@@ -12,6 +15,7 @@ import { getPrisma, disconnectPrisma } from "./lib/prisma.js";
 import { disconnectRedis, getRedis } from "./lib/redis.js";
 import { registerGracefulShutdown } from "./lib/shutdown.js";
 import { metricsHandler } from "./observability/metrics-endpoint.js";
+import { toErrorLogPayload, toHttpEnvelope } from "./platform/http/error-mapper.js";
 import appFn from "./index.js";
 
 /**
@@ -80,8 +84,9 @@ function maybeCreateProbot(): Probot | undefined {
 
 const probot = maybeCreateProbot();
 
-// Admin API (ticket 10). Enabled only when the OAuth app + session secret +
-// org are configured; otherwise /api/admin/* reports 503.
+// Admin API (ticket 10). The handler reports 503 (in the admin error envelope)
+// when the OAuth app + session secret + org are not configured; the server
+// dispatch below keeps that same envelope without invoking the handler.
 const adminApi = createAdminApi({
   env,
   prisma: getPrisma(env),
@@ -152,8 +157,11 @@ async function handleManualIngestion(req: http.IncomingMessage, res: http.Server
 
   try {
     const result = await ingestManualReview(parsed.data);
-    const status = result.outcome === "created" ? 202 : 200;
-    sendJson(res, status, result);
+    // The outcome crosses the HTTP boundary: parse it against the queue
+    // contract instead of trusting the in-process value's type alone.
+    const outcome = ingestOutcomeSchema.parse(result.outcome);
+    const status = outcome === "created" ? 202 : 200;
+    sendJson(res, status, { ...result, outcome });
   } catch (error) {
     if (error instanceof ManualIngestionError) {
       return sendJson(res, 404, { error: error.message });
@@ -215,14 +223,25 @@ const server = http.createServer((req, res) => {
   if (url.pathname.startsWith("/api/admin")) {
     if (isAdminConfigured(env)) {
       void adminApi(req, res).catch((error) => {
-        logger.error({ err: error }, "Admin API handler crashed");
-        res.statusCode = 500;
-        res.end(JSON.stringify({ error: "internal admin error" }));
+        const envelope = toHttpEnvelope(error);
+        logger.error(toErrorLogPayload(error, "http"), "Admin API handler crashed");
+        if (!res.headersSent) {
+          res.statusCode = envelope.statusCode;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(envelope.body));
+        } else if (!res.writableEnded) {
+          res.end();
+        }
       });
     } else {
-      res.statusCode = 503;
+      const envelope = adminErrorEnvelopeSchema.parse({
+        code: ERROR_CODES.ADMIN_NOT_CONFIGURED,
+        message: "admin API is not configured",
+        statusCode: 503,
+      });
+      res.statusCode = envelope.statusCode;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "admin API is not configured" }));
+      res.end(JSON.stringify(envelope));
     }
     return;
   }

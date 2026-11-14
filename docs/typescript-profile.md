@@ -48,6 +48,20 @@ an adaptation or deviation is accepted.
 | React components, design tokens, forms | N/A — no frontend. |
 | “Unused dependency must be removed” | `effect` stays pinned at `4.1.0`. It has no direct imports, but `@opencode/sdk@2.3.0` depends on it and the root pin keeps Prisma's `effect@3.21.0` from winning peer resolution. Guarded by `test/deployment-node.test.ts`; ruling 2026-11-15 (PR 0.5). |
 
+## Interface changes
+
+- **Admin HTTP error envelope (2026-11-15, PR 1.3).** Every `/api/admin/*`
+  failure now returns `{ code, message, statusCode, details? }` instead of
+  `{ error: string }` plus ad-hoc extras (`reason`, `retryAfterSeconds`, GitHub
+  `description`). HTTP statuses are unchanged: validation 400, auth 401,
+  forbidden 403, not-found 404, conflict 409, rate-limit 429, internal 500,
+  plus the existing 413 payload-too-large and 502/503 operational statuses.
+  Client-visible extras move under `details`; request-validation issues are a
+  `details` array of `{ path, message }`. Clients must read `code`/`message`
+  instead of `error`. This is the approved API contract change for the
+  refactor; the EJS panel and its session/CSRF flow are unchanged. The one
+  request/response/error contract is `src/contracts/admin.ts`.
+
 ## Compiler strictness
 
 `tsconfig.json` enables `strict`, `noUncheckedIndexedAccess`,
@@ -99,7 +113,6 @@ These are tracked in full in the [gap analysis](./typescript-gap-analysis.md).
 
 - Stay on npm or migrate to pnpm (single-package decision).
 - How to run integration tests in CI (service containers vs Testcontainers).
-- Error envelope shape and stable code registry for HTTP + queue failures.
 - Module boundaries and public entry points for `src/`.
 - Whether `src/agent`'s CLI and SDK runtimes share a common core.
 

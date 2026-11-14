@@ -328,6 +328,10 @@ describe("admin panel (ticket 14)", () => {
       }),
     });
     expect(result.statusCode).toBe(400);
+    // The panel stays server-rendered HTML; only the JSON admin API uses the
+    // error envelope.
+    expect(result.headers["content-type"]).toContain("text/html");
+    expect(result.body).not.toContain('"statusCode"');
     expect(result.body).toMatch(/Validation failed — nothing was saved/);
     // Field-level errors render beside their fields.
     expect(result.body).toMatch(/Invalid option/); // enum error for environment
