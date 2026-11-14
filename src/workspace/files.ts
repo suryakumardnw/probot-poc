@@ -93,7 +93,17 @@ export function resolveWorkspacePath(workspaceRoot: string, relativePath: string
     throw new PathEscapeError(relativePath);
   }
   // Symlink escape check: the resolved file must live inside the real root.
-  const real = fs.realpathSync.native(resolved);
+  // A missing path is a normal lookup miss, not an I/O failure: classify it
+  // as FileNotFoundError so tool callers can report `not_found` accurately.
+  let real: string;
+  try {
+    real = fs.realpathSync.native(resolved);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new FileNotFoundError(relativePath);
+    }
+    throw error;
+  }
   if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
     throw new PathEscapeError(relativePath);
   }

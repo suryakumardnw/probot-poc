@@ -16,18 +16,35 @@ export {
 } from "./types.js";
 
 export {
+  buildAgentTracingPlugin,
   buildChildEnv,
   buildPermissionRules,
   buildSessionConfig,
   resolveModelId,
   TOOL_ACTION_MAP,
   type AgentRuntimeConfigSource,
+  type AgentTracingInput,
 } from "./opencode-config.js";
 
 export {
-  createAgentRuntime,
+  buildPrompt,
   extractJson,
   OpenCodeAgentRuntime,
   type AgentRuntimeLogger,
   type OpenCodeRuntimeOptions,
 } from "./opencode-runtime.js";
+
+export {
+  createAgentRuntime,
+  listAgentRuntimePlugins,
+  openCodeRuntimePlugin,
+  registerAgentRuntimePlugin,
+  type AgentRuntimeFactoryOptions,
+  type AgentRuntimePlugin,
+} from "./runtime-registry.js";
+
+export {
+  createSdkAgentRuntime,
+  OpenCodeSdkAgentRuntime,
+  type SdkRuntimeOptions,
+} from "./opencode-sdk-runtime.js";

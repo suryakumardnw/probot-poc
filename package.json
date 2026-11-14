@@ -27,10 +27,12 @@
     "postinstall": "prisma skills sync || exit 0"
   },
   "dependencies": {
+    "@opencode/sdk": "2.3.0",
     "@opentelemetry/api": "^1.10.0",
     "@prisma/client": "^6.19.3",
     "bullmq": "^5.81.5",
     "dotenv": "^18.0.9",
+    "effect": "4.1.0",
     "ejs": "^7.0.2",
     "ioredis": "^5.11.1",
     "pino": "^10.4.0",
@@ -51,7 +53,7 @@
     "@types/pg": "8.15.1"
   },
   "engines": {
-    "node": "^20.18.1 || >= 22"
+    "node": ">=24"
   },
   "type": "module"
 }

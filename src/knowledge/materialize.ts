@@ -26,11 +26,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type pino from "pino";
 import type { PrismaClient } from "@prisma/client";
-import type {
-  KnowledgeSnapshot,
-  KnowledgeSourceSnapshot,
-  PersistedKnowledgeSnapshot,
-  PersistedKnowledgeSource,
+import {
+  knowledgeRefSlug,
+  type KnowledgeSnapshot,
+  type KnowledgeSourceSnapshot,
+  type PersistedKnowledgeSnapshot,
+  type PersistedKnowledgeSource,
 } from "./types.js";
 import { sha256Hex } from "./fetch.js";
 
@@ -58,14 +59,14 @@ function persistedFromSource(source: KnowledgeSourceSnapshot): PersistedKnowledg
   };
 }
 
-/** Copy one source's cached files into the review workspace, verifying hashes. */
-async function copySource(
-  source: KnowledgeSourceSnapshot,
-  kind: KnowledgeKind,
-  knowledgeDir: string,
-): Promise<void> {
+/** Directory holding one handbook variant inside the review's knowledge copy. */
+export function handbookVariantDir(knowledgeDir: string, ref: string): string {
+  return path.join(knowledgeDir, "handbook-variants", knowledgeRefSlug(ref));
+}
+
+/** Copy one source's cached files into a target directory, verifying hashes. */
+async function copySource(source: KnowledgeSourceSnapshot, targetRoot: string): Promise<void> {
   if (source.status === "unavailable" || !source.dir) return;
-  const targetRoot = path.join(knowledgeDir, kind);
   for (const file of source.files) {
     const sourcePath = path.join(source.dir, file.path);
     const targetPath = path.join(targetRoot, file.path);
@@ -86,6 +87,40 @@ function sameSource(a: PersistedKnowledgeSource | undefined, b: KnowledgeSourceS
   if (!a || !b) return false;
   if (a.status === "unavailable" || b.status === "unavailable") return a.status === b.status && a.contentHash === (b.contentHash ?? "");
   return a.ref === b.ref && a.contentHash === b.contentHash;
+}
+
+/** Same technology list, order-insensitive (config order is not identity). */
+function sameTechnologies(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = [...a].map((tech) => tech.toLowerCase()).sort();
+  const right = [...b].map((tech) => tech.toLowerCase()).sort();
+  return left.every((tech, index) => tech === right[index]);
+}
+
+/**
+ * Recovery-path check for per-technology handbook refs: the persisted set
+ * must exactly match the boot snapshot (same technologies + reproducible
+ * source), otherwise the review fails fast instead of silently changing the
+ * standard it is judged against.
+ */
+function verifyHandbookVariants(stored: PersistedKnowledgeSnapshot, snapshot: KnowledgeSnapshot): void {
+  const persisted = stored.handbookVariants ?? [];
+  // Unavailable refs are never persisted; compare against reproducible ones.
+  const current = (snapshot.handbookVariants ?? []).filter((variant) => variant.source.status !== "unavailable");
+  if (persisted.length !== current.length) {
+    throw new KnowledgeSnapshotError("Persisted handbook technology refs can no longer be reproduced from the cache");
+  }
+  for (const variant of persisted) {
+    const match = current.find(
+      (candidate) =>
+        candidate.source.ref === variant.source.ref && sameTechnologies(candidate.technologies, variant.technologies),
+    );
+    if (!match || !sameSource(variant.source, match.source)) {
+      throw new KnowledgeSnapshotError(
+        `Persisted handbook technology ref '${variant.source.ref}' can no longer be reproduced from the cache`,
+      );
+    }
+  }
 }
 
 export interface MaterializeKnowledgeInput {
@@ -141,11 +176,17 @@ export async function materializeReviewKnowledge(
         );
       }
     }
+    if (kinds.includes("handbook")) verifyHandbookVariants(stored, input.snapshot);
   }
 
   const knowledgeDir = path.join(input.workspacePath, "knowledge");
   for (const kind of kinds) {
-    await copySource(input.snapshot[kind], kind, knowledgeDir);
+    await copySource(input.snapshot[kind], path.join(knowledgeDir, kind));
+  }
+  if (kinds.includes("handbook")) {
+    for (const variant of input.snapshot.handbookVariants ?? []) {
+      await copySource(variant.source, handbookVariantDir(knowledgeDir, variant.source.ref));
+    }
   }
 
   if (!stored) {
@@ -153,6 +194,13 @@ export async function materializeReviewKnowledge(
     for (const kind of kinds) {
       const source = input.snapshot[kind];
       if (source.status !== "unavailable") persisted[kind] = persistedFromSource(source);
+    }
+    const variants = (input.snapshot.handbookVariants ?? []).filter((variant) => variant.source.status !== "unavailable");
+    if (kinds.includes("handbook") && variants.length > 0) {
+      persisted.handbookVariants = variants.map((variant) => ({
+        technologies: variant.technologies,
+        source: persistedFromSource(variant.source),
+      }));
     }
     await input.prisma.review.update({
       where: { id: input.reviewId },

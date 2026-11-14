@@ -47,7 +47,11 @@ const fakeLogger = {
   debug: () => {},
 } as unknown as pino.Logger;
 
-function makeConfig(skillRef: string = SKILL_REF, handbookRef: string = "main"): ReviewConfig {
+function makeConfig(
+  skillRef: string = SKILL_REF,
+  handbookRef: string = "main",
+  technologyRefs: Array<{ technologies: string[]; ref: string }> = [],
+): ReviewConfig {
   return reviewConfigSchema.parse({
     schemaVersion: 1,
     provider: { baseURL: "${MODEL_BASE_URL}", apiKeyEnv: "MODEL_API_KEY", model: "test-model" },
@@ -55,7 +59,14 @@ function makeConfig(skillRef: string = SKILL_REF, handbookRef: string = "main"):
     knowledge: {
       fetchTimeoutMs: 5000,
       skill: { repo: "vercel-labs/open-agents", ref: skillRef, skillDir: "skills/code-review", maxBytes: 200000 },
-      handbook: { repo: "nativewit/engineering-handbook", ref: handbookRef, path: "", maxBytes: 2000000, maxChars: 20000 },
+      handbook: {
+        repo: "nativewit/engineering-handbook",
+        ref: handbookRef,
+        technologyRefs,
+        path: "",
+        maxBytes: 2000000,
+        maxChars: 20000,
+      },
     },
   });
 }
@@ -154,6 +165,129 @@ describe("ensureKnowledgeSources", () => {
     expect(second.calls).toHaveLength(0);
     expect(snapshot2.skill.status).toBe("fresh");
     expect(snapshot2.skill.contentHash).toBe(snapshot1.skill.contentHash);
+  });
+
+  test("technologyRefs → fetched at boot and injected for matching technologies", async () => {
+    const cacheDir = makeCacheDir();
+    // Mixed-case branch name: refs must not be lowercased before resolving.
+    const tsRef = "feat/CU-86bcd-typescript-guidelines";
+    const tsSha = "c".repeat(40);
+    const fetcher = makeFetcher(
+      {
+        [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill",
+        [`${HANDBOOK_SHA}/docs/02-flutter.md`]: "# Flutter\n\nUse FVM.",
+        [`${tsSha}/docs/guidelines/typescript/01_architecture.md`]: "# TypeScript Architecture\n\nKeep boundaries.",
+      },
+      { main: HANDBOOK_SHA, [tsRef]: tsSha },
+    );
+    const config = makeConfig(SKILL_REF, "main", [{ technologies: ["typescript", "nodejs"], ref: tsRef }]);
+    const snapshot = await ensureKnowledgeSources(config, fakeLogger, { cacheDir, fetcher });
+
+    expect(snapshot.handbookVariants).toHaveLength(1);
+    expect(snapshot.handbookVariants![0]!.technologies).toEqual(["typescript", "nodejs"]);
+    expect(snapshot.handbookVariants![0]!.source.status).toBe("fresh");
+    expect(snapshot.handbookVariants![0]!.source.ref).toBe(tsSha);
+
+    const workspacePath = mkdtempSync(join(tmpdir(), "ws-ts-handbook-"));
+    tempDirs.push(workspacePath);
+    let captured: { handbook?: { ref: string }; handbookVariants?: Array<{ source: { ref: string } }> } | null = null;
+    const materialized = await materializeReviewKnowledge({
+      reviewId: "materialize-only-tech-ref",
+      reviewType: "handbook",
+      workspacePath,
+      snapshot,
+      prisma: {
+        review: {
+          findUnique: async () => ({ knowledgeSnapshot: null }),
+          update: async (args: { data: { knowledgeSnapshot: object } }) => {
+            captured = args.data.knowledgeSnapshot as typeof captured;
+            return {};
+          },
+        },
+      } as unknown as ReturnType<typeof getPrisma>,
+      logger: fakeLogger,
+    });
+    expect(captured!.handbook!.ref).toBe(HANDBOOK_SHA);
+    expect(captured!.handbookVariants![0]!.source.ref).toBe(tsSha);
+    expect(
+      existsSync(join(workspacePath, "knowledge", "handbook-variants", tsSha, "docs/guidelines/typescript/01_architecture.md")),
+    ).toBe(true);
+
+    // `.ts` is detected as typescript/nodejs → the variant copy is injected.
+    const tsInjection = await resolveReviewInjection({
+      reviewType: "handbook",
+      config,
+      changedFiles: ["app/src/index.ts"],
+      knowledgeDir: materialized.knowledgeDir,
+      snapshot,
+      logger: fakeLogger,
+    });
+    expect(tsInjection!.files).toEqual(["docs/guidelines/typescript/01_architecture.md"]);
+    expect(tsInjection!.text).toContain("Keep boundaries.");
+    expect(tsInjection!.contentHash).toBe(snapshot.handbookVariants![0]!.source.contentHash);
+
+    // Dart has no matching variant → the default handbook is used.
+    const flutterInjection = await resolveReviewInjection({
+      reviewType: "handbook",
+      config,
+      changedFiles: ["lib/main.dart"],
+      knowledgeDir: materialized.knowledgeDir,
+      snapshot,
+      logger: fakeLogger,
+    });
+    expect(flutterInjection!.files).toEqual(["docs/02-flutter.md"]);
+    expect(flutterInjection!.contentHash).toBe(snapshot.handbook.contentHash);
+  });
+
+  test("unavailable technology ref fails fast for matching PRs only", async () => {
+    const cacheDir = makeCacheDir();
+    const fetcher = makeFetcher(
+      {
+        [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill",
+        [`${HANDBOOK_SHA}/docs/02-flutter.md`]: "# Flutter\n\nUse FVM.",
+      },
+      { main: HANDBOOK_SHA }, // the configured TS ref does not resolve → unavailable
+    );
+    const config = makeConfig(SKILL_REF, "main", [{ technologies: ["typescript"], ref: "feat/missing" }]);
+    const snapshot = await ensureKnowledgeSources(config, fakeLogger, { cacheDir, fetcher });
+    expect(snapshot.handbookVariants![0]!.source.status).toBe("unavailable");
+
+    const workspacePath = mkdtempSync(join(tmpdir(), "ws-missing-ts-"));
+    tempDirs.push(workspacePath);
+    const materialized = await materializeReviewKnowledge({
+      reviewId: "materialize-only-missing-ts",
+      reviewType: "handbook",
+      workspacePath,
+      snapshot,
+      prisma: {
+        review: {
+          findUnique: async () => ({ knowledgeSnapshot: null }),
+          update: async () => ({}),
+        },
+      } as unknown as ReturnType<typeof getPrisma>,
+      logger: fakeLogger,
+    });
+
+    await expect(
+      resolveReviewInjection({
+        reviewType: "handbook",
+        config,
+        changedFiles: ["app/src/index.ts"],
+        knowledgeDir: materialized.knowledgeDir,
+        snapshot,
+        logger: fakeLogger,
+      }),
+    ).rejects.toMatchObject({ code: "handbook_unavailable" });
+
+    const dartInjection = await resolveReviewInjection({
+      reviewType: "handbook",
+      config,
+      changedFiles: ["lib/main.dart"],
+      knowledgeDir: materialized.knowledgeDir,
+      snapshot,
+      logger: fakeLogger,
+    });
+    expect(dartInjection!.files).toEqual(["docs/02-flutter.md"]);
   });
 
   test("ref change → refetch under the new ref (and env override feeds the ref)", async () => {
@@ -480,7 +614,9 @@ describe("per-review knowledge snapshot (§4)", () => {
     });
     expect(injection!.metrics!.injectedTokens).toBeGreaterThan(0);
     expect(injection!.laterStagesText).toContain("docs/standards.md");
-    expect(injection!.laterStagesText).not.toContain("Always test your changes.");
+    // Later stages re-provide the authoritative handbook (they do not share
+    // context with the analysis stage), so the guideline text is expected.
+    expect(injection!.laterStagesText).toContain("Always test your changes.");
 
     await persistKnowledgeMetrics(prisma, review.id, "handbook", injection!.metrics!);
     const stored = await prisma.review.findUniqueOrThrow({ where: { id: review.id }, select: { knowledgeSnapshot: true } });

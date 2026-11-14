@@ -105,7 +105,7 @@ The system must prioritize review quality, correctness, security and maintainabi
 | Queue storage | Redis | Job state and scheduling |
 | Database | PostgreSQL | Durable application data |
 | ORM | Prisma | Database access and migrations |
-| Agent runtime | OpenCode CLI initially | Agent execution |
+| Agent runtime | OpenCode CLI (default) or OpenCode SDK via runtime plugin | Agent execution |
 | Agent abstraction | Custom TypeScript runtime adapter | Runtime independence |
 | Model integration | OpenAI-compatible adapter | Cloudflare GLM integration |
 | Validation | Zod + JSON Schema | Configuration and output validation |
@@ -142,8 +142,8 @@ flowchart TB
         WORKER[Review Worker]
         GIT[Repository Manager]
         CTX[Context Engine]
-        AGENT[Agent Runtime Adapter]
-        OPENCODE[OpenCode CLI]
+        AGENT[Agent Runtime Plugin<br/>OpenCode CLI/SDK]
+        OPENCODE[OpenCode CLI or SDK Host]
         MODEL[Model Provider Adapter]
 
         VALIDATOR[Finding Validator]
@@ -281,7 +281,7 @@ The command accepts an optional **review type** argument (§4.1 review types):
 
 | Command | Review type |
 | --- | --- |
-| `/review` | `github.defaultReviewType` (default: `standard`) |
+| `/review` | `github.defaultReviewType` (default: `handbook`) |
 | `/review type:skill` / `/review skill` | `skill` |
 | `/review type:handbook` / `/review handbook` | `handbook` |
 | `/review type:standard` / `/review standard` | `standard` |
@@ -418,10 +418,14 @@ worker boot into a persistent cache — never per review (no GitHub API calls du
 review).
 
 - Configuration: the `knowledge` section of `review.json` (`cacheDir`, `skill.{repo,
-  ref, skillDir, maxBytes, maxTokens}`, `handbook.{repo, ref, path,
-  maxBytes, maxTokens, maxChars}`). Prod MUST pin refs via env overrides `KNOWLEDGE_SKILL_REF` /
-  `KNOWLEDGE_HANDBOOK_REF` (full commit SHAs); a branch-name ref is resolved to its
-  current commit SHA at boot so the cache is still SHA-keyed.
+  ref, skillDir, maxBytes, maxTokens}`, `handbook.{repo, ref, technologyRefs, path,
+  maxBytes, maxTokens, maxChars}`). `handbook.technologyRefs` maps detected
+  technologies (e.g. `typescript`/`nodejs`) to an alternate ref fetched at the same
+  boot; a matching review uses that ref's snapshot, otherwise the default `ref` is
+  used. Prod MUST pin refs via env overrides `KNOWLEDGE_SKILL_REF` /
+  `KNOWLEDGE_HANDBOOK_REF` (full commit SHAs; the handbook override applies to the
+  default ref only); a branch-name ref is resolved to its current commit SHA at boot
+  so the cache is still SHA-keyed.
 - Cache layout: `<cacheDir>/skill/<sha>/…` and `<cacheDir>/handbook/<sha>/…`, each
   with a `manifest.json` `{ ref, fetchedAt, contentHash (sha256), files[{path, sha256,
   bytes}], status }`. A validated cached copy (manifest + per-file hashes match) is
@@ -736,6 +740,13 @@ Reasoning:
 
 The recommendation is conditional on validating OpenCode compatibility with the actual Cloudflare GLM endpoint and model behavior.
 
+The CLI adapter remains the recommended initial implementation. An opt-in
+OpenCode SDK adapter is also provided: it runs `@opencode/sdk` inside a
+sanitized child Node process behind the same `AgentRuntime` contract and is
+selected only by configuration (`agent.runtime.type: "opencode-sdk"`). It does
+not change the review engine, and there is no fallback between the two
+adapters. See `docs/agent-runtime-plugins.md`.
+
 Do not expose OpenCode as the application's public API.
 
 ## 8.2 Runtime abstraction
@@ -761,9 +772,44 @@ interface AgentRuntime {
 }
 ```
 
-Possible future adapters:
+Adapters are resolved through a runtime plugin registry rather than
+constructed directly. The registry adds a plugin contract and a single factory
+entry point:
 
-- OpenCode CLI.
+typescript
+
+```typescript
+interface AgentRuntimePlugin {
+  readonly id: string;
+  readonly runtimeTypes: readonly string[];
+  create(
+    runtimeType: string,
+    config: AgentRuntimeConfigSource,
+    options: AgentRuntimeFactoryOptions
+  ): AgentRuntime;
+}
+
+function registerAgentRuntimePlugin(plugin: AgentRuntimePlugin): void;
+
+function createAgentRuntime(
+  config: AgentRuntimeConfigSource,
+  options?: AgentRuntimeFactoryOptions
+): AgentRuntime;
+```
+
+The built-in `opencode` plugin registers `opencode-cli` and `opencode-sdk`.
+`createAgentRuntime` looks up the configured `agent.runtime.type`; registering
+a type twice throws, and an unknown or reserved type (`opencode-server`,
+`custom`) throws `AgentRuntimeError("config", ...)`. There is no fallback to a
+different adapter.
+
+Available adapters:
+
+- `opencode-cli` (default) — spawns the OpenCode CLI.
+- `opencode-sdk` (opt-in) — runs `@opencode/sdk` in a sanitized child process.
+
+Reserved for future work:
+
 - OpenCode server.
 - Custom Node.js agent.
 - Other compatible agent runtimes.
@@ -780,6 +826,11 @@ Recommended initial default:
 - Explicit execution timeout.
 - No shared conversation state between repositories.
 
+Both adapters use one isolated session per review. The CLI adapter runs a
+separate `opencode run` process per stage execution; the SDK adapter keeps one
+sanitized child Node host process and one SDK session for the active review,
+with per-session config, data, state and database directories.
+
 Separate sessions for individual review stages can be introduced if evaluation demonstrates better results.
 
 ## 8.4 Runtime failure
@@ -795,6 +846,13 @@ Distinguish this from infrastructure failures:
 - Worker crash: recover through durable job state.
 
 The provider must not silently switch models.
+
+Both runtime adapters fail closed. If the configured runtime type has no
+registered plugin, construction throws
+`AgentRuntimeError("config", ...)` and the worker does not start. If a selected
+adapter cannot start, times out, crashes or produces invalid output, the
+review fails with a normalized `AgentRuntimeError` code. Neither adapter falls
+back to the other runtime, and there is no automatic model switch.
 
 ---
 
@@ -1021,7 +1079,7 @@ Repository overrides must never weaken mandatory application-level security rest
 
 ## 11.3 Proposed review.json
 
-This is the initial configuration blueprint. Exact property names and supported options should be finalized through the JSON Schema implementation.
+This is the initial configuration blueprint. Exact property names and supported options should be finalized through the JSON Schema implementation. In `agent.runtime`, `type` defaults to `opencode-cli`; `opencode-sdk` is the opt-in alternative (§8 and `docs/agent-runtime-plugins.md`).
 
 json
 

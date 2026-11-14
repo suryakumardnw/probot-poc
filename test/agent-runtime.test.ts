@@ -138,6 +138,14 @@ const stepFinish = JSON.stringify({
   type: "step_finish",
   part: { type: "step_finish", tokens: { usage: { input: 120, output: 64, reasoning: 10, cache: {} } } },
 });
+/** OpenCode v2.2.6 flattens token counts directly onto `part.tokens`. */
+const stepFinishFlat = JSON.stringify({
+  type: "step_finish",
+  part: {
+    type: "step-finish",
+    tokens: { total: 194, input: 120, output: 64, reasoning: 10, cache: { read: 0, write: 0 } },
+  },
+});
 const textEvent = (t: string) => JSON.stringify({ type: "text", part: { type: "text", text: t } });
 /** Step-aware variants: OpenCode may run several steps inside one `run`. */
 const stepStartFor = (messageID: string) =>
@@ -224,7 +232,7 @@ describe("opencode config building", () => {
     expect(json).toContain("{env:MODEL_API_KEY}");
     expect(json).toContain("llm.example.test/compat");
     // Agent tracing is off by default — no plugin is loaded.
-    expect(json).not.toContain("langfuse");
+    expect(json).not.toContain("opencode-plugin-otel");
   });
 
   it("emits the OpenCode 2 provider shape (package/settings, not npm/options)", () => {
@@ -260,41 +268,63 @@ describe("opencode config building", () => {
     });
   });
 
-  it("enables the pinned Langfuse OpenCode plugin only when configured", () => {
+  it("enables the pinned OpenTelemetry plugin only when configured", () => {
     const withTracing = buildSessionConfig({
       sessionDir: "/tmp/s",
       workspacePath: "/tmp/w",
       config: {
         ...baseConfig,
-        observability: { langfuse: { enabled: true } },
+        observability: { agentTracing: { enabled: true } },
       },
       modelId: "workers-ai/@cf/zai-org/glm-4.7-flash",
       maxOutputTokens: 4000,
     });
-    expect(withTracing.plugins).toEqual(["@langfuse/opencode-observability-plugin@0.7.0"]);
+    expect(withTracing.plugins).toEqual([
+      { package: "@devtheops/opencode-plugin-otel@2.1.0", options: { enabled: true } },
+    ]);
     // Credentials never appear in the config file.
-    expect(JSON.stringify(withTracing)).not.toMatch(/pk-lf-|sk-lf-/);
+    expect(JSON.stringify(withTracing)).not.toMatch(/pk-lf-|sk-lf-|Bearer /);
 
     const custom = buildSessionConfig({
       sessionDir: "/tmp/s",
       workspacePath: "/tmp/w",
       config: {
         ...baseConfig,
-        observability: { langfuse: { enabled: true, plugin: "@langfuse/opencode-observability-plugin@9.9.9" } },
+        observability: {
+          agentTracing: {
+            enabled: true,
+            plugin: "@devtheops/opencode-plugin-otel@9.9.9",
+            options: {
+              endpoint: "http://phoenix.test:6006",
+              protocol: "http/protobuf",
+              disabledMetrics: ["token.usage"],
+            },
+          },
+        },
       },
       modelId: "workers-ai/@cf/zai-org/glm-4.7-flash",
       maxOutputTokens: 4000,
     });
-    expect(custom.plugins).toEqual(["@langfuse/opencode-observability-plugin@9.9.9"]);
+    expect(custom.plugins).toEqual([
+      {
+        package: "@devtheops/opencode-plugin-otel@9.9.9",
+        options: {
+          enabled: true,
+          endpoint: "http://phoenix.test:6006",
+          protocol: "http/protobuf",
+          disabledMetrics: ["token.usage"],
+        },
+      },
+    ]);
   });
 
-  it("passes review, repository and PR correlation as Langfuse trace tags", () => {
+  it("passes review, repository and PR correlation as trace attributes and tags", () => {
     const traced = buildSessionConfig({
       sessionDir: "/tmp/s",
       workspacePath: "/tmp/w",
       config: {
         ...baseConfig,
-        observability: { langfuse: { enabled: true } },
+        observability: { agentTracing: { enabled: true } },
       },
       modelId: "workers-ai/@cf/zai-org/glm-4.7-flash",
       maxOutputTokens: 4000,
@@ -304,17 +334,47 @@ describe("opencode config building", () => {
     });
     expect(traced.plugins).toEqual([
       {
-        package: "@langfuse/opencode-observability-plugin@0.7.0",
-        options: { tags: ["review:rev_42", "repository:acme/widgets", "pr:17"] },
+        package: "@devtheops/opencode-plugin-otel@2.1.0",
+        options: {
+          enabled: true,
+          tags: ["review:rev_42", "repository:acme/widgets", "pr:17"],
+          spanAttributes: "review.id=rev_42,repository=acme/widgets,pr.number=17",
+        },
       },
     ]);
   });
 
-  it("forwards Langfuse credentials only when tracing is enabled, correlating the review", () => {
+  it("forwards tracing credentials only for the configured plugin, correlating the review", () => {
     const env = buildChildEnv(
-      { ...baseConfig, observability: { langfuse: { enabled: true } } },
+      { ...baseConfig, observability: { agentTracing: { enabled: true } } },
       {
         PATH: "/usr/bin",
+        OPENCODE_OTLP_HEADERS: "authorization=Bearer phoenix-test-key",
+        OPENCODE_RESOURCE_ATTRIBUTES: "service.name=ai-pr-reviewer",
+        // Unused by the OTel plugin: must not reach the isolated child.
+        LANGFUSE_PUBLIC_KEY: "pk-lf-test",
+        LANGFUSE_SECRET_KEY: "sk-lf-test",
+      },
+      { reviewId: "rev_42" },
+    );
+    expect(env.OPENCODE_OTLP_HEADERS).toBe("authorization=Bearer phoenix-test-key");
+    expect(env.OPENCODE_RESOURCE_ATTRIBUTES).toBe("service.name=ai-pr-reviewer");
+    expect(env.LANGFUSE_PUBLIC_KEY).toBeUndefined();
+    expect(env.LANGFUSE_SECRET_KEY).toBeUndefined();
+
+    // Langfuse remains a configuration-only swap: its own env contract and
+    // user-id correlation are forwarded when that plugin is selected.
+    const langfuseEnv = buildChildEnv(
+      {
+        ...baseConfig,
+        observability: {
+          agentTracing: {
+            enabled: true,
+            plugin: "@langfuse/opencode-observability-plugin@9.9.9",
+          },
+        },
+      },
+      {
         LANGFUSE_PUBLIC_KEY: "pk-lf-test",
         LANGFUSE_SECRET_KEY: "sk-lf-test",
         LANGFUSE_BASE_URL: "https://langfuse.test",
@@ -323,26 +383,36 @@ describe("opencode config building", () => {
       },
       { reviewId: "rev_42" },
     );
-    expect(env.LANGFUSE_PUBLIC_KEY).toBe("pk-lf-test");
-    expect(env.LANGFUSE_SECRET_KEY).toBe("sk-lf-test");
-    expect(env.LANGFUSE_BASE_URL).toBe("https://langfuse.test");
-    expect(env.LANGFUSE_ENVIRONMENT).toBe("test");
+    expect(langfuseEnv.LANGFUSE_PUBLIC_KEY).toBe("pk-lf-test");
+    expect(langfuseEnv.LANGFUSE_SECRET_KEY).toBe("sk-lf-test");
+    expect(langfuseEnv.LANGFUSE_BASE_URL).toBe("https://langfuse.test");
+    expect(langfuseEnv.LANGFUSE_ENVIRONMENT).toBe("test");
     // Thin correlation adapter: traces can be filtered back to the review.
-    expect(env.LANGFUSE_USER_ID).toBe("review:rev_42");
+    expect(langfuseEnv.LANGFUSE_USER_ID).toBe("review:rev_42");
 
     // The plugin also accepts the legacy BASEURL spelling; it must not be
     // dropped by the child env allowlist (otherwise self-hosted setups fall
     // back to cloud.langfuse.com).
     const legacyBaseUrl = buildChildEnv(
-      { ...baseConfig, observability: { langfuse: { enabled: true } } },
+      {
+        ...baseConfig,
+        observability: {
+          agentTracing: {
+            enabled: true,
+            plugin: "@langfuse/opencode-observability-plugin@9.9.9",
+          },
+        },
+      },
       { LANGFUSE_BASEURL: "https://langfuse.legacy.test" },
     );
     expect(legacyBaseUrl.LANGFUSE_BASEURL).toBe("https://langfuse.legacy.test");
 
     const disabled = buildChildEnv(baseConfig, {
+      OPENCODE_OTLP_HEADERS: "authorization=Bearer phoenix-test-key",
       LANGFUSE_PUBLIC_KEY: "pk-lf-test",
       LANGFUSE_SECRET_KEY: "sk-lf-test",
     });
+    expect(disabled.OPENCODE_OTLP_HEADERS).toBeUndefined();
     expect(disabled.LANGFUSE_PUBLIC_KEY).toBeUndefined();
     expect(disabled.LANGFUSE_SECRET_KEY).toBeUndefined();
   });
@@ -373,7 +443,7 @@ describe("session lifecycle", () => {
   it("writes the generated config where OpenCode actually reads it", async () => {
     const { stub } = makeSpawnStub(new FakeChild());
     const runtime = new OpenCodeAgentRuntime(
-      { ...baseConfig, observability: { langfuse: { enabled: true } } },
+      { ...baseConfig, observability: { agentTracing: { enabled: true } } },
       { spawnImpl: stub },
     );
     const session = await runtime.startSession({
@@ -396,8 +466,12 @@ describe("session lifecycle", () => {
     expect(parsed.model).toBe("reviewer/glm");
     expect(parsed.plugins).toEqual([
       {
-        package: "@langfuse/opencode-observability-plugin@0.7.0",
-        options: { tags: ["review:rev_path", "repository:acme/widgets", "pr:3"] },
+        package: "@devtheops/opencode-plugin-otel@2.1.0",
+        options: {
+          enabled: true,
+          tags: ["review:rev_path", "repository:acme/widgets", "pr:3"],
+          spanAttributes: "review.id=rev_path,repository=acme/widgets,pr.number=3",
+        },
       },
     ]);
     rmSync(root, { recursive: true, force: true });
@@ -459,6 +533,39 @@ describe("execute: successful tasks", () => {
     expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 64, reasoningTokens: 10 });
     expect(result.sessionId).toBe(session.id);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("caps oversized prompts below the Linux per-argument limit", async () => {
+    const child = new FakeChild();
+    const { runtime, calls } = makeRuntime(child);
+    const { session } = await startedSession(runtime);
+    const instruction = `HEAD_MARKER\n${"x".repeat(300_000)}\nTAIL_MARKER`;
+
+    const resultPromise = runtime.execute(session, { instruction, output: "text" });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const prompt = calls[0]![1].at(-1) as string;
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(120 * 1024);
+    // Both ends survive so the output contract (at the end) is never cut.
+    expect(prompt).toContain("HEAD_MARKER");
+    expect(prompt).toContain("TAIL_MARKER");
+
+    child.writeOut([stepStart, textEvent("ok"), stepFinish].join("\n") + "\n");
+    child.close(0);
+    await resultPromise;
+  });
+
+  it("reads flattened OpenCode 2.2.6 token usage", async () => {
+    const child = new FakeChild();
+    const { runtime, calls } = makeRuntime(child);
+    const { session } = await startedSession(runtime);
+
+    const resultPromise = runtime.execute(session, { instruction: "summarize the diff", output: "text" });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    child.writeOut([stepStart, textEvent("The change looks fine."), stepFinishFlat].join("\n") + "\n");
+    child.close(0);
+
+    const result = await resultPromise;
+    expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 64, reasoningTokens: 10 });
   });
 
   it("parses fenced JSON output and validates it", async () => {
@@ -641,6 +748,49 @@ describe("execute: failure normalization", () => {
     await expect(promise).rejects.toMatchObject({ code: "spawn" });
   });
 
+  it("spawn failures keep the OS error code in the detail", async () => {
+    const errorChild = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      exitCode: null,
+      killed: false,
+      kill: () => true,
+    }) as unknown as ChildProcess;
+    const { stub } = makeSpawnStub(errorChild);
+    const runtime = new OpenCodeAgentRuntime(baseConfig, { spawnImpl: stub });
+    const { session } = await startedSession(runtime);
+    const promise = runtime.execute(session, { instruction: "x", output: "text" });
+    setTimeout(
+      () =>
+        (errorChild as unknown as EventEmitter).emit(
+          "error",
+          Object.assign(new Error("spawn /usr/local/bin/opencode E2BIG"), {
+            code: "E2BIG",
+            errno: -7,
+            syscall: "spawn /usr/local/bin/opencode",
+          }),
+        ),
+      5,
+    );
+    const err = await promise.catch((e: unknown) => e as AgentRuntimeError);
+    expect(err.code).toBe("spawn");
+    expect(err.detail).toContain("E2BIG");
+    expect(err.detail).toContain("spawn /usr/local/bin/opencode");
+  });
+
+  it("synchronous spawn failures keep the cause in the detail", async () => {
+    const stub = (() => {
+      throw Object.assign(new Error("invalid argument"), { code: "EINVAL", syscall: "spawn" });
+    }) as unknown as typeof import("node:child_process").spawn;
+    const runtime = new OpenCodeAgentRuntime(baseConfig, { spawnImpl: stub });
+    const { session } = await startedSession(runtime);
+    const err = await runtime
+      .execute(session, { instruction: "x", output: "text" })
+      .catch((e: unknown) => e as AgentRuntimeError);
+    expect(err.code).toBe("spawn");
+    expect(err.detail).toContain("EINVAL");
+  });
+
   it("provider unavailable: auth failure surfaces as an error event with exit code 0", async () => {
     const child = new FakeChild();
     const { runtime, calls } = makeRuntime(child);
@@ -775,13 +925,19 @@ describe("execution observability", () => {
     delete process.env.MODEL_API_KEY;
   });
 
-  it("logs non-secret Langfuse diagnostics (presence only, never key values)", async () => {
-    process.env.LANGFUSE_PUBLIC_KEY = "pk-lf-secret-value";
-    process.env.LANGFUSE_SECRET_KEY = "sk-lf-secret-value";
-    process.env.LANGFUSE_BASE_URL = "https://langfuse.test";
+  it("logs non-secret tracing diagnostics (presence only, never credential values)", async () => {
+    process.env.OPENCODE_OTLP_HEADERS = "authorization=Bearer phoenix-secret-value";
     const { logger, lines } = makeCaptureLogger();
     const runtime = new OpenCodeAgentRuntime(
-      { ...baseConfig, observability: { langfuse: { enabled: true } } },
+      {
+        ...baseConfig,
+        observability: {
+          agentTracing: {
+            enabled: true,
+            options: { endpoint: "http://phoenix.test:6006", protocol: "http/protobuf" },
+          },
+        },
+      },
       {
         logger,
         spawnImpl: makeSpawnStub(new FakeChild()).stub,
@@ -793,16 +949,13 @@ describe("execution observability", () => {
 
     const sessionLog = lines.find((l) => l.obj.event === "agent_session_created");
     expect(sessionLog?.obj.agentTracingStatus).toMatchObject({
-      publicKeyPresent: true,
-      secretKeyPresent: true,
-      baseUrl: "https://langfuse.test",
+      endpoint: "http://phoenix.test:6006",
+      protocol: "http/protobuf",
+      otlpHeadersPresent: true,
     });
-    expect(JSON.stringify(lines)).not.toContain("pk-lf-secret-value");
-    expect(JSON.stringify(lines)).not.toContain("sk-lf-secret-value");
+    expect(JSON.stringify(lines)).not.toContain("phoenix-secret-value");
 
-    delete process.env.LANGFUSE_PUBLIC_KEY;
-    delete process.env.LANGFUSE_SECRET_KEY;
-    delete process.env.LANGFUSE_BASE_URL;
+    delete process.env.OPENCODE_OTLP_HEADERS;
   });
 
   it("streams child output: error events at warn, text content never logged", async () => {
@@ -837,7 +990,7 @@ describe("execution observability", () => {
     expect(JSON.stringify(lines)).not.toContain("must not be logged");
   });
 
-  it("surfaces Langfuse plugin diagnostics from stderr at info", async () => {
+  it("surfaces tracing plugin diagnostics from stderr at info", async () => {
     const child = new FakeChild();
     const { logger, lines } = makeCaptureLogger();
     const { runtime, calls } = makeRuntime(child, { logger });
@@ -847,7 +1000,7 @@ describe("execution observability", () => {
 
     child.stderr.emit(
       "data",
-      Buffer.from("[Langfuse tracing disabled] Missing Langfuse credentials\n"),
+      Buffer.from("[opencode-plugin-otel] exporting spans to http://phoenix:6006\n"),
     );
     child.close(0);
     await expect(resultPromise).rejects.toMatchObject({ code: "invalid_output" });
@@ -858,14 +1011,15 @@ describe("execution observability", () => {
       msg: "agent tracing output",
       obj: {
         stream: "stderr",
-        summary: expect.stringContaining("Missing Langfuse credentials"),
+        summary: expect.stringContaining("exporting spans"),
       },
     });
   });
 
-  it("redacts secrets (including the Langfuse secret key) from streamed stderr", async () => {
+  it("redacts secrets (including tracing credentials) from streamed stderr", async () => {
     process.env.MODEL_API_KEY = "sk-stderr-secret";
     process.env.LANGFUSE_SECRET_KEY = "sk-lf-stderr-secret";
+    process.env.OPENCODE_OTLP_HEADERS = "authorization=Bearer sk-otel-stderr-secret";
     const child = new FakeChild();
     const { logger, lines } = makeCaptureLogger();
     const { runtime, calls } = makeRuntime(child, { logger });
@@ -875,7 +1029,9 @@ describe("execution observability", () => {
 
     child.stderr.emit(
       "data",
-      Buffer.from("fatal: api key sk-stderr-secret rejected; langfuse sk-lf-stderr-secret\n"),
+      Buffer.from(
+        "fatal: api key sk-stderr-secret rejected; langfuse sk-lf-stderr-secret; authorization=Bearer sk-otel-stderr-secret\n",
+      ),
     );
     child.close(1);
     await expect(resultPromise).rejects.toMatchObject({ code: "crash" });
@@ -886,9 +1042,11 @@ describe("execution observability", () => {
     expect(stderrLine).toMatchObject({ level: "warn" });
     expect(JSON.stringify(stderrLine)).not.toContain("sk-stderr-secret");
     expect(JSON.stringify(stderrLine)).not.toContain("sk-lf-stderr-secret");
+    expect(JSON.stringify(stderrLine)).not.toContain("sk-otel-stderr-secret");
     expect(JSON.stringify(stderrLine)).toContain("[redacted]");
     delete process.env.MODEL_API_KEY;
     delete process.env.LANGFUSE_SECRET_KEY;
+    delete process.env.OPENCODE_OTLP_HEADERS;
   });
 
   it("reports a timeout before killing the child", async () => {

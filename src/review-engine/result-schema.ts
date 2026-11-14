@@ -17,13 +17,44 @@ import { FINDING_CATEGORIES } from "./types.js";
 
 const findingEvidenceSchema = z.object({
   file: z.string().min(1).max(512),
-  // Models emit `null` when they cannot pin an evidence line. Treat it as
-  // "unspecified" rather than aborting the whole review: `excerpt` + `reason`
-  // still anchor the evidence.
-  line: z.number().int().min(1).nullable().optional().transform((v) => v ?? undefined),
+  // Models emit `null` (or 0) when they cannot pin an evidence line. Treat it
+  // as "unspecified" rather than aborting the whole review: `excerpt` +
+  // `reason` still anchor the evidence.
+  line: z
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .optional()
+    .transform((v) => (v === 0 ? undefined : v ?? undefined)),
   excerpt: z.string().min(1).max(2_000),
   reason: z.string().min(1).max(2_000),
 });
+
+/**
+ * Conventions are prompt context, never user-facing content. Models routinely
+ * paste whole guideline paragraphs here, so an over-long entry is clamped
+ * instead of failing the entire review (a 500-char Zod cap used to abort the
+ * analysis stage with `invalid_output`).
+ */
+const MAX_CONVENTION_CHARS = 500;
+const conventionSchema = z.string().transform((value) => {
+  const trimmed = value.trim();
+  return trimmed.length <= MAX_CONVENTION_CHARS
+    ? trimmed
+    : `${trimmed.slice(0, MAX_CONVENTION_CHARS - 1)}…`;
+});
+
+/** Optional string that the model may legitimately omit as `null`/empty. */
+const optionalString = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .nullish()
+    .transform((v) => {
+      const trimmed = v?.trim();
+      return trimmed ? trimmed : undefined;
+    });
 
 export const findingSchema = z.object({
   category: z.enum(FINDING_CATEGORIES),
@@ -32,32 +63,48 @@ export const findingSchema = z.object({
   title: z.string().min(1).max(300),
   file: z.string().min(1).max(512),
   line: z.number().int().min(1),
-  description: z.string().min(1).max(5_000),
+  description: z.string().min(1).max(2_000),
+  impact: optionalString(1_000),
+  recommendation: optionalString(1_000),
+  guideline: optionalString(300),
   evidence: z.array(findingEvidenceSchema).min(1, "every finding must carry at least one evidence reference"),
-  verified: z.boolean().optional(),
+  verified: z.boolean().nullish().transform((v) => v ?? undefined),
 });
 
 export const reviewResultSchema = z
   .preprocess(
     (raw) => {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+      const value = { ...(raw as Record<string, unknown>) };
       // The model is shown snake_case keys in the prompt template; accept both
       // spellings so the validation boundary stays strict on content, not casing.
-      if (typeof raw === "object" && raw !== null && "uncertain_findings" in raw) {
-        const { uncertain_findings, ...rest } = raw as Record<string, unknown>;
-        return { ...rest, uncertainFindings: uncertain_findings };
+      if ("uncertain_findings" in value) {
+        value.uncertainFindings = value.uncertain_findings;
+        delete value.uncertain_findings;
       }
-      return raw;
+      // Models sometimes omit or null an empty list. Normalize it to the
+      // documented empty-array shape instead of failing the whole review.
+      for (const key of ["findings", "uncertainFindings", "conventions"] as const) {
+        if (value[key] === null || value[key] === undefined) value[key] = [];
+      }
+      // The engine already falls back to the analysis objective; accept a
+      // missing/null summary rather than failing the whole review.
+      if (value.summary === null || value.summary === undefined) value.summary = "";
+      // schemaVersion is a constant in this protocol; normalize omission.
+      if (value.schemaVersion === null || value.schemaVersion === undefined) value.schemaVersion = 1;
+      return value;
     },
     z
       .object({
     schemaVersion: z.literal(1),
-    summary: z.string().min(1).max(20_000),
+    /** Two-sentence verdict for developers; the full audit answer is in findings. */
+    summary: z.string().max(4_000),
     /** Inline-eligible findings. An empty array is VALID (no invented quota). */
     findings: z.array(findingSchema),
     /** Low-confidence findings; published in the summary, never inline. */
     uncertainFindings: z.array(findingSchema).default([]),
     /** Detected project conventions relevant to this review (§6.5). */
-    conventions: z.array(z.string().min(1).max(500)).default([]),
+    conventions: z.array(conventionSchema).default([]),
   })
       .strict(),
   );
@@ -96,7 +143,7 @@ export const analysisOutputSchema = z.preprocess(
   z
     .object({
       objective: z.string().max(5_000).default(""),
-      conventions: z.array(z.string().min(1).max(500)).default([]),
+      conventions: z.array(conventionSchema).default([]),
       /** Requests for additional repository context (controlled protocol). */
       tool_requests: z.array(z.unknown()).default([]),
       /** Preliminary findings; finalized (or dropped) by the reporting call. */

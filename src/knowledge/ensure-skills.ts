@@ -41,11 +41,12 @@ import {
   resolveCommitSha,
   sha256Hex,
 } from "./fetch.js";
-import type {
-  KnowledgeFetcher,
-  KnowledgeFileRecord,
-  KnowledgeSnapshot,
-  KnowledgeSourceSnapshot,
+import {
+  knowledgeRefSlug,
+  type KnowledgeFetcher,
+  type KnowledgeFileRecord,
+  type KnowledgeSnapshot,
+  type KnowledgeSourceSnapshot,
 } from "./types.js";
 
 /** Per-file hard cap so one huge file cannot blow the source budget. */
@@ -248,7 +249,7 @@ async function writeCacheEntry(
   files: KnowledgeFileRecord[],
   contents: Map<string, string>,
 ): Promise<{ dir: string; manifest: KnowledgeManifest }> {
-  const dir = path.join(cacheDir, kind, ref.replace(/[^A-Za-z0-9._-]/g, "_"));
+  const dir = path.join(cacheDir, kind, knowledgeRefSlug(ref));
   const tempDir = path.join(cacheDir, `.tmp-${kind}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
   await fsp.mkdir(tempDir, { recursive: true });
   try {
@@ -291,7 +292,7 @@ interface CachedEntry {
 
 /** Read + validate a cached copy: manifest parses and every file hash matches. */
 async function readCachedEntry(cacheDir: string, kind: "skill" | "handbook", ref: string): Promise<CachedEntry | null> {
-  const dir = path.join(cacheDir, kind, ref.replace(/[^A-Za-z0-9._-]/g, "_"));
+  const dir = path.join(cacheDir, kind, knowledgeRefSlug(ref));
   let raw: string;
   try {
     raw = await fsp.readFile(path.join(dir, "manifest.json"), "utf8");
@@ -330,11 +331,14 @@ async function ensureSource(
   timeoutMs: number,
   logger: pino.Logger,
 ): Promise<KnowledgeSourceSnapshot> {
-  const requestedRef = ((spec.refOverride ?? "").trim() || spec.ref).toLowerCase();
+  // Branch names are case-sensitive on GitHub; only SHA comparisons are
+  // case-insensitive. Never lowercase a ref before resolving it.
+  const requestedRef = (spec.refOverride ?? "").trim() || spec.ref;
+  const normalizedSha = requestedRef.toLowerCase();
 
   // 1. Valid cached copy for the requested ref → reuse, no network.
-  if (/^[0-9a-f]{40}$/.test(requestedRef)) {
-    const cached = await readCachedEntry(cacheDir, spec.kind, requestedRef);
+  if (/^[0-9a-f]{40}$/.test(normalizedSha)) {
+    const cached = await readCachedEntry(cacheDir, spec.kind, normalizedSha);
     if (cached) {
       logger.info(
         { source: spec.kind, ref: cached.manifest.ref, status: cached.manifest.status, files: cached.manifest.files.length },
@@ -394,14 +398,29 @@ export interface EnsureKnowledgeOptions {
   fetcher?: KnowledgeFetcher;
 }
 
+/** Per-technology handbook ref resolved from config into a fetchable spec. */
+export interface HandbookVariantSpec {
+  technologies: string[];
+  spec: KnowledgeSourceSpec;
+}
+
 /** Build the per-source specs from the (validated) review configuration. */
 export function knowledgeSpecsFromConfig(config: ReviewConfig, env: NodeJS.ProcessEnv = process.env): {
   cacheDir: string;
   timeoutMs: number;
   skill: KnowledgeSourceSpec;
   handbook: KnowledgeSourceSpec;
+  handbookVariants: HandbookVariantSpec[];
 } {
   const knowledge = config.knowledge;
+  const handbookBase: KnowledgeSourceSpec = {
+    kind: "handbook",
+    repo: knowledge.handbook.repo,
+    ref: knowledge.handbook.ref,
+    path: knowledge.handbook.path,
+    maxBytes: knowledge.handbook.maxBytes,
+    refOverride: env.KNOWLEDGE_HANDBOOK_REF,
+  };
   return {
     cacheDir: knowledge.cacheDir.trim() || (env.KNOWLEDGE_CACHE_DIR ?? "").trim(),
     timeoutMs: knowledge.fetchTimeoutMs,
@@ -413,14 +432,13 @@ export function knowledgeSpecsFromConfig(config: ReviewConfig, env: NodeJS.Proce
       maxBytes: knowledge.skill.maxBytes,
       refOverride: env.KNOWLEDGE_SKILL_REF,
     },
-    handbook: {
-      kind: "handbook",
-      repo: knowledge.handbook.repo,
-      ref: knowledge.handbook.ref,
-      path: knowledge.handbook.path,
-      maxBytes: knowledge.handbook.maxBytes,
-      refOverride: env.KNOWLEDGE_HANDBOOK_REF,
-    },
+    handbook: handbookBase,
+    handbookVariants: knowledge.handbook.technologyRefs.map((variant) => ({
+      technologies: variant.technologies.map((tech) => tech.trim().toLowerCase()).filter(Boolean),
+      // Variant refs are explicit config; only the default handbook ref can
+      // be overridden by KNOWLEDGE_HANDBOOK_REF.
+      spec: { ...handbookBase, ref: variant.ref, refOverride: undefined },
+    })),
   };
 }
 
@@ -446,6 +464,7 @@ export async function ensureKnowledgeSources(
       cacheDir: "",
       skill: toSnapshot("unavailable", "", null, null, []),
       handbook: toSnapshot("unavailable", "", null, null, []),
+      handbookVariants: [],
     };
   }
   const key = cacheDir;
@@ -454,11 +473,32 @@ export async function ensureKnowledgeSources(
   const run = (async (): Promise<KnowledgeSnapshot> => {
     await fsp.mkdir(cacheDir, { recursive: true });
     const fetcher = retryingFetcher(options.fetcher ?? createDefaultKnowledgeFetcher());
-    const [skill, handbook] = await Promise.all([
+
+    // One fetch per distinct handbook ref: variants that reuse the default
+    // ref (or each other) share the same cache entry and promise.
+    const handbookByRef = new Map<string, Promise<KnowledgeSourceSnapshot>>();
+    const ensureHandbookRef = (spec: KnowledgeSourceSpec): Promise<KnowledgeSourceSnapshot> => {
+      const effectiveRef = (spec.refOverride ?? "").trim() || spec.ref;
+      const key = `${spec.repo}\u0000${effectiveRef}\u0000${spec.path}`;
+      let pending = handbookByRef.get(key);
+      if (!pending) {
+        pending = ensureSource(cacheDir, spec, fetcher, specs.timeoutMs, logger);
+        handbookByRef.set(key, pending);
+      }
+      return pending;
+    };
+
+    const [skill, handbook, handbookVariants] = await Promise.all([
       ensureSource(cacheDir, specs.skill, fetcher, specs.timeoutMs, logger),
-      ensureSource(cacheDir, specs.handbook, fetcher, specs.timeoutMs, logger),
+      ensureHandbookRef(specs.handbook),
+      Promise.all(
+        specs.handbookVariants.map(async (variant) => ({
+          technologies: variant.technologies,
+          source: await ensureHandbookRef(variant.spec),
+        })),
+      ),
     ]);
-    return { cacheDir, skill, handbook };
+    return { cacheDir, skill, handbook, handbookVariants };
   })();
 
   inflight = run;

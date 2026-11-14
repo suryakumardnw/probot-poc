@@ -84,6 +84,51 @@ async function movePullRef(newSha: string): Promise<void> {
   await git(originPath, "update-ref", `refs/pull/${PR_NUMBER}/head`, newSha);
 }
 
+interface AdvancedBaseFixture {
+  rootDir: string;
+  originPath: string;
+  branchPointSha: string;
+  baseSha: string;
+  headSha: string;
+}
+
+/**
+ * A PR branch that was opened before main advanced. The PR head branches from
+ * an older main commit; the base tip contains commits that are NOT part of the
+ * PR. GitHub's PR diff is merge-base...head, so the review must ignore those
+ * base-branch-only changes.
+ */
+async function createAdvancedBaseFixture(): Promise<AdvancedBaseFixture> {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "ws-advanced-"));
+  const origin = path.join(dir, "origin.git");
+  const work = path.join(dir, "work");
+
+  await git(dir, "init", "--bare", origin);
+  await git(dir, "clone", origin, work);
+
+  fs.writeFileSync(path.join(work, "base.txt"), "base\n");
+  await git(work, "add", "-A");
+  await git(work, "commit", "-m", "branch point");
+  const branchPointSha = (await git(work, "rev-parse", "HEAD")).trim();
+
+  await git(work, "checkout", "-b", "pr");
+  fs.writeFileSync(path.join(work, "pr-change.txt"), "the actual PR change\n");
+  await git(work, "add", "-A");
+  await git(work, "commit", "-m", "pr change");
+  const headSha = (await git(work, "rev-parse", "HEAD")).trim();
+
+  await git(work, "checkout", "main");
+  fs.writeFileSync(path.join(work, "main-advance.txt"), "changed on main after branching\n");
+  await git(work, "add", "-A");
+  await git(work, "commit", "-m", "main advance");
+  const baseSha = (await git(work, "rev-parse", "HEAD")).trim();
+
+  await git(work, "push", "origin", "main");
+  await git(work, "push", "origin", `pr:refs/pull/${PR_NUMBER}/head`);
+
+  return { rootDir: dir, originPath: origin, branchPointSha, baseSha, headSha };
+}
+
 // Service factory ----------------------------------------------------------------
 
 function makeTokenProvider(): InstallationTokenProvider & { minted: number } {
@@ -102,12 +147,12 @@ type ServiceHandle = {
   tokens: ReturnType<typeof makeTokenProvider>;
 };
 
-function makeService(opts: { retentionHours?: number; cleanupAfterReview?: boolean; cloneUrlBuilder?: (ctx: { repositoryFullName: string; token: string }) => string } = {}): ServiceHandle {
+function makeService(opts: { retentionHours?: number; cleanupAfterReview?: boolean; cloneDepth?: number; cloneUrlBuilder?: (ctx: { repositoryFullName: string; token: string }) => string } = {}): ServiceHandle {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ws-root-"));
   const tokens = makeTokenProvider();
   const service = new ReviewWorkspaceService({
     policy: {
-      cloneDepth: 50, // enough history for merge-base in the fixture
+      cloneDepth: opts.cloneDepth ?? 50, // enough history for merge-base in the fixture
       retentionHours: opts.retentionHours ?? 0,
       cleanupAfterReview: opts.cleanupAfterReview ?? true,
       maxFilesPerReview: 2_000,
@@ -129,6 +174,9 @@ async function cleanDatabase(): Promise<void> {
   await prisma.outboxEvent.deleteMany();
   await prisma.reviewJob.deleteMany();
   await prisma.reviewComment.deleteMany();
+  // Findings (from suites that run before this file) reference Review rows.
+  await prisma.findingStatusTransition.deleteMany();
+  await prisma.finding.deleteMany();
   await prisma.review.deleteMany();
   await prisma.pullRequest.deleteMany();
   await prisma.repository.deleteMany();
@@ -295,6 +343,36 @@ describe("workspace prepare", () => {
     const cleaned = await prisma.reviewWorkspace.findFirst({ where: { reviewId: "review-ws-basic" } });
     expect(cleaned?.status).toBe("cleaned");
     expect(cleaned?.cleanedAt).not.toBeNull();
+  });
+
+  test("diff uses the merge base, not the advanced base-branch tip (clone depth 1)", async () => {
+    const advanced = await createAdvancedBaseFixture();
+    await seedReviewRow("review-ws-mergebase");
+    // Production config uses shallow depth 1: the merge base is not initially
+    // present, so the service must deepen the fetch before diffing.
+    const { service } = makeService({
+      cloneDepth: 1,
+      cloneUrlBuilder: () => advanced.originPath,
+    });
+
+    const result = await service.prepare({
+      reviewId: "review-ws-mergebase",
+      repositoryFullName: REPO_FULL_NAME,
+      installationId: INSTALLATION_ID,
+      pullRequestNumber: PR_NUMBER,
+      headSha: advanced.headSha,
+      baseSha: advanced.baseSha,
+    });
+
+    expect(result.mergeBaseSha).toBe(advanced.branchPointSha);
+    expect(result.baseSha).toBe(advanced.baseSha);
+    // GitHub's PR diff is merge-base...head: only the PR commit's change.
+    expect(result.changedFiles.map((file) => file.path)).toEqual(["pr-change.txt"]);
+    expect(result.diff).toContain("pr-change.txt");
+    expect(result.diff).not.toContain("main-advance.txt");
+
+    await service.cleanupAfterReview("review-ws-mergebase");
+    await fsp.rm(advanced.rootDir, { recursive: true, force: true });
   });
 
   test("stale commit detection: moved PR head ref is rejected", async () => {

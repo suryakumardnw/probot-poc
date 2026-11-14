@@ -21,6 +21,16 @@
 
 name: ai-pr-reviewer
 
+# Memory budget (limits, not reservations) — sized for an 8 GB host. The stack
+# is idle most of the time; peaks happen while a review runs and should settle
+# after temporary sessions are released. Re-tune from observed peaks, not from
+# these ceilings:
+#   worker 1536M + probot 256M + postgres 384M + redis 256M + backup 128M
+#   = 2560M (~2.5 GiB), plus optional Phoenix 512M + Dozzle 128M + tunnel 64M
+#   = 3200M (~3.2 GiB) for the whole deployment.
+# Sandbox containers (config/review.json execution.resources.memoryLimit) run
+# on SANDBOX_DOCKER_HOST and are NOT part of this budget.
+
 x-app-build: &app-build
   build:
     context: ..
@@ -94,7 +104,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 512M
+          memory: 256M
     networks:
       - internal
       # Public ingress edge (Dokploy). External network created by Dokploy.
@@ -151,10 +161,16 @@ services:
       resources:
         limits:
           cpus: "2.0" # §18.4 starting value (concurrency 1)
-          memory: 2G
+          # Includes the Node worker, the spawned opencode agent and git
+          # operations. 1.5 GB is the reviewed starting point; watch peak RSS
+          # during a real PR before lowering it further.
+          memory: 1536M
     networks:
       - internal
       - sandbox-egress
+      # Optional trace backend (deploy/observability). The worker reaches
+      # Phoenix at http://phoenix:6006 over this app-owned bridge.
+      - observability
 
   postgres:
     # Pinned minor (§18.3). No `ports:` — reachable only on `internal`.
@@ -179,7 +195,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 1G
+          memory: 384M
     networks:
       - internal
 
@@ -202,7 +218,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 512M
+          memory: 256M
     networks:
       - internal
 
@@ -211,6 +227,15 @@ services:
     # deploy/backup/Dockerfile (pinned postgres image + backup scripts).
     # Healthcheck fails when the newest backup is older than
     # BACKUP_MAX_AGE_HOURS (surfaces stale backups in `docker compose ps`).
+    #
+    # Disabled by default for the current lean deployment. PostgreSQL data
+    # itself lives in the `postgres-data` named volume, so stopping this
+    # service never touches the database. Enable scheduled backups with:
+    #   docker compose --profile backup up -d backup
+    # and take a manual dump before going to production:
+    #   docker compose --profile backup run --rm --entrypoint sh backup -c \
+    #     'pg_dump --no-owner --no-privileges -Fc -f /backups/reviewer-manual-$(date -u +%Y%m%d-%H%M%S).dump'
+    profiles: ["backup"]
     build:
       context: ./backup
       dockerfile: Dockerfile
@@ -243,7 +268,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M
+          memory: 128M
     networks:
       - internal
 
@@ -266,6 +291,11 @@ networks:
   # sidecar here to enforce domain allowlists (docs/deployment.md §8).
   sandbox-egress:
     driver: bridge
+  # Optional observability stack (deploy/observability/docker-compose.yml)
+  # joins this network as external. The app owns it so `docker compose up`
+  # works with tracing disabled; start the app once before the trace stack.
+  observability:
+    name: ${OBSERVABILITY_NETWORK:-ai-pr-reviewer_observability}
   # Public edge for the Dokploy HTTPS ingress. Dokploy creates this network.
   edge:
     external: true

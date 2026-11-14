@@ -23,6 +23,9 @@ import { DEFAULT_CONFIG_PATH } from "../src/config/review-loader.js";
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 process.env.REDIS_URL ??= "redis://localhost:6379";
 process.env.MODEL_BASE_URL ??= "http://localhost:8000";
+// The checked-in configuration references ${MODEL_NAME}; pin it for the
+// admin configuration round-trip assertions (they expect the default model).
+process.env.MODEL_NAME ??= "glm-4.7-flash";
 
 const prisma = getPrisma();
 

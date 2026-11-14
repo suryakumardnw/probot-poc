@@ -18,9 +18,13 @@
  */
 import { describe, expect, test } from "vitest";
 import type pino from "pino";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   COMMON_REVIEW_INSTRUCTIONS,
   HANDBOOK_MODE_INSTRUCTIONS,
+  HANDBOOK_REFERENCE_INSTRUCTIONS,
 } from "../src/review-engine/prompts/index.js";
 import {
   CHARS_PER_TOKEN,
@@ -29,6 +33,9 @@ import {
   selectHandbookUnderBudget,
 } from "../src/review-engine/retrieval.js";
 import { composeInjectionStage1, composeInjectionLaterStages } from "../src/review-engine/engine.js";
+import { resolveReviewInjection } from "../src/review-engine/injection.js";
+import { reviewConfigSchema } from "../src/config/review-schema.js";
+import type { KnowledgeSnapshot } from "../src/knowledge/types.js";
 import type { PromptInjection } from "../src/review-engine/types.js";
 
 const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as pino.Logger;
@@ -146,6 +153,21 @@ describe("selectHandbookUnderBudget", () => {
     }
   });
 
+  test("renders the materialized workspace copy path for each handbook file", () => {
+    const files = [{ path: "flutter/style.md", content: "# Style\n\nUse theme tokens." }];
+    const ranked = rankHandbookFiles(files, dartChanged);
+    const selection = selectHandbookUnderBudget(
+      ranked,
+      dartChanged,
+      { maxTokens: 1000, maxChars: 5000 },
+      { workspacePrefix: "knowledge/handbook-variants/ts-ref" },
+    );
+    expect(selection.text).toContain("## handbook file: flutter/style.md");
+    expect(selection.text).toContain(
+      "workspace copy: knowledge/handbook-variants/ts-ref/flutter/style.md",
+    );
+  });
+
   test("never injects the same file or identical content twice", () => {
     const same = "# Duplicated\n\nSame body everywhere.";
     const files = [
@@ -208,7 +230,7 @@ describe("prompt profiles (§4.1)", () => {
     expect(later).toContain(HANDBOOK_MODE_INSTRUCTIONS);
   });
 
-  test("handbook profile: guidelines injected ONCE, later stages reference them", () => {
+  test("handbook profile: later stages use the digest supplied by retrieval", () => {
     const stage1 = composeInjectionStage1(handbookInjection);
     expect(stage1).toContain(HANDBOOK_MODE_INSTRUCTIONS);
     expect(stage1).toContain("GUIDELINE-TEXT");
@@ -216,7 +238,6 @@ describe("prompt profiles (§4.1)", () => {
 
     const later = composeInjectionLaterStages(handbookInjection);
     expect(later).toBe("LATER-REFERENCE");
-    expect(later).not.toContain("GUIDELINE-TEXT");
   });
 
   test("guideline instruction mandates citations and forbids invented standards", () => {
@@ -224,8 +245,82 @@ describe("prompt profiles (§4.1)", () => {
     expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("NEVER invent standards");
     expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("no runtime impact");
     expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("report nothing");
+    // The citation path and the readable materialized path must be explicit.
+    expect(HANDBOOK_MODE_INSTRUCTIONS).toContain("workspace copy");
+    expect(HANDBOOK_REFERENCE_INSTRUCTIONS).toContain("workspace copy");
     // Common base is shared by all modes and still treats repo content as data.
     expect(COMMON_REVIEW_INSTRUCTIONS).toContain("UNTRUSTED DATA");
     expect(COMMON_REVIEW_INSTRUCTIONS).not.toContain("Do NOT report style nits");
+  });
+});
+
+describe("handbook injection across stages", () => {
+  test("later stages receive the full guideline text and the workspace copy path", async () => {
+    const root = mkdtempSync(join(tmpdir(), "handbook-later-"));
+    try {
+      const knowledgeDir = join(root, "knowledge");
+      mkdirSync(join(knowledgeDir, "handbook", "docs"), { recursive: true });
+      writeFileSync(
+        join(knowledgeDir, "handbook", "docs", "standards.md"),
+        "# Standards\n\nAlways test your changes.",
+        "utf8",
+      );
+      const config = reviewConfigSchema.parse({
+        schemaVersion: 1,
+        provider: {
+          baseURL: "${MODEL_BASE_URL}",
+          apiKeyEnv: "MODEL_API_KEY",
+          model: "test-model",
+        },
+        github: { organization: "acme" },
+        knowledge: {
+          fetchTimeoutMs: 5000,
+          skill: {
+            repo: "vercel-labs/open-agents",
+            ref: "cf865e94de7729751c747171785b6ce57e7b178c",
+            skillDir: "skills/code-review",
+            maxBytes: 200000,
+          },
+          handbook: {
+            repo: "nativewit/engineering-handbook",
+            ref: "main",
+            path: "",
+            maxBytes: 2000000,
+            maxChars: 20000,
+          },
+        },
+      });
+      const snapshot: KnowledgeSnapshot = {
+        cacheDir: root,
+        skill: { status: "unavailable", ref: "", contentHash: null, dir: null, files: [] },
+        handbook: {
+          status: "fresh",
+          ref: "handbook-ref",
+          contentHash: "hash",
+          dir: join(root, "cache", "handbook"),
+          files: [{ path: "docs/standards.md", sha256: "hash", bytes: 40 }],
+        },
+      };
+
+      const injection = await resolveReviewInjection({
+        reviewType: "handbook",
+        config,
+        changedFiles: ["src/index.test.ts"],
+        knowledgeDir,
+        snapshot,
+        logger: fakeLogger,
+      });
+
+      expect(injection?.laterStagesText).toContain("Always test your changes.");
+      expect(injection?.laterStagesText).toContain(
+        "workspace copy: knowledge/handbook/docs/standards.md",
+      );
+      expect(injection?.guidelineSource).toEqual({
+        repo: "nativewit/engineering-handbook",
+        ref: "handbook-ref",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

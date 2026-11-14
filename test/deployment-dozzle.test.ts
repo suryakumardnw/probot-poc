@@ -57,6 +57,13 @@ describe("dozzle compose structure (operations stack)", () => {
     expect(tunnel.expose).toBeUndefined();
   });
 
+  it("keeps the public tunnel opt-in (profile) and host-port-free", () => {
+    const tunnel = compose.services["dozzle-tunnel"];
+    expect(tunnel.profiles).toEqual(["tunnel"]);
+    expect("ports" in tunnel).toBe(false);
+    expect(tunnel.expose).toBeUndefined();
+  });
+
   it("mounts the Docker socket READ-ONLY and shared state as a named volume", () => {
     const mounts = compose.services.dozzle.volumes as string[];
     expect(mounts).toContain("/var/run/docker.sock:/var/run/docker.sock:ro");
@@ -106,6 +113,14 @@ describe("dozzle compose structure (operations stack)", () => {
     expect(env.DOZZLE_ENABLE_ACTIONS).toBe("false");
     expect(env.DOZZLE_ENABLE_SHELL).toBe("false");
     expect(env.DOZZLE_ENABLE_MCP).toBe("false");
+  });
+
+  it("mounts the UI under /dozzle on the existing Probot domain", () => {
+    // Same ingress pattern as Phoenix (/phoenix), except Traefik must NOT
+    // strip this prefix: DOZZLE_BASE rewrites assets to /dozzle/* and expects
+    // to receive it.
+    expect(compose.services.dozzle.environment.DOZZLE_BASE).toBe("/dozzle");
+    expect(compose.services.dozzle.networks).toEqual(["edge"]);
   });
 
   it("joins ONLY the external Dokploy edge network (no internal reach into app networks)", () => {

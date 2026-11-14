@@ -360,6 +360,10 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
     const nav = [
       { href: "/admin", label: "Overview" },
       ...PANEL_SECTIONS.map((section) => ({ href: `/admin/${section}`, label: SECTION_LABELS[section] })),
+      // `/logs` is a Probot-authenticated shortcut that redirects to the
+      // Dozzle UI mounted at /dozzle (same domain, like Phoenix at /phoenix).
+      // Dozzle itself still requires its users.yml login.
+      { href: "/logs", label: "Container logs" },
     ];
     const html = renderEjs(LAYOUT_TEMPLATE, {
       title,
@@ -390,7 +394,7 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
   return async function handlePanelRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const path = url.pathname.replace(/\/+$/, "") || "/";
-    if (path !== "/admin" && !path.startsWith("/admin/")) {
+    if (path !== "/admin" && !path.startsWith("/admin/") && path !== "/logs") {
       return false;
     }
 
@@ -450,6 +454,20 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
 
   async function dispatch(req: IncomingMessage, res: ServerResponse, url: URL, path: string, session: AdminSession): Promise<void> {
     const version = currentVersion();
+
+    // --- Container logs shortcut ------------------------------------------
+
+    // `/logs` is a Probot-authenticated entry point. Traefik routes `/dozzle/*`
+    // directly to the Dozzle container (see deploy/docker-compose.dozzle.yml),
+    // so Probot cannot gate that path itself; Dozzle's own users.yml login is
+    // the gate there. This redirect is a convenience for admins already signed
+    // in to the panel.
+    if (req.method === "GET" && path === "/logs") {
+      res.statusCode = 302;
+      res.setHeader("Location", "/dozzle/");
+      res.end();
+      return;
+    }
 
     // --- Stylesheet -------------------------------------------------------
 

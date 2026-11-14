@@ -8,6 +8,8 @@ import type { PersistedKnowledgeSnapshot } from "./types.js";
 export interface KnowledgeSnapshotSummary {
   skill: { ref: string; contentHash: string } | null;
   handbook: { ref: string; contentHash: string } | null;
+  /** Per-technology refs actually used (absent when none were configured). */
+  handbookVariants?: Array<{ technologies: string[]; ref: string; contentHash: string }>;
 }
 
 export function summarizeKnowledgeSnapshot(value: unknown): KnowledgeSnapshotSummary | null {
@@ -15,7 +17,18 @@ export function summarizeKnowledgeSnapshot(value: unknown): KnowledgeSnapshotSum
   const snapshot = value as PersistedKnowledgeSnapshot;
   const summarize = (source: PersistedKnowledgeSnapshot["skill"]) =>
     source && source.contentHash ? { ref: source.ref, contentHash: source.contentHash } : null;
-  return { skill: summarize(snapshot.skill), handbook: summarize(snapshot.handbook) };
+  const variants = (snapshot.handbookVariants ?? [])
+    .filter((variant) => variant.source.contentHash)
+    .map((variant) => ({
+      technologies: variant.technologies,
+      ref: variant.source.ref,
+      contentHash: variant.source.contentHash,
+    }));
+  return {
+    skill: summarize(snapshot.skill),
+    handbook: summarize(snapshot.handbook),
+    ...(variants.length > 0 ? { handbookVariants: variants } : {}),
+  };
 }
 
 /** Comparison-endpoint projection of the persisted injection metrics. */

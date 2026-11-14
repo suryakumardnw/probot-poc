@@ -62,6 +62,8 @@ import {
 
 /** Diff characters delivered in the initial-analysis instruction. */
 const MAX_DIFF_CHARS = 30_000;
+/** Diff characters re-delivered to the final reporting call (context safety). */
+const MAX_REPORTING_DIFF_CHARS = 24_000;
 /** Character budget for accumulated tool context inside later instructions. */
 const MAX_TOOL_CONTEXT_CHARS = 48_000;
 
@@ -80,23 +82,30 @@ const REVIEW_RESULT_FORMAT = `
 Answer with ONE JSON object exactly in this shape (no extra keys):
 {
   "schemaVersion": 1,
-  "summary": "PR overview + what was checked",
+  "summary": "Two sentences max: what changed and the main risk or verdict.",
   "findings": [
     {
       "category": "functional|regression|security|performance|concurrency|dataIntegrity|errorHandling|apiCompatibility|maintainability|testing",
       "severity": "critical|high|medium|low|informational",
       "confidence": 0.0,
-      "title": "short title",
+      "title": "short, specific title",
       "file": "workspace-relative path",
       "line": 1,
-      "description": "what is wrong and why it matters",
+      "description": "The problem in 1-2 sentences. No guideline quotations.",
+      "impact": "Why it matters in 1-2 sentences: the concrete failure or consequence.",
+      "recommendation": "The actionable fix in 1-2 sentences.",
+      "guideline": "Short reference only, e.g. '03_contracts-schemas.md §3'. Omit when not guideline-derived.",
       "evidence": [ { "file": "...", "line": 1, "excerpt": "verbatim code", "reason": "why this supports the finding" } ],
       "verified": true
     }
   ],
   "uncertain_findings": [ ...same shape... ],
-  "conventions": ["observed project conventions relevant to this review"]
+  "conventions": ["short one-line project conventions relevant to this review (max 200 characters each)"]
 }
+KEEP IT SHORT: summary <= 2 sentences; description, impact and recommendation
+<= 2 sentences each. Put the conclusion first. Never quote whole guideline
+sections — cite the file and section only. Put supporting detail in evidence,
+not in the description.
 "findings" = high-confidence findings, "uncertain_findings" = findings you
 could not fully verify. An empty "findings" array is a valid, expected
 outcome when the change is correct.
@@ -186,15 +195,33 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
   const budget = new RetrievalBudget(plan.budgets.maxFileRetrievals);
   const toolContexts: string[] = [];
   const allFulfilled: ToolResult[] = [];
+  /**
+   * MAX_TOOL_CONTEXT_CHARS is a budget for ALL retrieval rounds, not a
+   * per-round allowance. Every stage prompt is a separate opencode process
+   * and the prompt travels as one argv element (Linux caps it at 128 KiB), so
+   * accumulating 48 KiB per round made later spawns fail with E2BIG.
+   */
+  let toolContextChars = 0;
+  const appendToolContext = (text: string): void => {
+    if (!text) return;
+    const remaining = MAX_TOOL_CONTEXT_CHARS - toolContextChars;
+    if (remaining <= 0) return;
+    const marker = "\n\n(retrieval context truncated to the total budget)";
+    const chunk =
+      text.length <= remaining
+        ? text
+        : `${text.slice(0, Math.max(0, remaining - marker.length))}${marker}`;
+    toolContexts.push(chunk);
+    toolContextChars += chunk.length;
+  };
 
   const changedFilesList = workspace.changedFiles
     .map((f) => `- ${f.status}: ${f.path}${f.previousPath ? ` (was ${f.previousPath})` : ""}`)
     .join("\n");
   const customInstructions = config.review.conventions.customInstructions.trim();
-  // Review-type injection (§4.1): composed ONCE from the trusted instruction
-  // profile plus the review's own injection — the full knowledge text goes
-  // into the analysis stage; later stages reuse it by reference so the same
-  // block is never re-injected in full.
+  // Review-type injection (§4.1): composed from the trusted instruction
+  // profile plus the review's own injection. Each stage runs as a separate
+  // process, so the selected knowledge text must travel with every prompt.
   const methodologyStage1 = composeInjectionStage1(input.promptInjection);
   const methodologyLaterStages = composeInjectionLaterStages(input.promptInjection);
 
@@ -230,7 +257,7 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
           config.repository.files.maxFileBytes,
         );
         const useful = results.some((r) => r.ok);
-        if (results.length > 0) toolContexts.push(renderToolContext(results).slice(0, MAX_TOOL_CONTEXT_CHARS));
+        if (results.length > 0) appendToolContext(renderToolContext(results));
         allFulfilled.push(...results);
         if (!useful) break; // nothing usable came back; don't burn calls on a loop
         round++;
@@ -254,6 +281,7 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
             mergedWithInvestigation: mergeReporting,
             workspacePath: workspace.workspacePath,
             config,
+            diff: workspace.diff,
             methodologyLaterStages,
           });
         }
@@ -277,6 +305,7 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
       mergedWithInvestigation: false,
       workspacePath: workspace.workspacePath,
       config,
+      diff: workspace.diff,
       methodologyLaterStages,
     });
   } finally {
@@ -303,10 +332,10 @@ export function composeInjectionStage1(injection: PromptInjection | null | undef
 }
 
 /**
- * Compose the injection block for LATER stages. When the retrieval layer
- * provides a digest (handbook), it is reused by reference so the full text is
- * injected only once. Otherwise the full guideline text is re-injected,
- * because each stage runs as its own process without shared context.
+ * Compose the injection block for LATER stages. The retrieval layer supplies
+ * `laterStagesText` (profile instructions + the selected guidelines, because
+ * each stage runs as its own process without shared context). Falls back to
+ * the full text when no later-stage digest is available.
  * Exported for prompt-profile tests.
  */
 export function composeInjectionLaterStages(injection: PromptInjection | null | undefined): string {
@@ -350,12 +379,12 @@ shape (no extra keys). This is NOT the final report: do not emit schemaVersion,
 summary, findings or uncertain_findings here.
 {
   "objective": "what this PR does",
-  "conventions": ["..."],
-  "tool_requests": [ { "tool": "read_file|list_files|get_diff", "path": "workspace-relative path" } ],
+  "conventions": ["short one-line convention, max 200 characters"],
+  "tool_requests": [ { "tool": "read_file|list_files|get_diff|search_code", "path": "workspace-relative path", "query": "text (search_code only)" } ],
   "preliminary_findings": [ ...finding objects as described below, may be empty... ],
   "no_additional_context_needed": true|false
 }
-Use "tool_requests" ONLY for read-only inspection (read_file, list_files, get_diff).`;
+Use "tool_requests" ONLY for read-only inspection (read_file, list_files, get_diff, search_code).`;
 }
 
 async function executeAnalysisCall(
@@ -433,7 +462,7 @@ shape (no extra keys). This is NOT the final report: do not emit schemaVersion,
 summary, findings or uncertain_findings here.
 {
   "objective": "updated PR objective",
-  "conventions": ["..."],
+  "conventions": ["short one-line convention, max 200 characters"],
   "tool_requests": [ ...only if you still need a file... ],
   "preliminary_findings": [ ...updated finding list, may be empty... ],
   "no_additional_context_needed": true|false
@@ -459,6 +488,8 @@ interface ReportingContext {
   mergedWithInvestigation: boolean;
   workspacePath: string;
   config: ReviewConfig;
+  /** Unified diff of the change — the reporting stage must see what changed. */
+  diff: string;
   /** Later-stage injection text (profile instructions + guidelines reference). */
   methodologyLaterStages: string;
 }
@@ -486,6 +517,8 @@ ANCHORING: anchor each finding at the file and line where the defect MANIFESTS
 (for example, a caller broken by a changed contract is anchored in the caller
 file, not in the changed file), with evidence from that file.
 ${ctx.toolContext ? `\nADDITIONAL REPOSITORY CONTEXT (read-only retrieval results):\n${ctx.toolContext}\n` : "No additional repository context was retrieved for this review.\n"}
+CHANGED DIFF (the source of truth for what this PR changes):
+${truncate(ctx.diff, MAX_REPORTING_DIFF_CHARS, "(diff truncated — rely on the retrieved context for the rest)")}
 ${ctx.methodologyLaterStages ? `\n${ctx.methodologyLaterStages}\n` : ""}
 PR OBJECTIVE: ${ctx.analysis.objective || "(as analyzed)"}
 ${preliminaryBlock}
@@ -539,10 +572,13 @@ ${REVIEW_RESULT_FORMAT}`,
     conventions,
   };
 
+  const parseRejections = countParseRejections(ctx.budget);
   const retrieval: RetrievalUsage = {
-    requested: allRequestedCount(ctx.budget, ctx.allFulfilled),
+    requested: ctx.allFulfilled.length + parseRejections,
     fulfilled: ctx.allFulfilled.filter((r) => r.ok).length,
-    rejected: ctx.allFulfilled.filter((r) => !r.ok).length,
+    // Protocol-level rejections are requests the agent made too; including
+    // them keeps `rejected` consistent with `requested` and `violations`.
+    rejected: ctx.allFulfilled.filter((r) => !r.ok).length + parseRejections,
     bytesDelivered: ctx.allFulfilled.reduce((sum, r) => sum + (r.ok ? r.content.length : 0), 0),
     violations: [...ctx.budget.violations],
   };
@@ -563,17 +599,15 @@ ${REVIEW_RESULT_FORMAT}`,
   };
 }
 
-/** Total tool requests the agent made = delivered/failed results + parse-level rejections. */
-function allRequestedCount(budget: RetrievalBudget, fulfilled: ToolResult[]): number {
-  const parseRejections = budget.violations.filter(
+/** Protocol-level tool requests that never reached fulfillToolRequests. */
+function countParseRejections(budget: RetrievalBudget): number {
+  return budget.violations.filter(
     (v) =>
       v.includes("rejected") ||
       v.includes("not an object") ||
       v.includes("not an array") ||
       v.includes("out of bounds"),
   ).length;
-  // Every fulfillToolRequests outcome (ok or per-request error) is one request.
-  return fulfilled.length + parseRejections;
 }
 
 function recordUsage(

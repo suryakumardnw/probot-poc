@@ -27,7 +27,7 @@ export interface AgentRuntimeConfigSource {
     timeoutMs: number;
   };
   agent: {
-    runtime: { type: "opencode-cli" | "opencode-server" | "custom"; sessionStrategy: string; timeoutMs: number };
+    runtime: { type: "opencode-cli" | "opencode-sdk" | "opencode-server" | "custom"; sessionStrategy: string; timeoutMs: number };
     context: {
       adaptive: boolean;
       maxFiles: number;
@@ -38,12 +38,17 @@ export interface AgentRuntimeConfigSource {
     tools: { enabled: string[]; permissionPolicy: "allowlist" | "none" };
   };
   /**
-   * Optional agent-trace integration. Only the Langfuse OpenCode plugin is
-   * supported: the application just enables it and forwards credentials to the
-   * isolated child — trace storage/visualisation stays in Langfuse.
+   * Optional agent-tracing integration. Any OpenCode plugin package can be
+   * configured here; the application only enables it and forwards its options
+   * and credentials to the isolated child. Trace storage/visualisation stays in
+   * the backend (Phoenix, Langfuse, ...).
    */
   observability?: {
-    langfuse?: { enabled?: boolean; plugin?: string };
+    agentTracing?: {
+      enabled?: boolean;
+      plugin?: string;
+      options?: Record<string, string | number | boolean | string[]>;
+    };
   };
 }
 
@@ -113,7 +118,7 @@ export function buildPermissionRules(config: AgentRuntimeConfigSource): Record<s
 }
 
 /** Default agent-tracing plugin (pinned; bump deliberately). */
-export const DEFAULT_LANGFUSE_PLUGIN = "@langfuse/opencode-observability-plugin@0.7.0";
+export const DEFAULT_AGENT_TRACING_PLUGIN = "@devtheops/opencode-plugin-otel@2.1.0";
 
 /** Environment variables the OpenCode child process is allowed to inherit. */
 const CHILD_ENV_ALLOWLIST = [
@@ -126,10 +131,26 @@ const CHILD_ENV_ALLOWLIST = [
 ] as const;
 
 /**
- * Langfuse credentials forwarded to the child so the OpenCode observability
- * plugin can ship session traces. Keys are only ever passed by value to the
- * child process, never written to the generated opencode.json.
+ * OpenCode OTel credentials/headers forwarded to the child so the configured
+ * plugin can export session traces. Values are passed by value to the child
+ * process only — never written to the generated opencode.json.
  */
+const OPENCODE_TRACING_ENV_ALLOWLIST = [
+  "OPENCODE_ENABLE_TELEMETRY",
+  "OPENCODE_OTLP_ENDPOINT",
+  "OPENCODE_OTLP_PROTOCOL",
+  "OPENCODE_OTLP_HEADERS",
+  "OPENCODE_OTLP_HEADERS_HELPER",
+  "OPENCODE_RESOURCE_ATTRIBUTES",
+  "OPENCODE_SPAN_ATTRIBUTES",
+  "OPENCODE_CAPTURE_PROMPT_IN_LOGS",
+  "OPENCODE_CAPTURE_MODEL_CONTEXT",
+  "OPENCODE_DISABLE_LOGS",
+  "OPENCODE_DISABLE_METRICS",
+  "OPENCODE_DISABLE_TRACES",
+] as const;
+
+/** Langfuse plugin credentials (alternative backend; same isolation rule). */
 const LANGFUSE_ENV_ALLOWLIST = [
   "LANGFUSE_PUBLIC_KEY",
   "LANGFUSE_SECRET_KEY",
@@ -146,9 +167,11 @@ const LANGFUSE_ENV_ALLOWLIST = [
  * configuration) are passed — GitHub credentials and every other secret of
  * the trusted application are never visible to the agent (§10.6).
  *
- * When Langfuse tracing is enabled the missing correlation adapter is just
- * `LANGFUSE_USER_ID`: a stable, secret-free label derived from the review id
- * so traces can be filtered back to the PR review (Pino carries the rest).
+ * Only the credentials relevant to the selected tracing plugin are forwarded:
+ * a Phoenix/OTel child never receives the Langfuse keys, and vice versa. For
+ * Langfuse, the missing correlation adapter is `LANGFUSE_USER_ID` (a stable,
+ * secret-free label derived from the review id). OTel correlation travels as
+ * plugin options.
  */
 export function buildChildEnv(
   config: AgentRuntimeConfigSource,
@@ -165,12 +188,18 @@ export function buildChildEnv(
   if (env.MODEL_BASE_URL !== undefined) child.MODEL_BASE_URL = env.MODEL_BASE_URL;
   if (env.MODEL_NAME !== undefined) child.MODEL_NAME = env.MODEL_NAME;
 
-  // Agent tracing credentials (no-op unless the Langfuse plugin is enabled).
-  if (config.observability?.langfuse?.enabled) {
-    for (const name of LANGFUSE_ENV_ALLOWLIST) {
+  // Agent tracing credentials (no-op unless a tracing plugin is enabled).
+  const agentTracing = config.observability?.agentTracing;
+  if (agentTracing?.enabled) {
+    const plugin = agentTracing.plugin ?? DEFAULT_AGENT_TRACING_PLUGIN;
+    const isLangfuse = /langfuse/i.test(plugin);
+    const allowlist = isLangfuse
+      ? LANGFUSE_ENV_ALLOWLIST
+      : OPENCODE_TRACING_ENV_ALLOWLIST;
+    for (const name of allowlist) {
       if (env[name] !== undefined) child[name] = env[name];
     }
-    if (correlation?.reviewId) {
+    if (isLangfuse && correlation?.reviewId) {
       child.LANGFUSE_USER_ID = `review:${correlation.reviewId}`;
     }
   }
@@ -195,10 +224,8 @@ export interface OpenCodeSessionConfigInput {
 }
 
 /**
- * Build secret-free Langfuse trace tags for one review. Tags are metadata
- * only; the review prompt and model request are unaffected. They are supplied
- * as plugin options because the plugin ignores config-file tags whenever
- * credentials come from the environment (our isolation model).
+ * Build secret-free trace tags for one review (Langfuse plugin option). Tags
+ * are metadata only; the review prompt and model request are unaffected.
  */
 export function buildTraceTags(input: {
   reviewId?: string;
@@ -213,6 +240,68 @@ export function buildTraceTags(input: {
 }
 
 /**
+ * Build OTel span attributes for one review (generic OTel plugin option).
+ * Values are secret-free identifiers only. GitHub owner/repo names cannot
+ * contain commas or equals signs, so the plugin's comma-separated parsing is
+ * unambiguous.
+ */
+export function buildSpanAttributes(input: {
+  reviewId?: string;
+  repository?: string;
+  pullRequestNumber?: number;
+}): string {
+  const attributes: string[] = [];
+  if (input.reviewId) attributes.push(`review.id=${input.reviewId}`);
+  if (input.repository) attributes.push(`repository=${input.repository}`);
+  if (typeof input.pullRequestNumber === "number") {
+    attributes.push(`pr.number=${input.pullRequestNumber}`);
+  }
+  return attributes.join(",");
+}
+
+export interface AgentTracingInput {
+  config: AgentRuntimeConfigSource;
+  reviewId?: string;
+  repository?: string;
+  pullRequestNumber?: number;
+}
+
+/**
+ * Build the tracing plugin entry shared by the CLI and SDK runtimes. Returns
+ * undefined when agent tracing is disabled. The plugin package is public;
+ * credentials stay in the child/host environment and are never serialized.
+ */
+export function buildAgentTracingPlugin(
+  input: AgentTracingInput,
+): { package: string; options: Record<string, unknown> } | undefined {
+  const agentTracing = input.config.observability?.agentTracing;
+  if (!agentTracing?.enabled) return undefined;
+
+  const options: Record<string, unknown> = {
+    ...agentTracing.options,
+    // The plugin's own opt-in flag; the entry is only emitted when tracing is
+    // enabled, so this is always true here.
+    enabled: true,
+  };
+  const tags = buildTraceTags(input);
+  if (tags.length > 0) options.tags = tags;
+  const spanAttributes = [
+    typeof agentTracing.options?.spanAttributes === "string"
+      ? agentTracing.options.spanAttributes
+      : "",
+    buildSpanAttributes(input),
+  ]
+    .filter((value) => value.length > 0)
+    .join(",");
+  if (spanAttributes.length > 0) options.spanAttributes = spanAttributes;
+
+  return {
+    package: agentTracing.plugin ?? DEFAULT_AGENT_TRACING_PLUGIN,
+    options,
+  };
+}
+
+/**
  * Build the per-session OpenCode configuration object (JSON, V2 schema).
  * Provider id "reviewer" is application-owned; the model key "glm" is a fixed
  * alias so that slashes in upstream model identifiers never collide with the
@@ -220,15 +309,12 @@ export function buildTraceTags(input: {
  */
 export function buildSessionConfig(input: OpenCodeSessionConfigInput): Record<string, unknown> {
   const { config } = input;
-  const langfuse = config.observability?.langfuse;
-  const traceTags = buildTraceTags(input);
-  const pluginEntry =
-    traceTags.length > 0
-      ? {
-          package: langfuse?.plugin ?? DEFAULT_LANGFUSE_PLUGIN,
-          options: { tags: traceTags },
-        }
-      : (langfuse?.plugin ?? DEFAULT_LANGFUSE_PLUGIN);
+  const tracingPlugin = buildAgentTracingPlugin({
+    config,
+    reviewId: input.reviewId,
+    repository: input.repository,
+    pullRequestNumber: input.pullRequestNumber,
+  });
   return {
     $schema: "https://opencode.ai/config.json",
     model: "reviewer/glm",
@@ -236,8 +322,8 @@ export function buildSessionConfig(input: OpenCodeSessionConfigInput): Record<st
     snapshots: false,
     permission: buildPermissionRules(config),
     // OpenCode 2 uses the plural `plugins` key. The plugin package is public;
-    // Langfuse credentials are supplied through the child environment only.
-    ...(langfuse?.enabled ? { plugins: [pluginEntry] } : {}),
+    // credentials are supplied through the child environment only.
+    ...(tracingPlugin ? { plugins: [tracingPlugin] } : {}),
     // OpenCode 2 provider shape: `package` selects the provider implementation
     // and `settings` carries its options. The v1 `npm`/`options` keys are NOT
     // read here — with them OpenCode silently ignores the provider and falls

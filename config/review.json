@@ -16,7 +16,7 @@
       "issue_comment"
     ],
     "manualCommand": "/review",
-    "defaultReviewType": "standard",
+    "defaultReviewType": "handbook",
     "draftPullRequests": {
       "enabled": false
     },
@@ -69,7 +69,7 @@
       "publishUncertainInSummary": true
     },
     "reporting": {
-      "summary": true,
+      "summary": false,
       "inlineComments": true,
       "publishCleanReview": true,
       "publishApproval": false
@@ -179,6 +179,15 @@
     "handbook": {
       "repo": "nativewit/engineering-handbook",
       "ref": "main",
+      "technologyRefs": [
+        {
+          "technologies": [
+            "typescript",
+            "nodejs"
+          ],
+          "ref": "feat/CU-86bcdv1c9-typescript-guidelines"
+        }
+      ],
       "path": "",
       "maxBytes": 2000000,
       "maxChars": 20000,
@@ -233,9 +242,31 @@
     "tracing": {
       "enabled": true
     },
-    "langfuse": {
+    "agentTracing": {
       "enabled": true,
-      "plugin": "@langfuse/opencode-observability-plugin@0.7.0"
+      "plugin": "@devtheops/opencode-plugin-otel@2.1.0",
+      "options": {
+        "endpoint": "${PHOENIX_ENDPOINT:-http://phoenix:6006}",
+        "protocol": "http/protobuf",
+        "logsEnabled": false,
+        "metricsInterval": 86400000,
+        "disabledMetrics": [
+          "session.count",
+          "token.usage",
+          "cost.usage",
+          "commit.count",
+          "tool.duration",
+          "cache.count",
+          "session.duration",
+          "message.count",
+          "session.token.total",
+          "session.cost.total",
+          "model.usage",
+          "retry.count",
+          "subtask.count"
+        ],
+        "resourceAttributes": "service.name=ai-pr-reviewer"
+      }
     },
     "alerts": {
       "reviewFailure": true,

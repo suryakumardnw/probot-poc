@@ -25,6 +25,9 @@ import { PANEL_FIELDS, PANEL_SECTIONS, SECTION_LABELS } from "../src/admin/panel
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 process.env.REDIS_URL ??= "redis://localhost:6379";
 process.env.MODEL_BASE_URL ??= "http://localhost:8000";
+// The checked-in configuration references ${MODEL_NAME}; pin it for the
+// admin panel's configuration round-trip assertions.
+process.env.MODEL_NAME ??= "glm-4.7-flash";
 
 const prisma = getPrisma();
 
@@ -233,6 +236,17 @@ describe("admin panel (ticket 14)", () => {
     expect(unhandled.statusCode).toBe(0);
   });
 
+  test("authenticated /logs redirects to the Dozzle UI; unauthenticated goes to login", async () => {
+    const anonymous = await call(handlers.panel, "GET", "/logs");
+    expect(anonymous.statusCode).toBe(303);
+    expect(anonymous.headers.location).toBe("/api/admin/auth/github/login");
+
+    const session = await login(handlers);
+    const result = await call(handlers.panel, "GET", "/logs", { headers: { cookie: session.cookie } });
+    expect(result.statusCode).toBe(302);
+    expect(result.headers.location).toBe("/dozzle/");
+  });
+
   test("authenticated non-admin gets a 403 page", async () => {
     // A session issued under an allowlist policy but whose login is not on the
     // (currently empty) allowlist is no longer an administrator.
@@ -250,6 +264,7 @@ describe("admin panel (ticket 14)", () => {
     expect(overview.statusCode).toBe(200);
     expect(overview.body).toMatch(/Configuration version: schema <strong>v1<\/strong>/);
     expect(overview.body).toMatch(/sha256:/);
+    expect(overview.body).toContain('href="/logs"');
     for (const section of PANEL_SECTIONS) {
       expect(overview.body).toContain(SECTION_LABELS[section]);
     }

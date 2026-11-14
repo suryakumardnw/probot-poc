@@ -30,11 +30,29 @@ export interface KnowledgeSourceSnapshot {
   files: KnowledgeFileRecord[];
 }
 
+/**
+ * Optional per-technology handbook ref (e.g. a branch carrying TypeScript
+ * guidelines). Selected by the review's detected technologies; when none
+ * matches, the default `handbook` source is used.
+ */
+export interface KnowledgeHandbookVariant {
+  /** Lowercase technology keywords this variant applies to (e.g. "typescript"). */
+  technologies: string[];
+  source: KnowledgeSourceSnapshot;
+}
+
 /** Knowledge snapshot resolved at worker boot, shared by all reviews. */
 export interface KnowledgeSnapshot {
   cacheDir: string;
   skill: KnowledgeSourceSnapshot;
   handbook: KnowledgeSourceSnapshot;
+  /** Per-technology refs; empty when the config declares none. */
+  handbookVariants?: KnowledgeHandbookVariant[];
+}
+
+/** Cache/workspace-safe directory name for a resolved knowledge ref. */
+export function knowledgeRefSlug(ref: string): string {
+  return ref.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
 /**
@@ -59,6 +77,12 @@ export interface PersistedKnowledgeSource {
 export interface PersistedKnowledgeSnapshot {
   skill?: PersistedKnowledgeSource;
   handbook?: PersistedKnowledgeSource;
+  /**
+   * Per-technology handbook refs persisted alongside the default source.
+   * Optional for backward compatibility with reviews created before this
+   * field existed.
+   */
+  handbookVariants?: Array<{ technologies: string[]; source: PersistedKnowledgeSource }>;
   /**
    * Per-review injection metrics (§16.1, additive): token budget usage and
    * the selection funnel. Written by the pipeline after injection resolves.

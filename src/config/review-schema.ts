@@ -20,7 +20,7 @@ const nonNegativeInt = z.number().int().min(0);
 
 const percentSchema = z.number().min(0).max(1);
 
-/** Review types (§4.1): standard (default), skill, handbook. */
+/** Review types (§4.1): standard, skill, handbook (default). */
 const reviewTypeOptions = z.enum(["standard", "skill", "handbook"]);
 
 const envVarName = z
@@ -48,8 +48,8 @@ const githubSchema = z.object({
     .min(1)
     .default(["opened", "synchronize", "ready_for_review"]),
   manualCommand: z.string().min(2).max(32).default("/review"),
-  /** Which review type a bare `/review` (and POST /api/reviews) triggers. */
-  defaultReviewType: reviewTypeOptions.default("standard"),
+  /** Which review type automatic and bare `/review` reviews use. */
+  defaultReviewType: reviewTypeOptions.default("handbook"),
   draftPullRequests: z
     .object({
       enabled: z.boolean().default(false),
@@ -84,7 +84,7 @@ const categoriesSchema = z
 /**
  * Review types (ARCHITECTURE.md §4.1): on-demand review methodologies that
  * can be compared against the same PR/head SHA.
- * - `standard` — the existing adaptive engine and instructions (the default).
+ * - `standard` — the adaptive engine with no extra instructions.
  * - `skill` — same engine, plus the code-review playbook fetched into the
  *   boot-time knowledge cache and injected into the review instructions.
  * - `handbook` — same engine, plus relevant standards/conventions injected
@@ -204,7 +204,7 @@ const reviewSchema = z.object({
 const agentSchema = z.object({
   runtime: z
     .object({
-      type: z.enum(["opencode-cli", "opencode-server", "custom"]).default("opencode-cli"),
+      type: z.enum(["opencode-cli", "opencode-sdk", "opencode-server", "custom"]).default("opencode-cli"),
       sessionStrategy: z.enum(["per-review", "per-stage", "shared"]).default("per-review"),
       timeoutMs: z.number().int().min(1_000).max(3_600_000).default(900_000),
     })
@@ -360,6 +360,23 @@ const knowledgeSchema = z.object({
       repo: z.string().max(200).default("nativewit/engineering-handbook"),
       /** Ref to read from; branch names are resolved to a SHA at boot. */
       ref: z.string().min(1).max(200).default("main"),
+      /**
+       * Per-technology refs: when a PR's changed files are detected as one of
+       * the listed technologies (e.g. `.ts` → typescript/nodejs), that ref's
+       * handbook content is fetched at boot and injected instead of `ref`.
+       * Useful for language guidelines that live on a separate branch.
+       */
+      technologyRefs: z
+        .array(
+          z.object({
+            /** Detected technology keywords (case-insensitive). */
+            technologies: z.array(z.string().min(1).max(50)).min(1),
+            /** Ref to read for those technologies; branches resolve to a SHA at boot. */
+            ref: z.string().min(1).max(200),
+          }),
+        )
+        .max(20)
+        .default([]),
       /** Subdirectory (repo root recursively when empty). */
       path: z.string().max(500).default(""),
       /** Total byte budget for the fetched handbook content. */
@@ -404,17 +421,30 @@ const observabilitySchema = z.object({
     .prefault({}),
   metrics: z.object({ enabled: z.boolean().default(true) }).prefault({}),
   tracing: z.object({ enabled: z.boolean().default(true) }).prefault({}),
-  // Agent-level tracing is delegated to Langfuse's OpenCode plugin. This
+  // Agent-level tracing is delegated to an OpenCode plugin package. This
   // application only enables the plugin and supplies correlation/credentials
   // through the isolated child environment — no custom trace schema/DB.
-  langfuse: z
+  agentTracing: z
     .object({
       enabled: z.boolean().default(false),
       plugin: z
         .string()
         .min(1)
         .max(200)
-        .default("@langfuse/opencode-observability-plugin@0.7.0"),
+        .default("@devtheops/opencode-plugin-otel@2.1.0"),
+      // Free-form, scalar plugin options (endpoint, protocol, headers policy,
+      // etc.). Credentials belong in the child environment, never here.
+      options: z
+        .record(
+          z.string().min(1).max(100),
+          z.union([
+            z.string().max(2_000),
+            z.number(),
+            z.boolean(),
+            z.array(z.string().min(1).max(200)).max(50),
+          ]),
+        )
+        .default({}),
     })
     .prefault({}),
   alerts: z
@@ -425,7 +455,7 @@ const observabilitySchema = z.object({
       resourceLimitExceeded: z.boolean().default(true),
     })
     .prefault({}),
-});
+}).strict();
 
 const evaluationSchema = z.object({
   enabled: z.boolean().default(true),

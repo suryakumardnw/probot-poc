@@ -15,6 +15,7 @@ import {
   stopReviewWorker,
 } from "./workspace/processor.js";
 import { ReviewWorkspaceService } from "./workspace/workspace.js";
+import { workspaceDirectorySizeBytes } from "./workspace/disk.js";
 import { createReviewPipelineHook } from "./publishing/index.js";
 import { createAgentRuntime } from "./agent/index.js";
 import { getReviewQueue } from "./ingestion/queue.js";
@@ -83,6 +84,11 @@ async function main(): Promise<void> {
       {
         skill: { status: knowledgeSnapshot.skill.status, ref: knowledgeSnapshot.skill.ref },
         handbook: { status: knowledgeSnapshot.handbook.status, ref: knowledgeSnapshot.handbook.ref },
+        handbookVariants: (knowledgeSnapshot.handbookVariants ?? []).map((variant) => ({
+          technologies: variant.technologies,
+          status: variant.source.status,
+          ref: variant.source.ref,
+        })),
         cacheDir: knowledgeSnapshot.cacheDir,
       },
       "Knowledge sources initialized",
@@ -211,9 +217,9 @@ async function main(): Promise<void> {
   const diskUsageBytes = async (): Promise<number> => {
     try {
       const root = process.env.WORKSPACE_ROOT_DIR ?? path.join(process.cwd(), "workspaces");
-      const fsStatfs = await import("node:fs/promises");
-      const stats = await fsStatfs.statfs(root);
-      return Math.max(0, (stats.blocks - stats.bavail) * stats.bsize);
+      // Directory usage, not whole-filesystem usage: the alert compares this
+      // against the configured workspace limit.
+      return await workspaceDirectorySizeBytes(root);
     } catch {
       return 0;
     }

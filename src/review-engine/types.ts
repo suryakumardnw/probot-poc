@@ -56,7 +56,17 @@ export interface Finding {
   file: string;
   /** 1-based line number in `file`. */
   line: number;
+  /**
+   * Concise statement of the defect. New reviews keep this to one or two
+   * sentences; older rows may contain a longer explanation.
+   */
   description: string;
+  /** Why the defect matters (bounded; optional for older findings). */
+  impact?: string;
+  /** Actionable fix, kept separate from the problem statement. */
+  recommendation?: string;
+  /** Short guideline reference (`file §section`), never a full quotation. */
+  guideline?: string;
   /** At least one evidence reference — enforced by schema validation. */
   evidence: FindingEvidence[];
   /**
@@ -213,9 +223,9 @@ export interface KnowledgeInjectionMetrics {
  * Review-type injection resolved by the pipeline BEFORE the engine runs
  * (§4.1). The engine composes each stage's instruction from the trusted
  * instruction profile plus this injection:
- * - stage 1 (analysis) receives the FULL guidelines text (`text`) once;
- * - later stages receive `laterStagesText` — the profile instructions plus a
- *   tiny digest — instead of re-injecting the full block.
+ * - stage 1 (analysis) receives the FULL guidelines text (`text`);
+ * - later stages receive `laterStagesText` — the profile instructions plus
+ *   the selected guidelines, because stages do not share context.
  */
 export interface PromptInjection {
   /** Short label used in the instruction header and logs. */
@@ -225,13 +235,17 @@ export interface PromptInjection {
   /** Full methodology/guidelines text injected into the analysis stage. */
   text: string;
   /**
-   * Compact replacement for later stages (investigation/reporting): trusted
-   * profile instructions + reference to the guidelines provided earlier.
-   * Falls back to `text` when absent (skill keeps full re-injection).
+   * Later-stage replacement (investigation/reporting): trusted profile
+   * instructions + the selected guidelines. Falls back to `text` when absent.
    */
   laterStagesText?: string;
   /** Snapshot-relative paths of the knowledge files that were used. */
   files: string[];
+  /**
+   * Repository and ref the handbook files came from, used to build
+   * developer-facing links back to the cited guideline.
+   */
+  guidelineSource?: { repo: string; ref: string };
   /** Content hash of the injected knowledge snapshot. */
   contentHash: string | null;
   /** Retrieval/selection funnel metrics. */

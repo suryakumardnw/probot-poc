@@ -64,7 +64,9 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   queueBacklog: numEnv("ALERT_QUEUE_BACKLOG", 10),
   consecutiveReviewFailures: numEnv("ALERT_MAX_CONSECUTIVE_FAILURES", 5),
   providerErrorThreshold: numEnv("ALERT_PROVIDER_ERROR_THRESHOLD", 5),
-  memoryLimitBytes: numEnv("ALERT_MEMORY_LIMIT_BYTES", 1.5 * 1024 * 1024 * 1024),
+  // 75% of the worker's 1536M container limit (deploy/docker-compose.yml).
+  // Keep this below the cgroup limit or the OOM killer fires before the alert.
+  memoryLimitBytes: numEnv("ALERT_MEMORY_LIMIT_BYTES", 1.125 * 1024 * 1024 * 1024),
   diskLimitBytes: numEnv("ALERT_DISK_LIMIT_BYTES", 5 * 1024 * 1024 * 1024),
   diskUsageFraction: numEnv("ALERT_DISK_USAGE_FRACTION", 0.8),
 };

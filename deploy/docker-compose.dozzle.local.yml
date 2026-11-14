@@ -1,5 +1,8 @@
 # Local smoke-run override for the Dozzle stack (no Dokploy/Traefik).
-# Publishes the UI on localhost only so you can verify it on a dev machine:
+# Publishes the UI on localhost only so you can verify it on a dev machine.
+# Dozzle is mounted at /dozzle (DOZZLE_BASE), so open:
+#
+#   http://127.0.0.1:8080/dozzle/
 #
 #   docker compose \
 #     -f deploy/docker-compose.dozzle.yml \

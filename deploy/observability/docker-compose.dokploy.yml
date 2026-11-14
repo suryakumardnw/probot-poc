@@ -1,0 +1,28 @@
+# Optional Dokploy/Traefik ingress for the Phoenix UI.
+#
+# Use together with the base file:
+#   docker compose \
+#     -f deploy/observability/docker-compose.yml \
+#     -f deploy/observability/docker-compose.dokploy.yml \
+#     up -d
+#
+# Then add a Dokploy domain for the `phoenix` service:
+#   Host: probot.nativewit.app
+#   Path: /phoenix
+#   Strip Path: enabled
+#   Container Port: 6006
+#
+# The base compose sets PHOENIX_ROOT_URL/PHOENIX_HOST_ROOT_PATH to match that
+# subpath. Set PHOENIX_ENABLE_AUTH=true and provide PHOENIX_SECRET /
+# PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD; never expose traces without auth.
+
+services:
+  phoenix:
+    networks:
+      - observability
+      - edge
+
+networks:
+  edge:
+    external: true
+    name: ${DOKPLOY_NETWORK:-dokploy-network}

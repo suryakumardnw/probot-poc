@@ -99,6 +99,50 @@ describe("reviewConfigSchema (strict validation)", () => {
     expect(config.provider.failurePolicy).toBe("fail-immediately");
   });
 
+  it("defaults agent tracing to disabled with the pinned OpenTelemetry plugin", () => {
+    const config = validateRawConfig(validConfig());
+    expect(config.observability.agentTracing.enabled).toBe(false);
+    expect(config.observability.agentTracing.plugin).toBe(
+      "@devtheops/opencode-plugin-otel@2.1.0",
+    );
+    expect(config.observability.agentTracing.options).toEqual({});
+  });
+
+  it("accepts plugin-shaped agent tracing with scalar and list options", () => {
+    const config = validateRawConfig(
+      validConfig({
+        observability: {
+          agentTracing: {
+            enabled: true,
+            plugin: "@devtheops/opencode-plugin-otel@2.1.0",
+            options: {
+              endpoint: "http://phoenix:6006",
+              protocol: "http/protobuf",
+              logsEnabled: false,
+              disabledMetrics: ["token.usage", "cost.usage"],
+            },
+          },
+        },
+      }),
+    );
+    expect(config.observability.agentTracing).toMatchObject({
+      enabled: true,
+      plugin: "@devtheops/opencode-plugin-otel@2.1.0",
+      options: {
+        endpoint: "http://phoenix:6006",
+        protocol: "http/protobuf",
+        logsEnabled: false,
+        disabledMetrics: ["token.usage", "cost.usage"],
+      },
+    });
+  });
+
+  it("rejects the removed langfuse block", () => {
+    expect(() =>
+      validateRawConfig(validConfig({ observability: { langfuse: { enabled: true } } })),
+    ).toThrow(/Invalid review configuration/);
+  });
+
   it("rejects a missing required provider block", () => {
     expect(() =>
       validateRawConfig({ schemaVersion: 1, github: { organization: "acme" } }),
@@ -166,6 +210,51 @@ describe("reviewConfigSchema (strict validation)", () => {
   it("exposes the current schema version as 1", () => {
     expect(CURRENT_SCHEMA_VERSION).toBe(1);
     expect(reviewConfigSchema.safeParse(validConfig()).success).toBe(true);
+  });
+});
+
+describe("agent runtime selection", () => {
+  it("defaults to the OpenCode CLI runtime", () => {
+    const parsed = reviewConfigSchema.parse(validConfig());
+    expect(parsed.agent.runtime.type).toBe("opencode-cli");
+  });
+
+  it("accepts the OpenCode SDK runtime", () => {
+    const parsed = reviewConfigSchema.parse(
+      validConfig({ agent: { runtime: { type: "opencode-sdk" } } }),
+    );
+    expect(parsed.agent.runtime.type).toBe("opencode-sdk");
+  });
+
+  it("rejects an unknown runtime type", () => {
+    expect(() =>
+      reviewConfigSchema.parse(
+        validConfig({ agent: { runtime: { type: "opencode-http" } } }),
+      ),
+    ).toThrow();
+  });
+
+  it("mirrors the runtime enum in the JSON Schema", () => {
+    const schema = JSON.parse(
+      readFileSync(
+        join(__dirname, "../config/schemas/review-config-v1.schema.json"),
+        "utf8",
+      ),
+    ) as {
+      properties: {
+        agent: {
+          properties: {
+            runtime: { properties: { type: { enum: string[] } } };
+          };
+        };
+      };
+    };
+    expect(schema.properties.agent.properties.runtime.properties.type.enum).toEqual([
+      "opencode-cli",
+      "opencode-sdk",
+      "opencode-server",
+      "custom",
+    ]);
   });
 });
 

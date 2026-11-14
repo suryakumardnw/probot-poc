@@ -5,8 +5,8 @@ clones the PR, investigates the changed code, verifies findings, and publishes
 a summary plus inline review comments.
 
 The production stack is a single Docker Compose project — Probot webhook app,
-review worker, PostgreSQL, Redis, one-shot migrations, and scheduled backups —
-designed to run on [Dokploy](https://dokploy.com).
+review worker, PostgreSQL, Redis, one-shot migrations, and optional scheduled
+backups — designed to run on [Dokploy](https://dokploy.com).
 
 ## Before you start
 
@@ -17,7 +17,8 @@ You need:
 - A **GitHub App** (created in step 1) and its private key.
 - An **OpenAI-compatible model endpoint** and API key. The default is
   Cloudflare GLM-4.7-Flash (`workers-ai/@cf/zai-org/glm-4.7-flash`).
-- About **2 GB RAM** and **10 GB disk** for the stack.
+- About **4 GB RAM minimum** for the primary stack, **8 GB recommended** with
+  Phoenix and Dozzle (the configured limits total ~3.2 GiB), and **10 GB disk**.
 
 ---
 
@@ -109,7 +110,8 @@ base64 -i github-app.private-key.pem | tr -d '\n'        # macOS
 | `SESSION_SECRET` | Required for the admin panel; also set the `ADMIN_*` OAuth variables below. |
 | `DOKPLOY_NETWORK` | Ingress network name. Default `dokploy-network` matches Dokploy; change only if your host uses another name (`docker network ls \| grep dokploy`). |
 | `BACKUP_INTERVAL_HOURS`, `BACKUP_RETENTION_DAYS`, `BACKUP_MAX_AGE_HOURS` | Backup cadence, retention, and staleness alarm (defaults `24`, `14`, `26`). |
-| `LANGFUSE_*` | Optional agent tracing. See [docs/deployment.md](docs/deployment.md#agent-tracing-optional--langfuse). |
+| `PHOENIX_ENDPOINT` | Optional Phoenix OTLP/HTTP endpoint (default `http://phoenix:6006`). See [docs/deployment.md](docs/deployment.md#agent-tracing-optional--phoenixopentelemetry). |
+| `OPENCODE_OTLP_HEADERS` | Only when Phoenix auth is enabled: `authorization=Bearer <phoenix-system-api-key>` for trace ingestion. |
 
 `PROBOT_PORT` is only used by the local smoke-run override; leave it as-is on
 Dokploy.
@@ -135,7 +137,9 @@ Click **Deploy**. The deploy sequence is:
 2. `postgres` and `redis` become healthy.
 3. `migrate` runs `prisma migrate deploy` once and exits `0`.
 4. `probot` and `worker` start and become healthy.
-5. `backup` takes the first dump on start.
+5. If the `backup` profile is enabled, `backup` takes the first dump on start.
+   It is off by default in the lean deployment (see
+   [Backups and upgrades](#backups-and-upgrades)).
 
 Verify from anywhere:
 
@@ -182,6 +186,14 @@ exact knowledge snapshot it started with (`Review.knowledgeSnapshot`) and inject
 from its own workspace copy, so cache refreshes never alter an in-flight review; the
 comparison endpoint reports the per-source ref + content hash plus the additive
 `knowledgeMetrics` (estimated injected tokens, retrieval funnel, truncation flag).
+Handbook content can also come from a per-technology ref via
+`knowledge.handbook.technologyRefs` (e.g. TypeScript guidelines living on a
+separate branch): every configured ref is fetched at boot, and a review whose
+changed files are detected as one of the listed technologies (`.ts` →
+`typescript`/`nodejs`) injects that ref instead of the default `handbook.ref`.
+`KNOWLEDGE_HANDBOOK_REF` overrides only the default ref; pin each
+`technologyRefs[].ref` to a SHA in prod as well.
+
 Injection budgets are token-based (`knowledge.skill.maxTokens` default 1500,
 `knowledge.handbook.maxTokens` default 3000, ≈4 chars/token; `maxChars` is a
 byte-level backstop). The handbook instruction profile lives in
@@ -224,21 +236,29 @@ a **second Compose service in the same Dokploy project**, pointing at
 `deploy/docker-compose.dozzle.yml`:
 
 - Environment: `DOZZLE_ADMIN_PASSWORD` (required)
-- Domain → **Container Port `8080`**
-- Sign in as `admin` with that password.
+- Add a domain entry on your **existing Probot hostname**:
+  Path `/dozzle`, **Strip Path OFF**, Container Port `8080`
+- Open `https://<your-probot-domain>/dozzle/` and sign in as `admin` with that
+  password. The admin panel also links to it as **Container logs**.
 
 It must run on the same Docker host as this stack. Note that mounting the
-Docker socket is root-equivalent on the host — restrict the Dozzle domain to
-admin IPs/VPN where possible. Full details and CGNAT/tunnel guidance are in
+Docker socket is root-equivalent on the host — restrict the path to admin
+IPs/VPN where possible. Full details and CGNAT/tunnel guidance are in
 [docs/deployment.md](docs/deployment.md#10-dozzle--live-container-log-viewer-operations-stack).
 
 ---
 
 ## Backups and upgrades
 
-- Backups run automatically into the `pg-backups` Docker volume
-  (`BACKUP_INTERVAL_HOURS`, retention configurable). A healthcheck fails when
-  the newest dump is stale.
+- Automated backups are **disabled by default** in the lean deployment
+  (`backup` Compose profile). PostgreSQL data still lives in the
+  `postgres-data` named volume and survives container recreation.
+- Enable the schedule with
+  `docker compose -f deploy/docker-compose.yml --profile backup up -d backup`;
+  dumps go to the `pg-backups` volume (`BACKUP_INTERVAL_HOURS`, retention
+  configurable). A healthcheck fails when the newest dump is stale.
+- Take a manual dump before production even while the schedule is off — the
+  command is in [docs/deployment.md §7.1](docs/deployment.md#71-how-it-works).
 - **A Docker volume is not an off-host backup.** Replicate `pg-backups` to
   S3/another host, or use Dokploy's volume backup feature.
 - To upgrade, redeploy the service (Dokploy can auto-deploy on push). Migrations
@@ -250,6 +270,9 @@ admin IPs/VPN where possible. Full details and CGNAT/tunnel guidance are in
 ---
 
 ## Local development
+
+Requires **Node.js 24 or newer** (`engines.node` is `>=24`; the OpenCode SDK
+runtime needs Node >= 24, and the production image pins `node:24.22.3`).
 
 ```sh
 npm install
@@ -298,11 +321,16 @@ npm run model:smoke      # check model endpoint connectivity
 
 ## Documentation
 
+- **[docs/how-pr-review-works.md](docs/how-pr-review-works.md)** — teaching
+  guide: what happens to a PR under the hood, the exact prompts, the output
+  contract, and the failure modes.
 - **[docs/architecture.md](docs/architecture.md)** — system design, review
   lifecycle, security model, configuration reference.
 - **[docs/deployment.md](docs/deployment.md)** — full operations guide:
   topology, secrets, backup/restore evidence, restart recovery, Dokploy and
   Dozzle setup, validation runbook.
+- **[docs/agent-runtime-plugins.md](docs/agent-runtime-plugins.md)** — runtime
+  plugin API, CLI vs SDK selection, security boundary and operations.
 
 ## Contributing
 

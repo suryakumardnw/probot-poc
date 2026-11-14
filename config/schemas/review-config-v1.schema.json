@@ -196,7 +196,7 @@
         "types": {
           "type": "object",
           "additionalProperties": false,
-          "description": "On-demand review types (\u00a74.1): standard (default), skill (playbook-injected) and handbook (standards-retrieved). publish is the decision-7 gate for posting to GitHub.",
+          "description": "On-demand review types (\u00a74.1): standard, skill (playbook-injected) and handbook (standards-retrieved, the default). publish is the decision-7 gate for posting to GitHub.",
           "properties": {
             "standard": {
               "type": "object",
@@ -345,6 +345,7 @@
             "type": {
               "enum": [
                 "opencode-cli",
+                "opencode-sdk",
                 "opencode-server",
                 "custom"
               ]
@@ -665,6 +666,35 @@
               "minLength": 1,
               "maxLength": 200
             },
+            "technologyRefs": {
+              "type": "array",
+              "maxItems": 20,
+              "description": "Per-technology handbook refs: when a PR is detected as one of the listed technologies (e.g. typescript for .ts files), that ref's content is fetched at boot and injected instead of the default ref.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "technologies",
+                  "ref"
+                ],
+                "properties": {
+                  "technologies": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 50
+                    }
+                  },
+                  "ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            },
             "path": {
               "type": "string",
               "maxLength": 500
@@ -855,7 +885,7 @@
             }
           }
         },
-        "langfuse": {
+        "agentTracing": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -866,6 +896,32 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "options": {
+              "type": "object",
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  }
+                ]
+              }
             }
           }
         },

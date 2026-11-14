@@ -186,8 +186,11 @@ type FindingOverrides = Partial<{
   file: string;
   line: number;
   description: string;
+  impact: string | null;
+  recommendation: string | null;
+  guideline: string | null;
   evidence: unknown[];
-  verified: boolean;
+  verified: boolean | null;
 }>;
 
 function finding(overrides: FindingOverrides = {}) {
@@ -398,6 +401,64 @@ describe("tool-request protocol", () => {
     expect(parseToolRequests(null, budget)).toEqual([]);
   });
 
+  test("requests that omit `tool` are inferred as safe read-only tools", () => {
+    const budget = new RetrievalBudget(5);
+    const requests = parseToolRequests(
+      [
+        { path: "src/a.ts" }, // model drift: read_file implied
+        { path: "the PR diff (all changed files)" }, // get_diff implied
+        { file: "src/b.ts" }, // `file` alias for path
+        { reason: "no path or tool" }, // still rejected
+      ],
+      budget,
+    );
+    expect(requests).toEqual([
+      { tool: "read_file", path: "src/a.ts", includeDiff: false },
+      { tool: "get_diff", path: "the PR diff (all changed files)", includeDiff: false },
+      { tool: "read_file", path: "src/b.ts", includeDiff: false },
+    ]);
+    expect(budget.violations.join("\n")).toContain("unsupported tool 'undefined'");
+  });
+
+  test("native OpenCode tool names are mapped to the review protocol", () => {
+    const budget = new RetrievalBudget(10);
+    const requests = parseToolRequests(
+      [
+        { tool: "read", path: "src/a.ts" },
+        { tool: "glob", path: "src" },
+        { tool: "grep", query: "TODO", path: "src" },
+        { tool: "inspect_symbols", pattern: "issueSession" },
+        { tool: "read", filePath: "src/b.ts" },
+      ],
+      budget,
+    );
+    expect(requests).toEqual([
+      { tool: "read_file", path: "src/a.ts", includeDiff: false },
+      { tool: "list_files", path: "src", includeDiff: false },
+      { tool: "search_code", path: "src", query: "TODO", includeDiff: false },
+      { tool: "search_code", query: "issueSession", includeDiff: false },
+      { tool: "read_file", path: "src/b.ts", includeDiff: false },
+    ]);
+    expect(budget.violations).toEqual([]);
+  });
+
+  test("search_code requests require a query and return matching lines", async () => {
+    const dir = await makeWorkspaceDir({
+      "src/a.ts": "const TODO = 1;\nexport const ok = true;\n",
+      "src/b.ts": "nothing here\n",
+    });
+    const budget = new RetrievalBudget(10);
+    const missing = parseToolRequests([{ tool: "search_code", path: "src" }], budget);
+    expect(missing).toEqual([]);
+    expect(budget.violations.join("\n")).toContain("missing query");
+
+    const requests = parseToolRequests([{ tool: "grep", query: "TODO", path: "src" }], budget);
+    const results = await fulfillToolRequests(dir, requests, budget, "diff", 1_000_000);
+    expect(results[0]).toMatchObject({ ok: true, tool: "search_code", path: "src" });
+    expect((results[0] as { content: string }).content).toContain("src/a.ts:1: const TODO = 1;");
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
   test("path escape attempts are rejected and never read outside the workspace", async () => {
     const dir = await makeWorkspaceDir({ "src/safe.ts": "safe\n" });
     const secret = path.join(os.tmpdir(), "outside-secret.txt");
@@ -441,6 +502,16 @@ describe("tool-request protocol", () => {
     expect(results[2]).toMatchObject({ ok: false, error: "budget_exhausted" });
     expect(budget.violations.join("\n")).toContain("budget exhausted");
     expect(budget.used).toBe(2);
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  test("missing files are reported as not_found, not unreadable", async () => {
+    const dir = await makeWorkspaceDir({ "src/a.ts": "A\n" });
+    const budget = new RetrievalBudget(5);
+    const requests = parseToolRequests([{ tool: "read_file", path: "src/missing.ts" }], budget);
+    const results = await fulfillToolRequests(dir, requests, budget, "diff", 1_000_000);
+    expect(results[0]).toMatchObject({ ok: false, error: "not_found" });
+    expect(budget.violations.join("\n")).toContain("src/missing.ts: not_found");
     await fsp.rm(dir, { recursive: true, force: true });
   });
 
@@ -535,6 +606,131 @@ describe("review result schema", () => {
     if (parsed.success) expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
   });
 
+  test("zero evidence line is treated as unspecified", () => {
+    const withZeroLine = finding({
+      evidence: [{ file: "src/utils.ts", line: 0, excerpt: "return { name }", reason: "shape changed" }],
+    });
+    const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [withZeroLine] });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
+  });
+
+  test("null optional finding fields are normalized to absent", () => {
+    const drift = finding({
+      impact: null,
+      recommendation: null,
+      guideline: null,
+      verified: null,
+    });
+    const parsed = reviewResultSchema.safeParse({
+      ...reportingResponse(),
+      findings: [drift],
+      uncertain_findings: [{ ...drift, title: "Maybe" }],
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.findings[0].guideline).toBeUndefined();
+      expect(parsed.data.findings[0].impact).toBeUndefined();
+      expect(parsed.data.findings[0].recommendation).toBeUndefined();
+      expect(parsed.data.findings[0].verified).toBeUndefined();
+      expect(parsed.data.uncertainFindings[0].guideline).toBeUndefined();
+    }
+  });
+
+  test("empty optional finding fields are normalized to absent", () => {
+    const drift = finding({
+      impact: "",
+      recommendation: "   ",
+      guideline: "  ",
+    });
+    const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [drift] });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.findings[0].impact).toBeUndefined();
+      expect(parsed.data.findings[0].recommendation).toBeUndefined();
+      expect(parsed.data.findings[0].guideline).toBeUndefined();
+    }
+  });
+
+  test("missing or null summary is normalized to an empty fallback", () => {
+    const parsed = reviewResultSchema.safeParse({
+      ...reportingResponse(),
+      summary: null,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.summary).toBe("");
+  });
+
+  test("missing schemaVersion and finding lists use safe defaults", () => {
+    const parsed = reviewResultSchema.safeParse({ summary: "Reviewed." });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.schemaVersion).toBe(1);
+      expect(parsed.data.findings).toEqual([]);
+      expect(parsed.data.uncertainFindings).toEqual([]);
+      expect(parsed.data.conventions).toEqual([]);
+    }
+  });
+
+  test("null finding lists and conventions normalize to empty arrays", () => {
+    const parsed = reviewResultSchema.safeParse({
+      ...reportingResponse(),
+      findings: null,
+      uncertain_findings: null,
+      conventions: null,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.findings).toEqual([]);
+      expect(parsed.data.uncertainFindings).toEqual([]);
+      expect(parsed.data.conventions).toEqual([]);
+    }
+  });
+
+  test("over-long conventions are clamped instead of failing the whole review", () => {
+    const long = `x${"y".repeat(900)}`;
+    const analysis = analysisOutputSchema.safeParse({
+      objective: "Reviewed the change.",
+      conventions: [long],
+      tool_requests: [],
+      preliminary_findings: [],
+      no_additional_context_needed: true,
+    });
+    expect(analysis.success).toBe(true);
+    if (analysis.success) {
+      expect(analysis.data.conventions).toHaveLength(1);
+      expect(analysis.data.conventions[0]!.length).toBeLessThanOrEqual(500);
+      expect(analysis.data.conventions[0]!.startsWith("xy")).toBe(true);
+    }
+
+    const reporting = reviewResultSchema.safeParse({
+      ...reportingResponse(),
+      conventions: [long],
+    });
+    expect(reporting.success).toBe(true);
+    if (reporting.success) {
+      expect(reporting.data.conventions).toHaveLength(1);
+      expect(reporting.data.conventions[0]!.length).toBeLessThanOrEqual(500);
+      expect(reporting.data.conventions[0]!.startsWith("xy")).toBe(true);
+    }
+  });
+
+  test("new developer-facing finding fields are accepted and optional", () => {
+    const withDetails = finding({
+      impact: "Clients get wrong totals.",
+      recommendation: "Filter in the repository query.",
+      guideline: "03_contracts-schemas.md §3",
+    });
+    const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [withDetails] });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.findings[0].impact).toBe("Clients get wrong totals.");
+      expect(parsed.data.findings[0].recommendation).toBe("Filter in the repository query.");
+      expect(parsed.data.findings[0].guideline).toBe("03_contracts-schemas.md §3");
+    }
+    expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding()] }).success).toBe(true);
+  });
+
   test("out-of-range confidence and unknown enum values are rejected", () => {
     expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ confidence: 1.5 })] }).success).toBe(false);
     expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ category: "vibes" })] }).success).toBe(false);
@@ -609,6 +805,10 @@ describe("runReview (fake runtime)", () => {
     expect(result.findings).toEqual([]);
     expect(result.uncertainFindings).toEqual([]);
     expect(result.summary).toBe("Clean change, no issues found.");
+    // The reporting call must always re-receive the changed diff; earlier
+    // stages cannot be relied on to carry it in the agent session.
+    expect(runtime.tasks[1]?.instruction).toContain("CHANGED DIFF");
+    expect(runtime.tasks[1]?.instruction).toContain("+new");
     expect(meta.usage.modelCalls).toHaveLength(2); // analysis + reporting, never more for low tier
     expect(meta.usage.modelCalls.map((c) => c.stage)).toEqual(["initial-analysis", "reporting-prep"]);
     expect(meta.skippedStages).toContain("context-investigation");
@@ -623,7 +823,7 @@ describe("runReview (fake runtime)", () => {
     const runtime = new FakeRuntime();
     runtime.responders = [
       () => analysisResponse(),
-      () => ({ schemaVersion: 1, findings: [] }), // summary missing → schema failure
+      () => reportingResponse({ findings: [finding({ confidence: 1.5 })] }), // invalid finding → schema failure
     ];
     await expect(
       runReview(input(workspace(dir, "diff --git a/x b/x", [{ path: "x", status: "modified" }])), {
@@ -809,6 +1009,28 @@ describe("runReview (fake runtime)", () => {
     await fsp.rm(dir, { recursive: true, force: true });
   });
 
+  test("cumulative investigation context is capped across rounds, not per round", async () => {
+    const big = "y".repeat(120_000);
+    const dir = await makeWorkspaceDir({ "a.ts": big, "b.ts": big, "c.ts": big });
+    const runtime = new FakeRuntime();
+    runtime.responders = [
+      () => analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "a.ts" }] }),
+      () => analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "b.ts" }] }),
+      () => analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "c.ts" }] }),
+      () => analysisResponse({ no_additional_context_needed: true }),
+      () => reportingResponse(),
+    ];
+    await runReview(
+      input(workspace(dir, "diff --git a/a.ts b/a.ts", [{ path: "a.ts", status: "modified" }])),
+      { runtime, config: highTierConfig() },
+    );
+    // The final reporting prompt sees the retrieved context once, not three
+    // times (per-round 48k slices used to accumulate without a global cap).
+    const reporting = runtime.tasks.at(-1)!;
+    expect(reporting.instruction.length).toBeLessThan(60_000);
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
   test("model-call budget caps total invocations", async () => {
     const dir = await makeWorkspaceDir({ "src/utils.ts": "code\n" });
     const runtime = new FakeRuntime();
@@ -846,6 +1068,28 @@ describe("runReview (fake runtime)", () => {
     expect(meta.retrieval.violations.join("\n")).toContain("token budget exhausted");
     expect(meta.retrieval.fulfilled).toBe(0);
     expect(meta.usage.modelCalls).toHaveLength(2); // reporting still runs
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  test("parse-level tool rejections are counted in retrieval.rejected", async () => {
+    const dir = await makeWorkspaceDir({ "src/auth/utils.ts": "code\n" });
+    const runtime = new FakeRuntime();
+    runtime.responders = [
+      () =>
+        analysisResponse({
+          no_additional_context_needed: false,
+          tool_requests: [{ tool: "run_shell", command: "rm -rf /" }],
+        }),
+      () => reportingResponse(),
+    ];
+    const { meta } = await runReview(
+      input(workspace(dir, "diff --git a/src/auth/utils.ts b/src/auth/utils.ts", [{ path: "src/auth/utils.ts", status: "modified" }])),
+      { runtime, config: highTierConfig() },
+    );
+    expect(meta.retrieval.fulfilled).toBe(0);
+    expect(meta.retrieval.rejected).toBe(1);
+    expect(meta.retrieval.requested).toBe(1);
+    expect(meta.retrieval.violations.join("\n")).toContain("run_shell");
     await fsp.rm(dir, { recursive: true, force: true });
   });
 

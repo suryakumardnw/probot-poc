@@ -30,16 +30,19 @@ AUTHORITATIVE STANDARD for this review.
    for that aspect. Do not fall back to general code-review taste.
 7. If two provided guidelines conflict, prefer the more specific rule for the
    changed path and state the conflict in the finding.
+8. To read a full guideline file, use the "workspace copy" path shown in its
+   header. The "## handbook file" path is for citations only.
 `.trim();
 
 /**
- * Later-stage reference line: replaces the full guidelines block in the
- * investigation/reporting instructions so the text is injected ONCE and then
- * reused (token-budget control).
+ * Later-stage reference line. The selected guidelines are re-provided after
+ * this line because investigation/reporting run in separate processes.
  */
 export const HANDBOOK_REFERENCE_INSTRUCTIONS = `
 GUIDELINE MODE (continued): the engineering guidelines provided in the
 analysis stage remain the AUTHORITATIVE STANDARD. Apply them, cite the exact
 guideline file and section heading for every guideline-derived finding,
 enforce only rules present there, treat clear violations as findings even when
-they have no runtime impact, and report nothing where no guideline applies.`.trim();
+they have no runtime impact, and report nothing where no guideline applies.
+To read a full guideline file, use the "workspace copy" path shown in its
+header; the "## handbook file" path is for citations only.`.trim();

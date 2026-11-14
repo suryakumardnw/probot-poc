@@ -29,6 +29,7 @@ import {
   buildInlineCommentBody,
   buildReviewBody,
   extractFingerprint,
+  type GuidelineSource,
   type ReviewBodyMeta,
 } from "./summary.js";
 import { resolveInlinePosition, parseUnifiedDiff, type InlinePosition } from "./diff-positions.js";
@@ -109,6 +110,25 @@ class ApiError extends Error {
   }
 }
 
+/** HTTP status from an Octokit RequestError (or a test double). */
+function errorStatus(error: unknown): number | undefined {
+  const candidate = error as { status?: unknown; response?: { status?: unknown } } | null;
+  if (typeof candidate?.status === "number") return candidate.status;
+  if (typeof candidate?.response?.status === "number") return candidate.response.status;
+  return undefined;
+}
+
+/**
+ * 4xx responses are deterministic: repeating the same request cannot fix a
+ * rejected path, body or permission. Only transient statuses are retried.
+ */
+export function isRetryableGitHubError(error: unknown): boolean {
+  const status = errorStatus(error);
+  if (status === undefined) return true;
+  if (status === 408 || status === 409 || status === 429) return true;
+  return status < 400 || status >= 500;
+}
+
 // ---------------------------------------------------------------------------
 // Retry policy
 // ---------------------------------------------------------------------------
@@ -117,6 +137,11 @@ export interface RetryOptions {
   maxAttempts: number;
   /** Base delay in ms; attempt n waits baseDelayMs * 2^(n-1). */
   baseDelayMs: number;
+  /**
+   * Optional retry predicate. Returning false rethrows the original error
+   * immediately instead of repeating a deterministic 4xx failure.
+   */
+  shouldRetry?: (error: unknown) => boolean;
 }
 
 export const DEFAULT_RETRY: RetryOptions = { maxAttempts: 3, baseDelayMs: 500 };
@@ -133,6 +158,11 @@ export async function withRetry<T>(
       return await fn();
     } catch (error) {
       lastError = error;
+      if (options.shouldRetry && !options.shouldRetry(error)) {
+        // A deterministic client error (e.g. 422 invalid inline path) cannot
+        // be fixed by retrying the same request.
+        throw error;
+      }
       if (attempt < options.maxAttempts) {
         const delay = options.baseDelayMs * 2 ** (attempt - 1);
         logger?.warn(
@@ -192,7 +222,14 @@ export interface PublishReviewInput {
   summary: string;
   /** All stored findings of this review (verified + uncertain). */
   findings: StoredFinding[];
-  config: { publishUncertainInSummary: boolean; publishCleanReview: boolean };
+  config: {
+    /** Publish the review summary body (default true). */
+    publishSummary?: boolean;
+    publishUncertainInSummary: boolean;
+    publishCleanReview: boolean;
+  };
+  /** Handbook repository/ref used to link guideline citations. */
+  guidelineSource?: GuidelineSource;
   /** Header metadata for the review body (reviewer, source, date). */
   meta?: ReviewBodyMeta;
   retry?: Partial<RetryOptions>;
@@ -228,8 +265,13 @@ async function listAll<T>(fetchPage: (page: number) => Promise<T[]>): Promise<T[
  */
 export async function publishReview(input: PublishReviewInput): Promise<PublishReviewResult> {
   const { prisma, octokit, reviewId, repositoryFullName, pullNumber, headSha, diff, summary, findings, logger } = input;
+  const publishSummary = input.config.publishSummary ?? true;
   const { owner, repo } = splitFullName(repositoryFullName);
-  const retryOptions: RetryOptions = { ...DEFAULT_RETRY, ...input.retry };
+  const retryOptions: RetryOptions = {
+    ...DEFAULT_RETRY,
+    ...input.retry,
+    shouldRetry: isRetryableGitHubError,
+  };
   const expectedSha = headSha.toLowerCase();
 
   // 1. Stale SHA protection (§4.4): re-verify immediately before publishing.
@@ -309,40 +351,50 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
 
   // 4. Summary dedup: an already-recorded summary row (or an existing review
   //    carrying our marker) means the summary was published in an earlier
-  //    attempt — never create a second one.
-  const summaryRow = await prisma.reviewComment.findFirst({
-    where: { reviewId, commentType: "summary", status: "published", githubCommentId: { not: null } },
-    select: { githubCommentId: true },
-  });
-  let existingSummaryId: number | null = summaryRow?.githubCommentId != null ? Number(summaryRow.githubCommentId) : null;
-  if (existingSummaryId === null) {
-    const reviews = await listAll(
-      (page) =>
-        withRetry(
-          "pulls.listReviews",
-          () => octokit.rest.pulls.listReviews({ owner, repo, pull_number: pullNumber, per_page: 100, page }),
-          retryOptions,
-          logger,
-        ).then((r) => r.data),
-    );
-    const marked = reviews.find((r) => r.body?.includes(SUMMARY_MARKER));
-    existingSummaryId = marked ? marked.id : null;
+  //    attempt — never create a second one. When summary publication is
+  //    disabled, skip this entirely: only inline comments are reconciled.
+  let existingSummaryId: number | null = null;
+  if (publishSummary) {
+    const summaryRow = await prisma.reviewComment.findFirst({
+      where: { reviewId, commentType: "summary", status: "published", githubCommentId: { not: null } },
+      select: { githubCommentId: true },
+    });
+    existingSummaryId = summaryRow?.githubCommentId != null ? Number(summaryRow.githubCommentId) : null;
+    if (existingSummaryId === null) {
+      const reviews = await listAll(
+        (page) =>
+          withRetry(
+            "pulls.listReviews",
+            () => octokit.rest.pulls.listReviews({ owner, repo, pull_number: pullNumber, per_page: 100, page }),
+            retryOptions,
+            logger,
+          ).then((r) => r.data),
+      );
+      const marked = reviews.find((r) => r.body?.includes(SUMMARY_MARKER));
+      existingSummaryId = marked ? marked.id : null;
+    }
   }
 
-  const body = appendSummaryMarker(
-    buildReviewBody({
-      summary,
-      verified,
-      uncertain,
-      inlineFingerprints: new Set(inlineCandidates.map((c) => c.finding.fingerprint)),
-      config: input.config,
-      ...(input.meta ? { meta: input.meta } : {}),
-    }),
-  );
+  const buildBody = (inlineFingerprints: Set<string>) =>
+    publishSummary
+      ? appendSummaryMarker(
+          buildReviewBody({
+            summary,
+            verified,
+            uncertain,
+            inlineFingerprints,
+            config: input.config,
+            ...(input.guidelineSource ? { guidelineSource: input.guidelineSource } : {}),
+            ...(input.meta ? { meta: input.meta } : {}),
+          }),
+        )
+      : "";
+
+  const body = buildBody(new Set(inlineCandidates.map((c) => c.finding.fingerprint)));
 
   const commentPayloads = inlineCandidates.map((candidate) => ({
     ...candidate.position,
-    body: buildInlineCommentBody(candidate.finding),
+    body: buildInlineCommentBody(candidate.finding, input.guidelineSource),
   }));
 
   const result: PublishReviewResult = {
@@ -354,33 +406,86 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
     reconciled,
   };
 
-  if (existingSummaryId !== null && commentPayloads.length === 0) {
-    // Nothing new to publish: full dedup.
-    result.outcome = "already_published";
-    result.reviewId = existingSummaryId;
-    result.inlineCreated = 0;
-    logger?.info(
-      { reviewId, existingSummaryId, inlineDeduped, summaryOnlyFindings },
-      "Review already published; no new comments to create",
-    );
-    return result;
+  if (commentPayloads.length === 0) {
+    if (!publishSummary) {
+      // Inline-only publication has nothing to create (no anchored findings).
+      result.outcome = inlineDeduped > 0 ? "already_published" : "nothing_to_publish";
+      result.reviewId = null;
+      logger?.info(
+        { reviewId, inlineDeduped, summaryOnlyFindings },
+        "Summary publication disabled and no new inline comments to create",
+      );
+      return result;
+    }
+    if (existingSummaryId !== null) {
+      // Nothing new to publish: full dedup.
+      result.outcome = "already_published";
+      result.reviewId = existingSummaryId;
+      result.inlineCreated = 0;
+      logger?.info(
+        { reviewId, existingSummaryId, inlineDeduped, summaryOnlyFindings },
+        "Review already published; no new comments to create",
+      );
+      return result;
+    }
   }
 
   // 5. COMMENT-only publication — NEVER APPROVE / REQUEST_CHANGES (§23).
-  const created = await withRetry(
-    "pulls.createReview",
-    () =>
-      octokit.rest.pulls.createReview({
-        owner,
-        repo,
-        pull_number: pullNumber,
-        event: "COMMENT",
-        body,
-        comments: commentPayloads,
-      }),
-    retryOptions,
-    logger,
-  );
+  //
+  // GitHub rejects the WHOLE review when one inline comment's path is not in
+  // the PR diff ("Path could not be resolved"). Retrying the same request is
+  // useless; degrade once to a summary-only review so the already-computed
+  // findings are not lost.
+  let created: Awaited<ReturnType<PublisherOctokit["rest"]["pulls"]["createReview"]>>;
+  let publishedInlineCandidates = inlineCandidates;
+  try {
+    created = await withRetry(
+      "pulls.createReview",
+      () =>
+        octokit.rest.pulls.createReview({
+          owner,
+          repo,
+          pull_number: pullNumber,
+          event: "COMMENT",
+          body,
+          comments: commentPayloads,
+        }),
+      retryOptions,
+      logger,
+    );
+  } catch (error) {
+    if (errorStatus(error) !== 422 || commentPayloads.length === 0) throw error;
+    if (!publishSummary) {
+      // Inline-only mode cannot degrade to a summary review.
+      throw error;
+    }
+    logger?.warn(
+      {
+        reviewId,
+        rejectedPaths: [...new Set(commentPayloads.map((comment) => comment.path))],
+        inlineComments: commentPayloads.length,
+      },
+      "GitHub rejected inline review comments; retrying as a summary-only review",
+    );
+    const summaryOnlyBody = buildBody(new Set());
+    created = await withRetry(
+      "pulls.createReview (summary-only)",
+      () =>
+        octokit.rest.pulls.createReview({
+          owner,
+          repo,
+          pull_number: pullNumber,
+          event: "COMMENT",
+          body: summaryOnlyBody,
+          comments: [],
+        }),
+      retryOptions,
+      logger,
+    );
+    summaryOnlyFindings += publishedInlineCandidates.length;
+    publishedInlineCandidates = [];
+    result.summaryOnlyFindings = summaryOnlyFindings;
+  }
 
   const githubReviewId = created.data.id;
   result.reviewId = githubReviewId;
@@ -390,7 +495,7 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
     verified.length === 0 && uncertain.length === 0 && existingSummaryId === null
       ? "clean_review_published"
       : "published";
-  result.inlineCreated = created.data.comments?.length ?? commentPayloads.length;
+  result.inlineCreated = created.data.comments?.length ?? publishedInlineCandidates.length;
 
   // 6. Persist publication state (§13.1). Mapping relies on the fingerprint
   //    marker echoed back in the created review comments.
@@ -402,12 +507,12 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
   }
 
   await prisma.$transaction(async (tx) => {
-    if (existingSummaryId === null) {
+    if (publishSummary && existingSummaryId === null) {
       await tx.reviewComment.create({
         data: { reviewId, commentType: "summary", status: "published", githubCommentId: BigInt(githubReviewId) },
       });
     }
-    for (const candidate of inlineCandidates) {
+    for (const candidate of publishedInlineCandidates) {
       const commentId = fingerprintToCommentId.get(candidate.finding.fingerprint) ?? null;
       await tx.reviewComment.create({
         data: {

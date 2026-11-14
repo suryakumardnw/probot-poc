@@ -54,6 +54,14 @@ export interface StoredFinding {
   filePath: string;
   lineNumber: number;
   description: string;
+  /** Why the defect matters (optional for older findings). */
+  impact?: string;
+  /** Actionable fix (optional for older findings). */
+  recommendation?: string;
+  /** Short guideline reference, if the finding is guideline-derived. */
+  guideline?: string;
+  /** Retained evidence references for the collapsed technical details. */
+  evidence?: Array<{ file: string; line?: number; excerpt: string; reason: string }>;
   verified: boolean;
   status: "new" | "existing" | "updated" | "uncertain";
   /** Set when a previously resolved issue was reintroduced. */
@@ -231,6 +239,9 @@ export async function persistReviewFindings(input: PersistReviewFindingsInput): 
           filePath: item.finding.file,
           lineNumber: item.finding.line,
           description: item.finding.description,
+          impact: item.finding.impact ?? null,
+          recommendation: item.finding.recommendation ?? null,
+          guideline: item.finding.guideline ?? null,
           evidence: item.finding.evidence as unknown as import("@prisma/client").Prisma.InputJsonValue,
           verified: item.verified,
           status: item.status,
@@ -247,6 +258,19 @@ export async function persistReviewFindings(input: PersistReviewFindingsInput): 
         filePath: row.filePath,
         lineNumber: row.lineNumber,
         description: row.description,
+        ...(row.impact ? { impact: row.impact } : {}),
+        ...(row.recommendation ? { recommendation: row.recommendation } : {}),
+        ...(row.guideline ? { guideline: row.guideline } : {}),
+        ...(row.evidence
+          ? {
+              evidence: row.evidence as unknown as Array<{
+                file: string;
+                line?: number;
+                excerpt: string;
+                reason: string;
+              }>,
+            }
+          : {}),
         verified: row.verified,
         status: row.status as StoredFinding["status"],
         reopened: item.reopenedFromId !== null,

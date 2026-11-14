@@ -38,7 +38,7 @@ import {
 import {
   buildChildEnv,
   buildSessionConfig,
-  DEFAULT_LANGFUSE_PLUGIN,
+  DEFAULT_AGENT_TRACING_PLUGIN,
   resolveModelId,
   type AgentRuntimeConfigSource,
 } from "./opencode-config.js";
@@ -94,6 +94,11 @@ interface OpenCodeEvent {
     messageID?: string;
     text?: string;
     tokens?: {
+      // OpenCode 2.2.6 flattens token counts onto `part.tokens`; older
+      // versions nested them under `tokens.usage`. Accept both shapes.
+      input?: number;
+      output?: number;
+      reasoning?: number;
       usage?: { input?: number; output?: number; reasoning?: number; cache?: unknown };
     };
   };
@@ -102,6 +107,15 @@ interface OpenCodeEvent {
 
 /** How long to wait after SIGTERM before escalating to SIGKILL. */
 const KILL_GRACE_MS = 2_000;
+/**
+ * Linux caps a single argv element at MAX_ARG_STRLEN (128 KiB). The prompt is
+ * passed as one argument, so keep a safety margin below that hard limit.
+ * Prompts that grow past it (accumulated tool context) fail execve with
+ * E2BIG, which surfaced as the generic "failed to launch opencode runtime".
+ */
+export const MAX_PROMPT_ARG_BYTES = 120 * 1024;
+const PROMPT_TRUNCATION_MARKER =
+  "\n\n…[prompt truncated to fit the opencode CLI argument limit]…\n\n";
 /**
  * Max characters kept from any runtime detail attached to errors. A crashing
  * CLI can emit 10KB+ of stderr; 500 chars only captured startup noise, which
@@ -198,8 +212,16 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       "utf8",
     );
 
-    const langfuseBaseUrl =
-      process.env.LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASEURL;
+    const agentTracing = this.config.observability?.agentTracing;
+    const tracingPlugin = agentTracing?.plugin ?? DEFAULT_AGENT_TRACING_PLUGIN;
+    const tracingEndpoint =
+      typeof agentTracing?.options?.endpoint === "string"
+        ? agentTracing.options.endpoint
+        : undefined;
+    const tracingProtocol =
+      typeof agentTracing?.options?.protocol === "string"
+        ? agentTracing.options.protocol
+        : "grpc";
     this.logger?.info("agent session created", {
       event: "agent_session_created",
       sessionId: id,
@@ -212,23 +234,16 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       maxOutputTokens,
       timeoutMs: options.timeoutMs ?? this.defaultTimeoutMs,
       configPath,
-      agentTracing: this.config.observability?.langfuse?.enabled
-        ? (this.config.observability.langfuse.plugin ?? DEFAULT_LANGFUSE_PLUGIN)
-        : "off",
-      // Non-secret diagnostics: the plugin is silently inert when credentials
-      // are missing or the package cache was never populated, so make both
-      // visible without ever logging key values.
-      agentTracingStatus: this.config.observability?.langfuse?.enabled
+      agentTracing: agentTracing?.enabled ? tracingPlugin : "off",
+      // Non-secret diagnostics: the plugin is silently inert when its package
+      // cache was never populated, so make that visible without ever logging
+      // credential values.
+      agentTracingStatus: agentTracing?.enabled
         ? {
-            publicKeyPresent: Boolean(process.env.LANGFUSE_PUBLIC_KEY),
-            secretKeyPresent: Boolean(process.env.LANGFUSE_SECRET_KEY),
-            baseUrl: langfuseBaseUrl
-              ? endpointLabel(langfuseBaseUrl)
-              : "default(cloud)",
-            environment: process.env.LANGFUSE_ENVIRONMENT ?? "default(development)",
-            pluginCachePresent: existsSync(
-              path.join(os.homedir(), ".cache", "opencode", "npm", "@langfuse"),
-            ),
+            endpoint: tracingEndpoint ? endpointLabel(tracingEndpoint) : "default",
+            protocol: tracingProtocol,
+            otlpHeadersPresent: Boolean(process.env.OPENCODE_OTLP_HEADERS),
+            pluginCachePresent: existsSync(tracingPluginCacheDir(tracingPlugin)),
           }
         : undefined,
     });
@@ -247,13 +262,13 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       throw new AgentRuntimeError("config", "session is terminated", { sessionId: session.id });
     }
     const startedAt = Date.now();
-    const prompt = buildPrompt(task);
+    const capped = capPromptArg(buildPrompt(task));
     // `--print-logs` forwards the OpenCode server's plugin lifecycle and
-    // Langfuse diagnostics to stderr. Without it plugin initialization and
-    // "tracing disabled / export failed" messages are completely invisible,
-    // which made a silent tracing failure look like a working integration.
-    // stdout stays pure NDJSON, so event parsing is unaffected.
-    const args = ["run", "--format", "json", "--print-logs", prompt];
+    // tracing-plugin diagnostics to stderr. Without it plugin initialization
+    // and "tracing disabled / export failed" messages are completely
+    // invisible, which made a silent tracing failure look like a working
+    // integration. stdout stays pure NDJSON, so event parsing is unaffected.
+    const args = ["run", "--format", "json", "--print-logs", capped.prompt];
     const env = buildChildEnv(this.config, process.env, { reviewId: session.reviewId });
     const modelId = resolveModelId(this.config, process.env);
     // Isolation: fresh per-session config/data/state; binary from PATH; no git
@@ -276,8 +291,21 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       timeoutMs: session.timeoutMs,
       outputMode: task.output,
       instructionChars: task.instruction.length,
+      instructionBytes: Buffer.byteLength(task.instruction, "utf8"),
+      promptBytes: Buffer.byteLength(capped.prompt, "utf8"),
+      promptTruncated: capped.truncated,
       binaryPath: this.binaryPath,
     });
+    if (capped.truncated) {
+      this.logger?.warn("agent prompt truncated to fit the CLI argument limit", {
+        event: "agent_prompt_truncated",
+        sessionId: session.id,
+        reviewId: session.reviewId,
+        originalBytes: capped.originalBytes,
+        keptBytes: Buffer.byteLength(capped.prompt, "utf8"),
+        maxBytes: MAX_PROMPT_ARG_BYTES,
+      });
+    }
     this.logger?.debug("agent execute argv", {
       event: "agent_execute_argv",
       sessionId: session.id,
@@ -313,6 +341,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       throw new AgentRuntimeError("spawn", "failed to launch opencode runtime", {
         sessionId: session.id,
         cause,
+        detail: truncate(scrub(describeSpawnFailure(cause), this.config)),
       });
     }
 
@@ -563,7 +592,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
         // The plugin is silent unless its own diagnostics are surfaced: a
         // missing-credentials or export failure must never hide at debug level.
         const isTracing =
-          /langfuse|opencode-observability|loading plugin|tracing disabled/i.test(trimmed);
+          /langfuse|opencode-plugin-otel|opencode-observability|otlp|loading plugin|tracing disabled|export failed/i.test(
+            trimmed,
+          );
         const summary = truncate(scrub(trimmed, this.config), MAX_LOG_LINE_CHARS);
         const payload = {
           event: "agent_child_output",
@@ -675,10 +706,15 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
         clearInterval(heartbeat);
         reject(
           err.code === "ENOENT"
-            ? new AgentRuntimeError("spawn", "opencode binary not found", { sessionId, cause: err })
+            ? new AgentRuntimeError("spawn", "opencode binary not found", {
+                sessionId,
+                cause: err,
+                detail: truncate(scrub(describeSpawnFailure(err), this.config)),
+              })
             : new AgentRuntimeError("spawn", "failed to launch opencode runtime", {
                 sessionId,
                 cause: err,
+                detail: truncate(scrub(describeSpawnFailure(err), this.config)),
               }),
         );
       });
@@ -826,11 +862,55 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
 // Prompt assembly
 // ---------------------------------------------------------------------------
 
-function buildPrompt(task: AgentTask): string {
+export function buildPrompt(task: AgentTask): string {
   if (task.output === "text") return task.instruction;
   // For JSON tasks the format requirement travels in the prompt, but the
   // security configuration itself never does (§10.1).
   return `${task.instruction}\n\nRespond with exactly one JSON object and nothing else — no prose, no markdown fences.`;
+}
+
+/**
+ * Keep the prompt under the per-argument OS limit while preserving both ends:
+ * the task framing is at the top and the output contract is at the bottom, so
+ * only the middle (diff / retrieved context) may be dropped.
+ */
+export function capPromptArg(prompt: string): {
+  prompt: string;
+  truncated: boolean;
+  originalBytes: number;
+} {
+  const originalBytes = Buffer.byteLength(prompt, "utf8");
+  if (originalBytes <= MAX_PROMPT_ARG_BYTES) {
+    return { prompt, truncated: false, originalBytes };
+  }
+
+  const bytes = Buffer.from(prompt, "utf8");
+  const markerBytes = Buffer.byteLength(PROMPT_TRUNCATION_MARKER, "utf8");
+  const budget = Math.max(0, MAX_PROMPT_ARG_BYTES - markerBytes);
+  const headBudget = Math.floor(budget * 0.6);
+  const tailBudget = budget - headBudget;
+
+  // A byte slice can split a multi-byte code point; drop the replacement
+  // character introduced at the cut. The result is slightly shorter, never
+  // longer than the budget.
+  const head = bytes.subarray(0, headBudget).toString("utf8").replace(/\uFFFD+$/, "");
+  const tail = bytes.subarray(bytes.length - tailBudget).toString("utf8").replace(/^\uFFFD+/, "");
+  return {
+    prompt: `${head}${PROMPT_TRUNCATION_MARKER}${tail}`,
+    truncated: true,
+    originalBytes,
+  };
+}
+
+/** Preserve the OS error code/syscall that explains a spawn failure. */
+function describeSpawnFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const err = error as NodeJS.ErrnoException;
+  const parts = [err.message];
+  if (err.code) parts.push(`code=${err.code}`);
+  if (typeof err.errno === "number") parts.push(`errno=${err.errno}`);
+  if (err.syscall) parts.push(`syscall=${err.syscall}`);
+  return parts.join(" ");
 }
 
 // ---------------------------------------------------------------------------
@@ -878,8 +958,14 @@ function parseEvents(stdout: string): {
         }
         break;
       case "step_finish": {
-        const u = event.part?.tokens?.usage;
-        if (u) {
+        const tokens = event.part?.tokens;
+        const u = tokens?.usage ?? tokens;
+        if (
+          u &&
+          (typeof u.input === "number" ||
+            typeof u.output === "number" ||
+            typeof u.reasoning === "number")
+        ) {
           // The final text step may finish without usage; keep the last
           // step_finish that actually carries token counts.
           usage = {
@@ -989,12 +1075,37 @@ function scrub(text: string, config: AgentRuntimeConfigSource): string {
   let out = text;
   const key = process.env[config.provider.apiKeyEnv];
   if (key) out = out.split(key).join("[redacted]");
-  // Plugin/server diagnostics are now forwarded (--print-logs); never let the
-  // Langfuse secret key appear in worker logs or error details.
+  // Plugin/server diagnostics are now forwarded (--print-logs); never let
+  // tracing credentials appear in worker logs or error details.
   const langfuseSecret = process.env.LANGFUSE_SECRET_KEY;
   if (langfuseSecret) out = out.split(langfuseSecret).join("[redacted]");
+  const otlpHeaders = process.env.OPENCODE_OTLP_HEADERS;
+  if (otlpHeaders) {
+    out = out.split(otlpHeaders).join("[redacted]");
+    for (const pair of otlpHeaders.split(",")) {
+      const separator = pair.indexOf("=");
+      if (separator < 0) continue;
+      const value = pair
+        .slice(separator + 1)
+        .trim()
+        .replace(/^bearer\s+/i, "");
+      if (value.length >= 8) out = out.split(value).join("[redacted]");
+    }
+  }
   out = out.replace(/(authorization|api[-_]?key|x-api-key)["'=:\s]+\S+/gi, '$1[redacted]');
   return out;
+}
+
+/**
+ * Directory `opencode plugin add` uses for a package's cache. Scoped packages
+ * are grouped by scope (`npm/@devtheops/...`); only presence is needed for the
+ * startup diagnostic.
+ */
+function tracingPluginCacheDir(plugin: string): string {
+  const versionSeparator = plugin.lastIndexOf("@");
+  const name = versionSeparator > 0 ? plugin.slice(0, versionSeparator) : plugin;
+  const scope = name.split("/")[0];
+  return path.join(os.homedir(), ".cache", "opencode", "npm", scope);
 }
 
 function truncate(text: string, max = MAX_DETAIL_LENGTH): string {
@@ -1086,20 +1197,4 @@ async function defaultGitStatus(workspacePath: string): Promise<string | undefin
       }
     }, 5_000).unref();
   });
-}
-
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
-/**
- * Build the configured agent runtime behind the `AgentRuntime` abstraction.
- * Review logic (ticket 07) imports this from `../agent/index.js` — never the
- * concrete adapter class — so the runtime stays swappable.
- */
-export function createAgentRuntime(
-  config: AgentRuntimeConfigSource,
-  options: OpenCodeRuntimeOptions = {},
-): AgentRuntime {
-  return new OpenCodeAgentRuntime(config, options);
 }

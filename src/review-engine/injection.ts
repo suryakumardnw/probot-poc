@@ -36,9 +36,11 @@ import path from "node:path";
 import type pino from "pino";
 import type { ReviewConfig } from "../config/review-schema.js";
 import { ReviewEngineError, type PromptInjection, type KnowledgeInjectionMetrics } from "./types.js";
-import type { KnowledgeSnapshot } from "../knowledge/types.js";
+import { handbookVariantDir } from "../knowledge/materialize.js";
+import type { KnowledgeHandbookVariant, KnowledgeSnapshot } from "../knowledge/types.js";
 import {
   CHARS_PER_TOKEN,
+  detectTechnologies,
   rankHandbookFiles,
   selectHandbookUnderBudget,
   type RankedHandbookFile,
@@ -211,10 +213,29 @@ function handbookNotConfigured(): ReviewEngineError {
   );
 }
 
-/** Compact later-stage digest so later stages never re-receive the full text. */
-function handbookLaterStagesText(selected: RankedHandbookFile[]): string {
+/**
+ * Later-stage handbook instructions. Each stage is a separate `opencode run`
+ * process with no shared conversation, so the guidelines must travel with
+ * every prompt. Re-provide the selected text (bounded by the same token
+ * budget) and keep the file list for quick citation reference.
+ */
+function handbookLaterStagesText(selected: RankedHandbookFile[], text: string): string {
   const listed = selected.map((file) => file.path).join(", ") || "(none)";
-  return `${HANDBOOK_REFERENCE_INSTRUCTIONS}\n\nHANDBOOK FILES PROVIDED IN THE ANALYSIS STAGE: ${listed}`;
+  return `${HANDBOOK_REFERENCE_INSTRUCTIONS}\n\nHANDBOOK GUIDELINES (authoritative; re-provided because stages do not share context):\n${text}\n\nHANDBOOK FILES PROVIDED IN THE ANALYSIS STAGE: ${listed}`;
+}
+
+/**
+ * Pick the handbook ref whose technologies match the PR. Config order is
+ * significant: the first matching variant wins; no match → default handbook.
+ */
+export function selectHandbookVariant(
+  snapshot: Pick<KnowledgeSnapshot, "handbookVariants">,
+  detectedTechnologies: string[],
+): KnowledgeHandbookVariant | undefined {
+  const detected = new Set(detectedTechnologies.map((tech) => tech.toLowerCase()));
+  return (snapshot.handbookVariants ?? []).find((variant) =>
+    variant.technologies.some((tech) => detected.has(tech.toLowerCase())),
+  );
 }
 
 /**
@@ -223,6 +244,10 @@ function handbookLaterStagesText(selected: RankedHandbookFile[]): string {
  * (trusted retrieval layer), then select content under the token budget —
  * deterministic, deduplicated, whole-file-preferring. maxChars remains a
  * byte-level backstop.
+ *
+ * When the PR matches a configured per-technology ref (e.g. TypeScript
+ * guidelines on a separate branch), that variant's own copy is used instead
+ * of the default handbook.
  */
 async function injectHandbookFromSnapshot(
   knowledgeDir: string,
@@ -231,14 +256,18 @@ async function injectHandbookFromSnapshot(
   changedFiles: string[],
   logger: pino.Logger,
 ): Promise<PromptInjection> {
-  const source = snapshot.handbook;
+  const detected = detectTechnologies(changedFiles);
+  const variant = selectHandbookVariant(snapshot, detected);
+  const source = variant?.source ?? snapshot.handbook;
   if (source.status === "unavailable" || !source.dir) {
     throw new ReviewEngineError(
       "handbook_unavailable",
-      "The engineering handbook is unavailable in the knowledge cache (boot-time fetch failed)",
+      variant
+        ? `The engineering handbook ref '${variant.source.ref}' for technology '${variant.technologies.join(", ")}' is unavailable in the knowledge cache (boot-time fetch failed)`
+        : "The engineering handbook is unavailable in the knowledge cache (boot-time fetch failed)",
     );
   }
-  const dir = path.join(knowledgeDir, "handbook");
+  const dir = variant ? handbookVariantDir(knowledgeDir, source.ref) : path.join(knowledgeDir, "handbook");
   const files = await listMarkdownFiles(dir);
   if (files.length === 0) {
     throw new ReviewEngineError("handbook_unavailable", "The review's knowledge snapshot contains no handbook files");
@@ -250,10 +279,26 @@ async function injectHandbookFromSnapshot(
     ranked.push({ path: file, content, score: 0, techMatch: false, general: false });
   }
   const ordered = rankHandbookFiles(ranked, changedFiles);
-  const selection = selectHandbookUnderBudget(ordered, changedFiles, {
-    maxTokens: config.knowledge.handbook.maxTokens,
-    maxChars: config.knowledge.handbook.maxChars,
-  });
+  // The knowledge copy lives at `<workspace>/knowledge/...`; expose its
+  // workspace-relative path so the model can read the full file when useful
+  // instead of guessing the handbook repository path.
+  const relativeKnowledgeDir = path
+    .relative(path.dirname(knowledgeDir), dir)
+    .split(path.sep)
+    .join("/");
+  const workspacePrefix =
+    relativeKnowledgeDir && !relativeKnowledgeDir.startsWith("..") && !path.isAbsolute(relativeKnowledgeDir)
+      ? relativeKnowledgeDir
+      : undefined;
+  const selection = selectHandbookUnderBudget(
+    ordered,
+    changedFiles,
+    {
+      maxTokens: config.knowledge.handbook.maxTokens,
+      maxChars: config.knowledge.handbook.maxChars,
+    },
+    { workspacePrefix },
+  );
   if (selection.text.trim().length === 0) {
     throw new ReviewEngineError("handbook_unavailable", "Handbook selection produced no injectable content");
   }
@@ -268,6 +313,9 @@ async function injectHandbookFromSnapshot(
       chars: selection.text.length,
       estimatedTokens: estimateTokens(selection.text),
       files: selection.files,
+      handbookRef: source.ref,
+      technologyRef: variant ? variant.technologies : undefined,
+      detectedTechnologies: detected,
       funnel: `${selection.candidates} candidates -> ${selection.relevant} relevant -> ${selection.selected} selected`,
       truncated: selection.truncated,
     },
@@ -278,8 +326,9 @@ async function injectHandbookFromSnapshot(
     label: "handbook standards",
     profile: "handbook",
     text: selection.text,
-    laterStagesText: handbookLaterStagesText(selectedFiles),
+    laterStagesText: handbookLaterStagesText(selectedFiles, selection.text),
     files: selection.files,
+    guidelineSource: { repo: config.knowledge.handbook.repo, ref: source.ref },
     contentHash: source.contentHash,
     metrics: {
       injectedTokens: estimateTokens(selection.text),

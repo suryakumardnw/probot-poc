@@ -19,6 +19,7 @@
 import type pino from "pino";
 import type { PrismaClient } from "@prisma/client";
 import type { AgentRuntime } from "../agent/types.js";
+import { resolveModelId } from "../agent/index.js";
 import type { ReviewConfig } from "../config/review-schema.js";
 import { redactCredentials } from "../workspace/redact.js";
 import { transitionReviewState } from "../ingestion/review-state.js";
@@ -27,7 +28,7 @@ import type { WorkspaceResult } from "../workspace/workspace.js";
 import type { InstallationTokenProvider } from "../workspace/credentials.js";
 import { createReviewEngineHook } from "../review-engine/hook.js";
 import { resolveReviewInjection } from "../review-engine/injection.js";
-import type { RunReviewOutput } from "../review-engine/types.js";
+import type { PromptInjection, RunReviewOutput } from "../review-engine/types.js";
 import { getKnowledgeSnapshot, materializeReviewKnowledge, persistKnowledgeMetrics } from "../knowledge/index.js";
 import { persistReviewFindings } from "../findings/index.js";
 import {
@@ -166,6 +167,7 @@ export async function finalizeReview(
   deps: ReviewPipelineDeps,
   ctx: { payload: ReviewJobPayload; workspace: WorkspaceResult },
   output: RunReviewOutput,
+  promptInjection?: PromptInjection | null,
 ): Promise<void> {
   const { logger, prisma } = deps;
   const { payload, workspace } = ctx;
@@ -275,18 +277,43 @@ export async function finalizeReview(
           filePath: row.filePath,
           lineNumber: row.lineNumber,
           description: row.description,
+          ...(row.impact ? { impact: row.impact } : {}),
+          ...(row.recommendation ? { recommendation: row.recommendation } : {}),
+          ...(row.guideline ? { guideline: row.guideline } : {}),
+          ...(row.evidence
+            ? {
+                evidence: row.evidence as unknown as Array<{
+                  file: string;
+                  line?: number;
+                  excerpt: string;
+                  reason: string;
+                }>,
+              }
+            : {}),
           verified: row.verified,
           status: row.status as "new" | "existing" | "updated" | "uncertain",
           reopened: false,
         })),
       ),
       config: {
+        publishSummary: deps.config.review.reporting.summary,
         publishUncertainInSummary: deps.config.review.findings.publishUncertainInSummary,
         publishCleanReview: deps.config.review.reporting.publishCleanReview,
       },
+      ...(promptInjection?.guidelineSource
+        ? {
+            guidelineSource: {
+              ...promptInjection.guidelineSource,
+              files: promptInjection.files,
+            },
+          }
+        : {}),
       meta: {
         reviewer: deps.config.application.name,
+        prNumber: payload.pullRequestNumber,
+        commit: workspace.headSha.slice(0, 7),
         source: `${payload.repositoryFullName}#${payload.pullRequestNumber} @ ${workspace.headSha.slice(0, 7)}`,
+        model: resolveModelId(deps.config, process.env),
         reviewedAt: new Date(),
         timezone: deps.config.application.timezone,
       },
@@ -385,7 +412,7 @@ export function createReviewPipelineHook(deps: ReviewPipelineDeps): ReviewPipeli
     // the Review row; injection reads only those copies, never the shared
     // cache, so a worker restart refreshing the cache cannot change an
     // in-flight review.
-    let promptInjection = null;
+    let promptInjection: PromptInjection | null = null;
     if (reviewType !== "standard") {
       const materialized = await materializeReviewKnowledge({
         reviewId: ctx.payload.reviewId,
@@ -423,7 +450,7 @@ export function createReviewPipelineHook(deps: ReviewPipelineDeps): ReviewPipeli
     }
     // Engine run + state up to `validating` (ticket 07 hook).
     const output = await engineHook({ ...ctx, promptInjection });
-    await finalizeReview(deps, ctx, output);
+    await finalizeReview(deps, ctx, output, promptInjection);
     return output;
   };
 }

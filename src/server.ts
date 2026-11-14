@@ -120,7 +120,7 @@ const manualReviewBodySchema = z.object({
     .string()
     .regex(/^[0-9a-f]{7,40}$/i, "must be a git SHA (7-40 hex chars)")
     .optional(),
-  /** Review type (§4.1); omitted → github.defaultReviewType (standard). */
+  /** Review type (§4.1); omitted → github.defaultReviewType (handbook). */
   reviewType: z.enum(["standard", "skill", "handbook"]).optional(),
 });
 
@@ -234,9 +234,15 @@ const server = http.createServer((req, res) => {  const url = new URL(req.url ??
     return;
   }
 
-  // Admin HTML panel (ticket 14): GET/POST /admin and /admin/:section.
+  // Admin HTML panel (ticket 14): GET/POST /admin and /admin/:section, plus
+  // the authenticated /logs shortcut to the Dozzle UI.
   // Dispatched after the admin API so /api/admin/* keeps precedence.
-  if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
+  if (
+    url.pathname === "/admin" ||
+    url.pathname.startsWith("/admin/") ||
+    url.pathname === "/logs" ||
+    url.pathname === "/logs/"
+  ) {
     void adminPanel(req, res).catch((error) => {
       logger.error({ err: error }, "Admin panel handler crashed");
       res.statusCode = 500;

@@ -88,6 +88,14 @@ export class DiffFailedError extends ReviewRetrievalError {
 
 const FULL_NAME_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SHA_PATTERN = /^[0-9a-fA-F]{40}$/;
+/**
+ * Production clone depth is 1. The merge base is usually not present yet, so
+ * the fetch is deepened until `git merge-base` succeeds. Bounded to avoid
+ * turning a stale PR into a full-history clone; after this the diff falls
+ * back to the base tip and publication degrades to summary-only on a path
+ * mismatch.
+ */
+const MAX_MERGE_BASE_DEPTH = 512;
 
 export interface ReviewWorkspaceServiceOptions {
   policy: WorkspacePolicy;
@@ -193,21 +201,25 @@ export class ReviewWorkspaceService {
 
       // 4. Base commit retrieval + merge-base (§5.1 steps 4/... resolution).
       const baseSha = await this.resolveBase(workspacePath, input, token);
-      let mergeBaseSha: string | null = null;
-      if (baseSha) {
-        try {
-          const mergeBase = (await runGit(["merge-base", headSha, baseSha], { cwd: workspacePath })).trim().toLowerCase();
-          mergeBaseSha = /^[0-9a-f]{40}$/.test(mergeBase) ? mergeBase : null;
-        } catch {
-          // Shallow history can make merge-base impossible; fall back to the
-          // resolved base SHA so the diff is still base..head.
-          log?.debug({ baseSha }, "merge-base unavailable (shallow history); using base SHA");
-          mergeBaseSha = baseSha;
-        }
+      const mergeBaseSha = baseSha
+        ? await this.resolveMergeBase(workspacePath, headSha, baseSha, input.pullRequestNumber, token)
+        : null;
+      if (baseSha && !mergeBaseSha) {
+        log?.warn(
+          { baseSha, headSha, maxDepth: MAX_MERGE_BASE_DEPTH },
+          "merge-base unavailable after deepening; diffing against the base tip",
+        );
       }
 
       // 5. PR diff generation + changed-file enumeration (§5.1 steps 5/6).
-      const diffRange = baseSha ? `${baseSha}..${headSha}` : headSha;
+      //
+      // GitHub's PR diff is merge-base...head, NOT base-tip..head. When the
+      // base branch advanced after the PR branch was cut, diffing against the
+      // base tip includes reverse changes for every base-branch commit absent
+      // from the head. Those files are not part of the PR, so findings anchored
+      // to them are rejected by the review API ("Path could not be resolved").
+      const diffBase = mergeBaseSha ?? baseSha;
+      const diffRange = diffBase ? `${diffBase}..${headSha}` : headSha;
       let diff: string;
       let nameStatus: string;
       try {
@@ -325,6 +337,65 @@ export class ReviewWorkspaceService {
     throw new DiffFailedError(
       `Could not resolve base commit (baseSha=${input.baseSha ?? "unknown"}, baseRef=${input.baseRef ?? "unknown"})`,
     );
+  }
+
+  /**
+   * Resolve the PR merge base even with a depth-1 clone. `git merge-base`
+   * needs the common ancestor in the object graph, so deepen the two fetched
+   * tips in doubling steps until it is available.
+   */
+  private async resolveMergeBase(
+    workspacePath: string,
+    headSha: string,
+    baseSha: string,
+    pullRequestNumber: number,
+    token: string,
+  ): Promise<string | null> {
+    const { policy } = this.opts;
+    const tryMergeBase = async (): Promise<string | null> => {
+      try {
+        const out = (
+          await runGit(["merge-base", headSha, baseSha], {
+            cwd: workspacePath,
+            timeoutMs: policy.gitTimeoutMs,
+            secret: token,
+          })
+        )
+          .trim()
+          .toLowerCase();
+        return /^[0-9a-f]{40}$/.test(out) ? out : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const direct = await tryMergeBase();
+    if (direct) return direct;
+
+    let depth = Math.max(1, policy.cloneDepth);
+    while (depth < MAX_MERGE_BASE_DEPTH) {
+      depth = Math.min(depth * 2, MAX_MERGE_BASE_DEPTH);
+      try {
+        await runGit(["fetch", `--deepen=${depth}`, "origin", baseSha], {
+          cwd: workspacePath,
+          timeoutMs: policy.gitTimeoutMs,
+          secret: token,
+        });
+        await runGit(
+          ["fetch", `--deepen=${depth}`, "origin", `+refs/pull/${pullRequestNumber}/head:refs/review/head`],
+          { cwd: workspacePath, timeoutMs: policy.gitTimeoutMs, secret: token },
+        );
+      } catch (error) {
+        this.opts.logger?.debug(
+          { depth, err: redactCredentials((error as Error).message, token) },
+          "Merge-base deepening fetch failed",
+        );
+        return null;
+      }
+      const found = await tryMergeBase();
+      if (found) return found;
+    }
+    return null;
   }
 
   /**

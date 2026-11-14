@@ -336,6 +336,12 @@ model Finding {
   filePath              String                 @map("file_path")
   lineNumber            Int                    @map("line_number")
   description           String
+  // Concise, model-authored explanation of the consequence and the fix.
+  // Optional for rows created before these fields existed.
+  impact                String?
+  recommendation        String?
+  // Short guideline reference (file + section), never a full quotation.
+  guideline             String?
   // Retained evidence references (file, line, excerpt, reason).
   evidence              Json
   // Derived from thresholds and evidence anchoring — never trusted from the

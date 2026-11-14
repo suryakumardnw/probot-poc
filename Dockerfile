@@ -1,7 +1,7 @@
 # --- Build stage ---
 # Pinned minor version (ticket 13): never use floating major/minor-only tags in
 # production. Bump deliberately and re-run the full test suite.
-FROM node:22.14.0-slim AS build
+FROM node:24.22.3-slim AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -14,7 +14,7 @@ COPY src ./src
 RUN npm run build
 
 # --- Runtime stage ---
-FROM node:22.14.0-slim
+FROM node:24.22.3-slim
 WORKDIR /app
 ENV NODE_ENV=production
 
@@ -86,10 +86,10 @@ USER node
 # the background), and every review uses a fresh per-session config/data dir.
 # Without this cache the `plugins` entry in the session config is silently
 # ignored and no traces are exported. Bump the pin deliberately.
-ARG LANGFUSE_PLUGIN=@langfuse/opencode-observability-plugin@0.7.0
+ARG AGENT_TRACING_PLUGIN=@devtheops/opencode-plugin-otel@2.1.0
 RUN mkdir -p /home/node/.config/opencode && \
-    opencode plugin add "${LANGFUSE_PLUGIN}" && \
-    test -d /home/node/.cache/opencode/npm/@langfuse
+    opencode plugin add "${AGENT_TRACING_PLUGIN}" && \
+    test -d /home/node/.cache/opencode/npm/@devtheops
 
 # Default: Probot application. Override with `node lib/worker.js` for the
 # review worker container. Invoking node directly (not npm) makes the node

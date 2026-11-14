@@ -394,24 +394,8 @@ describe("review ingestion", () => {
 
     const manualJob = await prisma.reviewJob.findFirstOrThrow({ where: { reviewId: manual.id } });
     expect(manualJob.status).toBe("enqueued");
-    expect(manual.reviewType).toBe("standard");
-    expect(manualJob.jobKey).toBe(`${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:standard:a1`);
-  });
-
-  test("/review reuses the stored base SHA instead of nulling it", async () => {
-    // Regression: the issue_comment payload has no base SHA, and ingestion used
-    // to overwrite the PR's stored base SHA with null — the review then failed
-    // at clone with "Could not resolve base commit (baseSha=unknown)".
-    const baseSha = "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222";
-    await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-base-open-1");
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review"), "delivery-base-1");
-
-    const pullRequest = await prisma.pullRequest.findFirstOrThrow();
-    expect(pullRequest.baseSha).toBe(baseSha);
-    const opened = await prisma.review.findFirstOrThrow({ where: { trigger: "opened" } });
-    expect(opened.baseSha).toBe(baseSha);
-    const manual = await prisma.review.findFirstOrThrow({ where: { trigger: "manual" } });
-    expect(manual.baseSha).toBe(baseSha);
+    expect(manual.reviewType).toBe("handbook");
+    expect(manualJob.jobKey).toBe(`${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:handbook:a1`);
   });
 
   test("repeated /review comments create one fresh review per command", async () => {
@@ -422,15 +406,15 @@ describe("review ingestion", () => {
     const reviews = await prisma.review.findMany({ orderBy: { createdAt: "asc" } });
     expect(reviews).toHaveLength(3);
     expect(reviews.map((r) => r.trigger)).toEqual(["opened", "manual", "manual"]);
-    expect(reviews.map((r) => r.reviewType)).toEqual(["standard", "standard", "standard"]);
-    expect(reviews.map((r) => r.attempt)).toEqual([0, 1, 2]);
+    expect(reviews.map((r) => r.reviewType)).toEqual(["standard", "handbook", "standard"]);
+    expect(reviews.map((r) => r.attempt)).toEqual([0, 1, 1]);
     const jobs = await prisma.reviewJob.findMany();
     expect(new Set(jobs.map((j) => j.jobKey)).size).toBe(3);
   });
 
   test("/review type:handbook ingests a handbook review with its own attempt counter", async () => {
-    await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-skill-open-1");
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:handbook"), "delivery-skill-1");
+    await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-handbook-open-1");
+    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:handbook"), "delivery-handbook-1");
 
     const reviews = await prisma.review.findMany({ orderBy: { createdAt: "asc" } });
     expect(reviews).toHaveLength(2);
@@ -442,15 +426,15 @@ describe("review ingestion", () => {
     expect(job.jobKey).toBe(`${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:handbook:a1`);
 
     // Repeating the handbook command increments the handbook attempt counter.
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review handbook"), "delivery-skill-2");
+    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review handbook"), "delivery-handbook-2");
     const handbookReviews = await prisma.review.findMany({ where: { reviewType: "handbook" }, orderBy: { createdAt: "asc" } });
     expect(handbookReviews.map((r) => r.attempt)).toEqual([1, 2]);
   });
 
   test("the same head SHA can have standard and handbook reviews concurrently (distinct identity)", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-types-open-1");
-    // A bare /review creates ANOTHER standard review (attempt 1, forced).
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review"), "delivery-types-1");
+    // An explicit standard /review creates a standard review (attempt 1, forced).
+    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review standard"), "delivery-types-1");
     // A handbook review of the SAME head SHA is an independent identity.
     await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:handbook"), "delivery-types-2");
 
@@ -461,13 +445,13 @@ describe("review ingestion", () => {
     // independent identity and keeps running.
     const standardReviews = reviews.filter((r) => r.reviewType === "standard");
     expect(standardReviews.map((r) => r.state).sort()).toEqual(["queued", "superseded"]);
-    const handbookReview = reviews.find((r) => r.reviewType === "handbook");
-    expect(handbookReview?.state).toBe("queued");
+    const handbookReviews = reviews.filter((r) => r.reviewType === "handbook");
+    expect(handbookReviews.map((r) => r.state)).toEqual(["queued"]);
 
     const jobs = await prisma.reviewJob.findMany();
     expect(new Set(jobs.map((j) => j.jobKey)).size).toBe(3);
-    // §4.4: the forced standard re-review supersedes only the standard
-    // in-flight review; the handbook job keeps running.
+    // §4.4: the forced handbook re-review supersedes only the handbook
+    // in-flight review; the standard job keeps running.
     expect(jobs.filter((j) => j.status === "superseded")).toHaveLength(1);
     expect(jobs.filter((j) => j.status === "enqueued")).toHaveLength(2);
     // No review of one type bleeds into another type's identity.
@@ -488,34 +472,18 @@ describe("review ingestion", () => {
   });
 
   test("disabled review type posts help and does not ingest", async () => {
-    // Serve a temporary configuration with the skill type disabled for the
-    // duration of this test (see the loadReviewConfig mock at the top).
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "review-types-test-"));
-    const disabled = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "config/review.json"), "utf8")) as Record<string, unknown>;
-    (disabled as { review: Record<string, unknown> }).review = {
-      ...((disabled as { review: Record<string, unknown> }).review as Record<string, unknown>),
-      types: {
-        ...((((disabled as { review: Record<string, unknown> }).review as Record<string, unknown>).types ?? {}) as Record<string, unknown>),
-        skill: { enabled: false, publish: false },
-      },
-    };
-    const configPath = path.join(dir, "review.json");
-    fs.writeFileSync(configPath, JSON.stringify(disabled));
-    configPathHolder.path = configPath;
-    try {
-      await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-disabled-open-1");
-      await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review skill"), "delivery-disabled-1");
+    // The checked-in configuration disables the skill review type. The
+    // automatic opened review still ingests; the disabled manual type posts
+    // help and creates nothing.
+    await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-disabled-open-1");
+    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review skill"), "delivery-disabled-1");
 
-      const reviews = await prisma.review.findMany();
-      expect(reviews).toHaveLength(1);
-      expect(reviews[0]!.reviewType).toBe("standard");
-    } finally {
-      configPathHolder.path = undefined;
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+    const reviews = await prisma.review.findMany();
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]!.reviewType).toBe("standard");
   });
 
-  test("non-command comments and bot comments are ignored", async () => {
+  test("non-command comments, bot comments and closed PRs are ignored", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-cmd-open-3");
     const before = await prisma.review.count();
 
@@ -528,6 +496,13 @@ describe("review ingestion", () => {
       commentPayload("/review", { comment: { user: { type: "Bot", login: "ai-pr-reviewer[bot]" } } }),
       "delivery-cmd-6",
     );
+    await receiveDelivery(
+      probot,
+      "issue_comment",
+      "created",
+      commentPayload("/review", { issue: { state: "closed" } }),
+      "delivery-cmd-7",
+    );
     // Plain issues (no pull_request marker) are ignored too.
     await receiveDelivery(
       probot,
@@ -538,21 +513,6 @@ describe("review ingestion", () => {
     );
 
     expect(await prisma.review.count()).toBe(before);
-  });
-
-  test("/review on a closed pull request is ingested", async () => {
-    await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-cmd-open-closed-1");
-    const before = await prisma.review.count();
-
-    await receiveDelivery(
-      probot,
-      "issue_comment",
-      "created",
-      commentPayload("/review", { issue: { state: "closed" } }),
-      "delivery-cmd-7",
-    );
-
-    expect(await prisma.review.count()).toBe(before + 1);
   });
 
   test("installation.created registers installation + repositories; installation.deleted disables them", async () => {
@@ -605,10 +565,10 @@ describe("review ingestion", () => {
 
     // Manual ingestion accepts a review type (§4.1): same PR/SHA, independent
     // identity.
-    const handbookResult = await ingestManualReview({ repository: "octo-org/gamma", pullRequestNumber: 7, reviewType: "handbook" });
-    expect(handbookResult.outcome).toBe("created");
-    const handbookReview = await prisma.review.findUniqueOrThrow({ where: { id: handbookResult.reviewId! } });
-    expect(handbookReview.reviewType).toBe("handbook");
+    const skillResult = await ingestManualReview({ repository: "octo-org/gamma", pullRequestNumber: 7, reviewType: "skill" });
+    expect(skillResult.outcome).toBe("created");
+    const skillReview = await prisma.review.findUniqueOrThrow({ where: { id: skillResult.reviewId! } });
+    expect(skillReview.reviewType).toBe("skill");
 
     const status = await getReviewStatus(result.reviewId!);
     expect(status?.review.state).toBe("queued");

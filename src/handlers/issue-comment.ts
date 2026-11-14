@@ -44,6 +44,8 @@ export function registerIssueCommentHandlers(app: Probot): void {
 
     // Only pull requests.
     if (!issue.pull_request) return;
+    // Closed/merged pull requests are not re-reviewed via comments.
+    if (issue.state === "closed") return;
     // Never react to bots (including our own app) to avoid loops.
     if (comment.user?.type === "Bot") return;
     const installation = context.payload.installation;

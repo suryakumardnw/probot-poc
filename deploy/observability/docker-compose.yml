@@ -1,0 +1,99 @@
+# Optional agent-tracing backend (Phoenix).
+#
+# Phoenix is a separate Compose project on purpose: the application compose
+# must start without it, and traces must never be a review-critical dependency.
+# It joins the app-owned `ai-pr-reviewer_observability` bridge so the worker can
+# export OTLP to http://phoenix:6006. Start the app stack once to create the
+# network, then:
+#
+#   docker compose -f deploy/observability/docker-compose.yml up -d
+#
+# The UI is configured for the public subpath
+# https://probot.nativewit.app/phoenix and bound to 127.0.0.1 only. For a
+# direct loopback smoke test (no path-stripping proxy), blank the root path:
+#
+#   PHOENIX_ROOT_URL=http://localhost:6006 PHOENIX_HOST_ROOT_PATH= \
+#     docker compose -f deploy/observability/docker-compose.yml up -d
+#   ssh -L 6006:127.0.0.1:6006 user@server
+#   open http://localhost:6006
+#
+# For the Dokploy/Traefik domain, add the optional edge override:
+#
+#   docker compose \
+#     -f deploy/observability/docker-compose.yml \
+#     -f deploy/observability/docker-compose.dokploy.yml \
+#     up -d
+#
+# Never expose the UI publicly without auth: traces can contain source code.
+# Phoenix 21+ enables auth for non-loopback listeners by default; this compose
+# pins PHOENIX_ENABLE_AUTH=false for the loopback-only setup. Set it to true
+# (and provide the secrets below) when routing a public domain.
+
+name: ai-pr-reviewer-observability
+
+services:
+  phoenix:
+    # Pinned deliberately: bump with the Phoenix release notes.
+    image: arizephoenix/phoenix:21.0.0
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      PHOENIX_HOST: "0.0.0.0"
+      PHOENIX_PORT: "6006"
+      PHOENIX_WORKING_DIR: /mnt/data
+      # Public endpoint served by Dokploy/Traefik at https://probot.nativewit.app/phoenix.
+      # Both values are required for a subpath: ROOT_URL is used in absolute
+      # links, HOST_ROOT_PATH makes the UI/API render under /phoenix. The
+      # Dokploy domain must also enable "Strip Path" so Traefik forwards
+      # /healthz and /v1/traces to Phoenix at the root.
+      PHOENIX_ROOT_URL: ${PHOENIX_ROOT_URL:-https://probot.nativewit.app/phoenix}
+      # `-` (not `:-`) so an explicit empty value serves the UI at `/` for a
+      # direct loopback smoke test without a path-stripping proxy.
+      PHOENIX_HOST_ROOT_PATH: ${PHOENIX_HOST_ROOT_PATH-/phoenix}
+      # No outbound telemetry from a tool that stores proprietary traces.
+      PHOENIX_TELEMETRY_ENABLED: "false"
+      # Keep trace storage bounded (0 in Phoenix means "forever").
+      PHOENIX_DEFAULT_RETENTION_POLICY_DAYS: ${PHOENIX_RETENTION_DAYS:-30}
+      # Loopback-only by default. Set PHOENIX_ENABLE_AUTH=true before adding a
+      # public Dokploy domain, then create a system API key in the UI and put
+      # `OPENCODE_OTLP_HEADERS=authorization=Bearer <key>` in deploy/.env.
+      PHOENIX_ENABLE_AUTH: ${PHOENIX_ENABLE_AUTH:-false}
+      PHOENIX_SECRET: ${PHOENIX_SECRET:-}
+      PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD: ${PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD:-}
+    volumes:
+      - phoenix-data:/mnt/data
+    # Published on loopback only (SSH tunnel / local smoke). Traefik does not
+    # need this mapping; it reaches the container port over a shared network.
+    ports:
+      - "127.0.0.1:${PHOENIX_HOST_PORT:-6006}:6006"
+    expose:
+      - "6006"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006/healthz', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          # Idle Phoenix still uses RAM for the app, its embedded database and
+          # background processes; 512M covers the current trace volume. Raise
+          # it if the UI or ingestion becomes sluggish under load.
+          memory: 512M
+    networks:
+      - observability
+
+volumes:
+  phoenix-data:
+
+networks:
+  # Created by deploy/docker-compose.yml. Start the app stack first.
+  observability:
+    external: true
+    name: ${OBSERVABILITY_NETWORK:-ai-pr-reviewer_observability}

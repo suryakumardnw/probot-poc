@@ -30,22 +30,30 @@
 # users.yml lives in the `dozzle-data` named volume, which survives redeploys.
 # The generated file contains bcrypt hashes, never plaintext.
 #
-# Ingress: no host port is published. In Dokploy, attach a domain (e.g.
-# logs.yourdomain.com or an sslip.io name containing the public IP) to the
-# `dozzle` service with Container Port `8080`; Traefik terminates TLS and
-# routes over dokploy-network. Restrict the domain to admin IPs/VPN where
-# possible.
+# Ingress: no host port is published. Dozzle is mounted under /dozzle on the
+# existing Probot domain (same pattern as Phoenix at /phoenix). In Dokploy,
+# attach a domain to the `dozzle` service:
+#
+#   Host:           probot.nativewit.app (your existing domain)
+#   Path:           /dozzle
+#   Strip Path:     OFF  <-- Dozzle needs the prefix (DOZZLE_BASE)
+#   Container Port: 8080
+#
+# Traefik terminates TLS and routes over dokploy-network. Everything outside
+# /dozzle still goes to probot. Dozzle's simple auth (users.yml) protects the
+# UI; actions and shell access stay disabled.
 #
 # Behind CGNAT (ISP does not give the router a public IPv4) inbound port
 # forwarding is impossible. For that case the optional `dozzle-tunnel`
-# service opens an OUTBOUND Cloudflare quick tunnel and publishes Dozzle at
-# a random https://<name>.trycloudflare.com URL. Read it from the service
-# logs after deploy:
+# service (profile `tunnel`) opens an OUTBOUND Cloudflare quick tunnel. With
+# DOZZLE_BASE=/dozzle the URL is https://<name>.trycloudflare.com/dozzle/ —
+# read the hostname from the service logs after deploy:
 #
+#   docker compose -f deploy/docker-compose.dozzle.yml --profile tunnel up -d
 #   docker logs ai-pr-reviewer-logs-dozzle-tunnel-1 | grep trycloudflare
 #
-# The tunnel URL changes whenever the container is recreated. Remove the
-# service if you have a real public IP or do not want public exposure.
+# The tunnel URL changes whenever the container is recreated. Leave the
+# profile disabled if you have a real public IP or do not want public exposure.
 # Local smoke (no Dokploy): use docker-compose.dozzle.local.yml.
 #
 # Validate: docker compose -f deploy/docker-compose.dozzle.yml config
@@ -107,6 +115,9 @@ services:
     # users.yml is missing, login is impossible (no anonymous access).
     environment:
       DOZZLE_AUTH_PROVIDER: simple
+      # Serve the UI under https://<probot-domain>/dozzle. Traefik must NOT
+      # strip the prefix: Dozzle rewrites assets to /dozzle/* and expects it.
+      DOZZLE_BASE: /dozzle
       # Mutating capabilities off (docs: keep actions/shell disabled unless
       # needed). Defaults are already false; pinned explicitly as a guard.
       DOZZLE_ENABLE_ACTIONS: "false"
@@ -116,8 +127,8 @@ services:
       DOZZLE_DISABLE_SETUP_WIZARD: "true"
       DOZZLE_HOSTNAME: dokploy-host
     # Container port only — Dokploy Traefik reaches it over dokploy-network
-    # (Domains tab → Container Port 8080). No host binding, matching the
-    # main stack's no-published-ports invariant.
+    # with the /dozzle path router (Domains tab → Container Port 8080).
+    # No host binding, matching the main stack's no-published-ports invariant.
     expose:
       - "8080"
     # Dozzle talks to the local socket (no network egress needed) and serves
@@ -136,14 +147,15 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M
+          memory: 128M
 
   # Optional public ingress for CGNAT / no-port-forwarding environments.
-  # cloudflared dials OUT to Cloudflare, so it needs no inbound ports and
-  # bypasses the ISP NAT. Quick tunnels get a random *.trycloudflare.com
-  # hostname (printed in the logs) and are intended for demos/ops access,
-  # not as a stable production URL. Dozzle auth is still required.
+  # cloudflared dials OUT to Cloudflare, so it needs no inbound ports; the
+  # random *.trycloudflare.com URL is intended for demos/ops access, not as a
+  # stable production URL. Opt-in only (`--profile tunnel`), so a normal
+  # deployment never opens a public tunnel. Dozzle auth is still required.
   dozzle-tunnel:
+    profiles: ["tunnel"]
     image: cloudflare/cloudflared:2026.10.7
     restart: unless-stopped
     command:
@@ -161,7 +173,7 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 128M
+          memory: 64M
 
 volumes:
   # Dozzle state: users.yml (bcrypt hashes), session secret and settings.

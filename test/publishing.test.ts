@@ -267,6 +267,8 @@ interface FakeState {
   existingReviews: Array<{ id: number; body: string | null; state: string }>;
   /** Number of times createReview should fail before succeeding. */
   failCreateTimes: number;
+  /** Errors thrown by successive createReview calls (before failCreateTimes). */
+  createReviewErrors: unknown[];
   getPullCalls: number;
   createReviewCalls: Array<{
     event: string;
@@ -297,6 +299,8 @@ function makeFakeOctokit(state: FakeState): PublisherOctokit {
             body: params.body,
             comments: params.comments ?? [],
           });
+          const queuedError = state.createReviewErrors.shift();
+          if (queuedError !== undefined) throw queuedError;
           if (state.failCreateTimes > 0) {
             state.failCreateTimes -= 1;
             throw new Error("simulated GitHub 502");
@@ -322,6 +326,7 @@ function makeState(headSha: string): FakeState {
     existingComments: [],
     existingReviews: [],
     failCreateTimes: 0,
+    createReviewErrors: [],
     getPullCalls: 0,
     createReviewCalls: [],
   };
@@ -546,11 +551,17 @@ describe("review body generation", () => {
     };
     const body = buildInlineCommentBody(f);
     expect(extractFingerprint(body)).toBe("fp1:abc");
+    expect(body).toContain("<!-- review-bot:v1 rule=SECURITY fp=fp1:abc sev=high conf=0.9 -->");
+    expect(body).toContain("🔴 Leak");
+    expect(body).toContain("High · Security · Confidence: High (90%)");
+    expect(body).toContain("a secret may leak here");
+    expect(body).not.toContain("Technical details");
     expect(fingerprintMarker("fp1:abc")).not.toMatch(/[A-Za-z]\s+secret/); // hidden marker format
   });
 
   test("extractFingerprint tolerates whitespace inside the marker", () => {
     expect(extractFingerprint("x <!--  ai-pr-reviewer:fingerprint:fp1:zzz  --> y")).toBe("fp1:zzz");
+    expect(extractFingerprint("x <!--  review-bot:v1 rule=RULE fp=fp1:zzz sev=low conf=0.5  --> y")).toBe("fp1:zzz");
     expect(extractFingerprint("no marker")).toBeNull();
   });
 
@@ -576,7 +587,7 @@ describe("review body generation", () => {
       config: { publishUncertainInSummary: true, publishCleanReview: true },
     });
     expect(withUncertain).toContain("V");
-    expect(withUncertain).toContain("Uncertain findings");
+    expect(withUncertain).toContain("Additional observation (1, unverified)");
     expect(withUncertain).toContain("U");
 
     const withoutUncertain = buildReviewBody({
@@ -585,7 +596,7 @@ describe("review body generation", () => {
       uncertain,
       config: { publishUncertainInSummary: false, publishCleanReview: true },
     });
-    expect(withoutUncertain).not.toContain("Uncertain findings");
+    expect(withoutUncertain).not.toContain("Additional observation");
   });
 
   test("clean reviews publish a short message when enabled, nothing when disabled", () => {
@@ -595,13 +606,13 @@ describe("review body generation", () => {
       uncertain: [],
       config: { publishUncertainInSummary: true, publishCleanReview: true },
     };
-    expect(buildReviewBody(input)).toContain("No verified findings");
+    expect(buildReviewBody(input)).toContain("No confirmed findings");
     expect(
       buildReviewBody({ ...input, config: { ...input.config, publishCleanReview: false } }),
-    ).not.toContain("No verified findings");
+    ).not.toContain("No confirmed findings");
   });
 
-  test("groups verified findings by category with counts and recommendation", () => {
+  test("renders a flat numbered list of findings, most severe first", () => {
     const verified = [
       finding({ category: "maintainability", severity: "low", title: "Naming drift" }),
       finding({ category: "security", severity: "high", title: "Unredacted dump" }),
@@ -614,23 +625,47 @@ describe("review body generation", () => {
       config: { publishUncertainInSummary: true, publishCleanReview: true },
     });
 
-    // Canonical category order: security before maintainability.
-    expect(body.indexOf("## 1\\. Security")).toBeGreaterThan(-1);
-    expect(body.indexOf("## 2\\. Code Quality")).toBeGreaterThan(body.indexOf("## 1\\. Security"));
-    expect(body).toContain("**Severity:** 🟠 2 findings (1 high · 1 medium)");
-    expect(body).toContain("**Recommendation:** ⚠️ Major Comments");
-    expect(body).toContain("**Recommendation:** 💬 Optional Nits");
+    expect(body).toContain("**Changes requested** · 1 high · 1 medium · 1 low");
+    expect(body.indexOf("## Findings (3)")).toBeGreaterThan(-1);
+    expect(body.indexOf("### 1. Unredacted dump")).toBeGreaterThan(-1);
+    expect(body.indexOf("### 2. Unbounded write")).toBeGreaterThan(body.indexOf("### 1. Unredacted dump"));
+    expect(body.indexOf("### 3. Naming drift")).toBeGreaterThan(body.indexOf("### 2. Unbounded write"));
+    expect(body).toContain("`src/app.js:2` · Security");
+    expect(body).toContain("Technical details");
+    expect(body).not.toContain("Findings at a glance");
   });
 
-  test("derives the review status and final decision from the most severe finding", () => {
+  test("renders impact and suggested fix when the finding carries them", () => {
+    const body = buildReviewBody({
+      summary: "s",
+      verified: [
+        finding({
+          category: "dataIntegrity",
+          severity: "high",
+          title: "Counts cover only one page",
+          impact: "Per-status counts can disagree with the total.",
+          recommendation: "Aggregate in SQL instead of loading a page.",
+          guideline: "03_contracts-schemas.md §3",
+          evidence: [{ file: "src/app.js", line: 2, excerpt: "count()", reason: "counts the full table" }],
+        }),
+      ],
+      uncertain: [],
+      config: { publishUncertainInSummary: true, publishCleanReview: true },
+    });
+    expect(body).toContain("**Impact:** Per-status counts can disagree with the total.");
+    expect(body).toContain("**Suggested fix:** Aggregate in SQL instead of loading a page.");
+    expect(body).toContain("- Guideline: 03_contracts-schemas.md §3");
+    expect(body).toContain("- Evidence: `src/app.js:2` — counts the full table");
+  });
+
+  test("derives the verdict from the most severe finding", () => {
     const high = buildReviewBody({
       summary: "s",
       verified: [finding({ category: "security", severity: "high" })],
       uncertain: [],
       config: { publishUncertainInSummary: true, publishCleanReview: true },
     });
-    expect(high).toContain("**Review Status:** 🔴 Significant Concerns");
-    expect(high).toContain("**Final Review Decision:** Changes requested.");
+    expect(high).toContain("**Changes requested** · 1 high");
 
     const low = buildReviewBody({
       summary: "s",
@@ -638,11 +673,10 @@ describe("review body generation", () => {
       uncertain: [],
       config: { publishUncertainInSummary: true, publishCleanReview: true },
     });
-    expect(low).toContain("**Review Status:** 🔵 Minor Suggestions");
-    expect(low).toContain("**Final Review Decision:** Comment.");
+    expect(low).toContain("**Comment** · 1 low");
   });
 
-  test("renders header metadata when provided", () => {
+  test("renders PR title and compact metadata footer", () => {
     const body = buildReviewBody({
       summary: "s",
       verified: [],
@@ -651,25 +685,27 @@ describe("review body generation", () => {
       meta: {
         reviewer: "ai-pr-reviewer",
         source: "acme/widgets#42 @ abc1234",
+        model: "workers-ai/@cf/zai-org/glm-4.7-flash",
         reviewedAt: new Date("2026-11-12T00:30:00Z"),
         timezone: "UTC",
       },
     });
-    expect(body).toContain("# AI Code Review — ai-pr-reviewer");
-    expect(body).toContain("**Source:** acme/widgets#42 @ abc1234");
-    expect(body).toContain("**Review Date:** 12 November 2026, 00:30");
+    expect(body).toContain("# PR #42 Review");
+    expect(body).toContain("<sub>GLM 4.7 Flash · 12 Nov 2026 · `abc1234`</sub>");
+    expect(body).not.toContain("**Source:**");
+    expect(body).not.toContain("**Review Date:**");
   });
 
-  test("clean reviews report no concerns and omit category sections", () => {
+  test("clean reviews report no concerns and omit finding sections", () => {
     const body = buildReviewBody({
       summary: "no issues",
       verified: [],
       uncertain: [],
       config: { publishUncertainInSummary: true, publishCleanReview: true },
     });
-    expect(body).toContain("**Review Status:** ✅ No Concerns");
-    expect(body).not.toMatch(/^## 1\\./m);
-    expect(body).toContain("Review Actions");
+    expect(body).toContain("**No changes requested** · 0 confirmed findings");
+    expect(body).not.toMatch(/^## 1\./m);
+    expect(body).toContain("Break glass");
   });
 
   test("the summary marker is appended exactly once", () => {
@@ -764,6 +800,63 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(summaryRow?.githubCommentId).not.toBeNull();
   });
 
+  test("summary disabled publishes inline comments only, without a summary body or row", async () => {
+    const seed = await seedReview("pub-inline-only");
+    const anchored = await insertStoredFinding(seed.reviewId, seed.repositoryId, {
+      filePath: "src/app.js",
+      lineNumber: 4,
+    });
+    const deletedLine = await insertStoredFinding(seed.reviewId, seed.repositoryId, {
+      filePath: "src/mod.js",
+      lineNumber: 6,
+    });
+    const state = makeState(seed.headSha);
+    const input = makePublishInput(seed.reviewId, state, [anchored, deletedLine]);
+    const inlineOnlyInput = {
+      ...input,
+      config: { ...input.config, publishSummary: false },
+    };
+    const result = await publishReview(inlineOnlyInput);
+
+    expect(result.outcome).toBe("published");
+    expect(result.inlineCreated).toBe(1);
+    expect(result.summaryOnlyFindings).toBe(1);
+    expect(state.createReviewCalls).toHaveLength(1);
+
+    const call = state.createReviewCalls[0];
+    expect(call.body).toBe("");
+    expect(call.comments).toHaveLength(1);
+    expect(extractFingerprint(call.comments[0].body)).toBe(anchored.fingerprint);
+
+    const rows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId } });
+    expect(rows.some((row) => row.commentType === "summary")).toBe(false);
+    expect(rows.filter((row) => row.commentType === "inline")).toHaveLength(1);
+
+    const second = await publishReview(inlineOnlyInput);
+    expect(second.outcome).toBe("already_published");
+    expect(second.inlineCreated).toBe(0);
+    expect(state.createReviewCalls).toHaveLength(1);
+  });
+
+  test("summary disabled skips publication when no finding can be anchored inline", async () => {
+    const seed = await seedReview("pub-inline-only-skip");
+    const deletedLine = await insertStoredFinding(seed.reviewId, seed.repositoryId, {
+      filePath: "src/mod.js",
+      lineNumber: 6,
+    });
+    const state = makeState(seed.headSha);
+    const input = makePublishInput(seed.reviewId, state, [deletedLine]);
+    const result = await publishReview({
+      ...input,
+      config: { ...input.config, publishSummary: false },
+    });
+
+    expect(result.outcome).toBe("nothing_to_publish");
+    expect(result.reviewId).toBeNull();
+    expect(state.createReviewCalls).toHaveLength(0);
+    expect(await prisma.reviewComment.count({ where: { reviewId: seed.reviewId } })).toBe(0);
+  });
+
   test("uncertain findings go to the summary only, never inline", async () => {
     const seed = await seedReview("pub-unc");
     const uncertain = await insertStoredFinding(seed.reviewId, seed.repositoryId, {
@@ -777,7 +870,7 @@ describe("publishReview (fake octokit + Postgres)", () => {
 
     expect(result.inlineCreated).toBe(0);
     expect(state.createReviewCalls[0].comments).toHaveLength(0);
-    expect(state.createReviewCalls[0].body).toContain("Uncertain findings");
+    expect(state.createReviewCalls[0].body).toContain("Additional observation (1, unverified)");
     // Uncertain findings are not recorded as published inline comments.
     const inlineRows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId, commentType: "inline" } });
     expect(inlineRows).toHaveLength(0);
@@ -884,6 +977,37 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(state.createReviewCalls).toHaveLength(3);
   });
 
+  test("a 422 path rejection falls back to a summary-only review instead of failing", async () => {
+    const seed = await seedReview("pub-path");
+    const anchored = await insertStoredFinding(seed.reviewId, seed.repositoryId, { lineNumber: 4 });
+    const state = makeState(seed.headSha);
+    state.createReviewErrors.push(
+      Object.assign(new Error("Unprocessable Entity: Path could not be resolved"), { status: 422 }),
+    );
+
+    const result = await publishReview({
+      ...makePublishInput(seed.reviewId, state, [anchored]),
+      retry: { maxAttempts: 3, baseDelayMs: 1 },
+    });
+
+    // The 422 is not retried three times; one summary-only retry is made.
+    expect(state.createReviewCalls).toHaveLength(2);
+    expect(state.createReviewCalls[0]!.comments).toHaveLength(1);
+    expect(state.createReviewCalls[1]!.comments).toHaveLength(0);
+    expect(state.createReviewCalls[1]!.body).toContain("Stored issue");
+    expect(result.outcome).toBe("published");
+    expect(result.inlineCreated).toBe(0);
+    expect(result.summaryOnlyFindings).toBe(1);
+    // Nothing was published inline, so no inline rows are recorded.
+    expect(
+      await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId, commentType: "inline" } }),
+    ).toHaveLength(0);
+    const summary = await prisma.reviewComment.findFirst({
+      where: { reviewId: seed.reviewId, commentType: "summary" },
+    });
+    expect(summary?.status).toBe("published");
+  });
+
   test("createReview exhausting retries throws and recordPublicationFailure persists the failure", async () => {
     const seed = await seedReview("pub7");
     const anchored = await insertStoredFinding(seed.reviewId, seed.repositoryId, { lineNumber: 4 });
@@ -916,7 +1040,7 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(result.outcome).toBe("clean_review_published");
     expect(state.createReviewCalls[0].event).toBe("COMMENT");
     expect(state.createReviewCalls[0].comments).toHaveLength(0);
-    expect(state.createReviewCalls[0].body).toContain("No verified findings");
+    expect(state.createReviewCalls[0].body).toContain("No confirmed findings");
   });
 });
 

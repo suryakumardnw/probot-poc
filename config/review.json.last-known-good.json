@@ -15,7 +15,7 @@
       "issue_comment"
     ],
     "manualCommand": "/review",
-    "defaultReviewType": "standard",
+    "defaultReviewType": "handbook",
     "draftPullRequests": {
       "enabled": false
     },
@@ -86,7 +86,7 @@
       "publishUncertainInSummary": true
     },
     "reporting": {
-      "summary": true,
+      "summary": false,
       "inlineComments": true,
       "publishCleanReview": true,
       "publishApproval": false
@@ -137,9 +137,9 @@
   },
   "provider": {
     "type": "openai-compatible",
-    "baseURL": "${MODEL_BASE_URL}",
+    "baseURL": "http://localhost:8000",
     "apiKeyEnv": "MODEL_API_KEY",
-    "model": "${MODEL_NAME}",
+    "model": "glm-4.7-flash",
     "temperature": 0.1,
     "maxOutputTokens": 8192,
     "timeoutMs": 120000,
@@ -197,6 +197,15 @@
     "handbook": {
       "repo": "nativewit/engineering-handbook",
       "ref": "main",
+      "technologyRefs": [
+        {
+          "technologies": [
+            "typescript",
+            "nodejs"
+          ],
+          "ref": "feat/CU-86bcdv1c9-typescript-guidelines"
+        }
+      ],
       "path": "",
       "maxBytes": 2000000,
       "maxTokens": 3000,
@@ -251,9 +260,31 @@
     "tracing": {
       "enabled": true
     },
-    "langfuse": {
+    "agentTracing": {
       "enabled": true,
-      "plugin": "@langfuse/opencode-observability-plugin@0.7.0"
+      "plugin": "@devtheops/opencode-plugin-otel@2.1.0",
+      "options": {
+        "endpoint": "http://phoenix:6006",
+        "protocol": "http/protobuf",
+        "logsEnabled": false,
+        "metricsInterval": 86400000,
+        "disabledMetrics": [
+          "session.count",
+          "token.usage",
+          "cost.usage",
+          "commit.count",
+          "tool.duration",
+          "cache.count",
+          "session.duration",
+          "message.count",
+          "session.token.total",
+          "session.cost.total",
+          "model.usage",
+          "retry.count",
+          "subtask.count"
+        ],
+        "resourceAttributes": "service.name=ai-pr-reviewer"
+      }
     },
     "alerts": {
       "reviewFailure": true,

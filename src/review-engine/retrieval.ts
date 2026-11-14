@@ -182,6 +182,24 @@ export interface SelectionBudget {
   maxChars: number;
 }
 
+export interface HandbookRenderOptions {
+  /**
+   * Workspace-relative directory holding the materialized handbook copy
+   * (e.g. `knowledge/handbook-variants/<ref>`). When set, each file header
+   * includes the readable workspace path in addition to the canonical
+   * snapshot path used for citations.
+   */
+  workspacePrefix?: string;
+}
+
+/** Render the citation header, including the readable workspace copy when known. */
+function handbookHeader(filePath: string, workspacePrefix?: string): string {
+  const header = `## handbook file: ${filePath}`;
+  if (!workspacePrefix) return header;
+  const prefix = workspacePrefix.replace(/\\/g, "/").replace(/\/+$/, "");
+  return `${header}\n(workspace copy: ${prefix}/${filePath})`;
+}
+
 export interface HandbookSelection {
   /** Injected guidelines text (deterministic for the same inputs). */
   text: string;
@@ -239,6 +257,7 @@ export function selectHandbookUnderBudget(
   ranked: RankedHandbookFile[],
   changedFiles: string[],
   budget: SelectionBudget,
+  options: HandbookRenderOptions = {},
 ): HandbookSelection {
   const maxChars = Math.min(Math.max(budget.maxTokens, 1) * CHARS_PER_TOKEN, Math.max(budget.maxChars, 1));
   const prTokens = changedPathTokens(changedFiles);
@@ -251,7 +270,8 @@ export function selectHandbookUnderBudget(
   let relevant = 0;
 
   const tryAdd = (file: RankedHandbookFile, sections: Array<{ key: string; body: string }>): boolean => {
-    const wholeFile = `## handbook file: ${file.path}\n\n${file.content}`;
+    const header = handbookHeader(file.path, options.workspacePrefix);
+    const wholeFile = `${header}\n\n${file.content}`;
     if (used + wholeFile.length <= maxChars) {
       // Whole-file preference: take the file intact when it fits.
       if (usedFiles.has(file.path) || seenKeys.has(file.path)) return false;
@@ -270,7 +290,7 @@ export function selectHandbookUnderBudget(
     for (const section of sections) {
       if (seenKeys.has(section.key)) continue;
       if (seenBodies.has(bodyHash(section.body))) continue;
-      const render = `## handbook file: ${file.path}\n\n${section.body}`;
+      const render = `${header}\n\n${section.body}`;
       if (used + render.length > maxChars) {
         truncated = true;
         break;
@@ -295,7 +315,8 @@ export function selectHandbookUnderBudget(
     // Degenerate budget: not even ONE section of the top-ranked file fit.
     // Prefer a single truncated fragment over an empty injection.
     if (parts.length === 0 && sections.length > 0) {
-      const render = `## handbook file: ${file.path}\n\n${sections[0].body.slice(0, maxChars)}\n(truncated)`;
+      const header = handbookHeader(file.path, options.workspacePrefix);
+      const render = `${header}\n\n${sections[0].body.slice(0, maxChars)}\n(truncated)`;
       seenKeys.add(sections[0].key);
       seenBodies.add(bodyHash(sections[0].body));
       parts.push(render);

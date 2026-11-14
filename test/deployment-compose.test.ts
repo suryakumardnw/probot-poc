@@ -81,9 +81,24 @@ describe("production compose structure (ticket 13)", () => {
       expect(String(limits.cpus)).toBeTruthy();
       expect(String(limits.memory)).toMatch(/^\d+[KMG]$/);
     }
-    // §18.4 starting values.
+    // Deployment memory budget: 2560M primary (worker 1536 + probot 256 +
+    // postgres 384 + redis 256 + backup 128), plus the optional Phoenix 512M
+    // and Dozzle stack (128M + 64M tunnel) = 3200M total on an 8 GB host.
+    // These are reviewed ceilings; re-tune from observed peaks during a PR.
     expect(compose.services.worker.deploy.resources.limits.cpus).toBe("2.0");
-    expect(compose.services.worker.deploy.resources.limits.memory).toBe("2G");
+    expect(compose.services.worker.deploy.resources.limits.memory).toBe("1536M");
+    expect(compose.services.probot.deploy.resources.limits.memory).toBe("256M");
+    expect(compose.services.postgres.deploy.resources.limits.memory).toBe("384M");
+    expect(compose.services.redis.deploy.resources.limits.memory).toBe("256M");
+    expect(compose.services.backup.deploy.resources.limits.memory).toBe("128M");
+  });
+
+  it("keeps optional services off by default (backup / tunnel profiles)", () => {
+    // The lean PoC deployment starts only the review path; backups and the
+    // public log tunnel are explicit opt-ins. Named volumes stay declared, so
+    // PostgreSQL data survives regardless of the backup service.
+    expect(compose.services.backup.profiles).toEqual(["backup"]);
+    expect(compose.services.backup.volumes).toContain("pg-backups:/backups");
   });
 
   it("orders startup with health-gated depends_on + one-shot migration", () => {
@@ -137,6 +152,16 @@ describe("production compose structure (ticket 13)", () => {
       expect(compose.services[svc].networks ?? []).not.toContain("edge");
     }
     expect(compose.networks.edge.external).toBe(true); // Dokploy-managed ingress network
+  });
+
+  it("attaches the worker to the optional observability bridge network", () => {
+    expect(compose.services.worker.networks).toContain("observability");
+    // The app owns the network so it starts without the optional trace stack;
+    // deploy/observability joins it as an external network.
+    expect(compose.networks.observability.external).not.toBe(true);
+    expect(compose.networks.observability.name).toBe(
+      "${OBSERVABILITY_NETWORK:-ai-pr-reviewer_observability}",
+    );
   });
 
   it("hardens the public-facing container (read-only rootfs, tmpfs)", () => {
