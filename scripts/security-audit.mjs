@@ -21,27 +21,66 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const allowlist = JSON.parse(readFileSync(join(scriptDirectory, "npm-audit-allowlist.json"), "utf8"));
 const allowed = new Map((allowlist.advisories ?? []).map((entry) => [entry.id, entry]));
 
+function parseReport(text, source) {
+  let report;
+  try {
+    report = JSON.parse(text);
+  } catch {
+    throw new Error(`${source}: output is not valid JSON; refusing to treat it as an audit report.`);
+  }
+
+  if (report?.error) {
+    const error = report.error;
+    const detail =
+      typeof error === "string" && error.trim().length > 0
+        ? error
+        : ([error.summary, error.code, error.detail, report.message].find(
+            (value) => typeof value === "string" && value.trim().length > 0,
+          ) ?? JSON.stringify(error));
+    throw new Error(`${source}: npm audit failed: ${detail}`);
+  }
+
+  if (
+    report === null ||
+    typeof report !== "object" ||
+    Array.isArray(report) ||
+    typeof report.vulnerabilities !== "object" ||
+    report.vulnerabilities === null ||
+    typeof report.metadata !== "object" ||
+    report.metadata === null ||
+    typeof report.metadata.vulnerabilities !== "object" ||
+    report.metadata.vulnerabilities === null
+  ) {
+    throw new Error(
+      `${source}: output does not look like an npm audit report (missing vulnerabilities/metadata); refusing to fail open.`,
+    );
+  }
+
+  return report;
+}
+
 function loadReport() {
   const savedReport = process.argv[2];
   if (savedReport) {
-    return JSON.parse(readFileSync(savedReport, "utf8"));
+    return parseReport(readFileSync(savedReport, "utf8"), savedReport);
   }
 
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   try {
-    return JSON.parse(
+    return parseReport(
       execFileSync(npm, ["audit", "--audit-level=high", "--json"], {
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
       }),
+      "npm audit",
     );
   } catch (error) {
-    // `npm audit` exits non-zero when it finds vulnerabilities. The JSON report
-    // is still on stdout and is the payload we need to evaluate.
-    if (typeof error.stdout !== "string" || error.stdout.trim().length === 0) {
-      throw error;
+    // `npm audit` exits non-zero when it finds vulnerabilities. Evaluate the
+    // JSON report on stdout, but never treat an error payload as a report.
+    if (typeof error.stdout === "string" && error.stdout.trim().length > 0) {
+      return parseReport(error.stdout, "npm audit");
     }
-    return JSON.parse(error.stdout);
+    throw error;
   }
 }
 
@@ -82,37 +121,46 @@ function collectFindings(report) {
   return { advisories, unidentified };
 }
 
-const report = loadReport();
-const { advisories, unidentified } = collectFindings(report);
-const counts = report.metadata?.vulnerabilities ?? {};
-const unexpected = [...advisories.values()].filter((advisory) => !allowed.has(advisory.id));
-const stale = [...allowed.values()].filter((entry) => !advisories.has(entry.id));
+function main() {
+  const report = loadReport();
+  const { advisories, unidentified } = collectFindings(report);
+  const counts = report.metadata.vulnerabilities;
+  const unexpected = [...advisories.values()].filter((advisory) => !allowed.has(advisory.id));
+  const stale = [...allowed.values()].filter((entry) => !advisories.has(entry.id));
 
-process.stdout.write(
-  `npm audit: ${counts.total ?? 0} total vulnerabilities ` +
-    `(${counts.high ?? 0} high, ${counts.critical ?? 0} critical)\n`,
-);
-
-for (const advisory of advisories.values()) {
-  const status = allowed.has(advisory.id) ? "allowed" : "UNEXPECTED";
-  const packages = [...advisory.packages].join(", ");
-  process.stdout.write(`${status} ${advisory.severity} ${advisory.id} [${packages}] ${advisory.title}\n`);
-}
-
-for (const finding of unidentified) {
-  process.stdout.write(`UNEXPECTED ${finding.severity} [${finding.package}] ${finding.title}\n`);
-}
-
-for (const entry of stale) {
-  process.stderr.write(
-    `warning: allowlist entry ${entry.id} is no longer reported; remove it from scripts/npm-audit-allowlist.json\n`,
+  process.stdout.write(
+    `npm audit: ${counts.total ?? 0} total vulnerabilities ` +
+      `(${counts.high ?? 0} high, ${counts.critical ?? 0} critical)\n`,
   );
+
+  for (const advisory of advisories.values()) {
+    const status = allowed.has(advisory.id) ? "allowed" : "UNEXPECTED";
+    const packages = [...advisory.packages].join(", ");
+    process.stdout.write(`${status} ${advisory.severity} ${advisory.id} [${packages}] ${advisory.title}\n`);
+  }
+
+  for (const finding of unidentified) {
+    process.stdout.write(`UNEXPECTED ${finding.severity} [${finding.package}] ${finding.title}\n`);
+  }
+
+  for (const entry of stale) {
+    process.stderr.write(
+      `warning: allowlist entry ${entry.id} is no longer reported; remove it from scripts/npm-audit-allowlist.json\n`,
+    );
+  }
+
+  if (unexpected.length > 0 || unidentified.length > 0) {
+    process.stderr.write(
+      "New high/critical advisories found. Upgrade the dependency or add an approved, " +
+        "documented entry to scripts/npm-audit-allowlist.json (see docs/security-audit-follow-ups.md).\n",
+    );
+    process.exitCode = 1;
+  }
 }
 
-if (unexpected.length > 0 || unidentified.length > 0) {
-  process.stderr.write(
-    "New high/critical advisories found. Upgrade the dependency or add an approved, " +
-      "documented entry to scripts/npm-audit-allowlist.json (see docs/security-audit-follow-ups.md).\n",
-  );
+try {
+  main();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 }

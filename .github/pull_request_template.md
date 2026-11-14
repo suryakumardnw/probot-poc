@@ -13,7 +13,7 @@ reviewer can spot it. Include migration or configuration steps. -->
 ## How it was verified
 
 <!-- List the exact commands you ran and their result, for example:
-`npm run format:check && npm run lint && npm run typecheck && npm test && npm run build` - passed.
+`npm run format:check && npm run lint && npm run typecheck && npm run metrics:quality && npm test && npm run build && npm run security:audit` - passed.
 Add manual checks, screenshots, or links to CI runs when relevant. -->
 
 ## Quality metrics before/after
