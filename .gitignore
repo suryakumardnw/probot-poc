@@ -6,6 +6,7 @@ npm-debug.log
 coverage
 /lib/
 tsconfig.tsbuildinfo
+tsconfig.build.tsbuildinfo
 
 # Tool caches
 .eslintcache

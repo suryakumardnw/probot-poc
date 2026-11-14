@@ -10,7 +10,7 @@ import {
   ProviderError,
   RateLimitError,
   ValidationError,
-  classifyFailure,
+  classifyAppFailure,
   type ProviderFailureCode,
 } from "./index.js";
 
@@ -196,6 +196,9 @@ describe("AppError family", () => {
 
   test("ProviderError treats an explicit 5xx status as retryable", () => {
     expect(new ProviderError("invalid_json", "upstream 503", { statusCode: 503 }).retryable).toBe(true);
+    expect(new ProviderError("invalid_json", "upstream 599", { statusCode: 599 }).retryable).toBe(true);
+    expect(new ProviderError("invalid_json", "out-of-range 600", { statusCode: 600 }).retryable).toBe(false);
+    expect(new ProviderError("invalid_json", "out-of-range 499", { statusCode: 499 }).retryable).toBe(false);
   });
 
   test("ProviderError and InternalError may override retryability with an explicit reason", () => {
@@ -204,14 +207,14 @@ describe("AppError family", () => {
       retryableReason: "provider rotates credentials during deploys",
     });
     expect(provider.retryable).toBe(true);
-    expect(classifyFailure(provider, "queue").reason).toBe("provider rotates credentials during deploys");
+    expect(classifyAppFailure(provider, "queue").reason).toBe("provider rotates credentials during deploys");
 
     const internal = new InternalError("database connection lost", {
       retryable: true,
       retryableReason: "database failover is in progress",
     });
     expect(internal.retryable).toBe(true);
-    expect(classifyFailure(internal, "outbox").reason).toBe("database failover is in progress");
+    expect(classifyAppFailure(internal, "outbox").reason).toBe("database failover is in progress");
   });
 
   test("the classifier does not copy messages or causes into its reason", () => {
@@ -224,15 +227,28 @@ describe("AppError family", () => {
     });
 
     for (const context of ["http", "queue", "outbox"] as const) {
-      const result = classifyFailure(error, context);
+      const result = classifyAppFailure(error, context);
       expect(result.reason).not.toContain(token);
     }
   });
+
+  test("redacts tokens from an explicit retryability reason", () => {
+    const token = "ghp_reasonSecret123";
+    const error = new InternalError("database failed", {
+      retryable: true,
+      retryableReason: `token ${token} is transient`,
+    });
+
+    const result = classifyAppFailure(error, "queue");
+    expect(result.disposition).toBe("retry");
+    expect(result.reason).toContain("[REDACTED]");
+    expect(result.reason).not.toContain(token);
+  });
 });
 
-describe("classifyFailure", () => {
+describe("classifyAppFailure", () => {
   test.each(CASES)("$name is never retried for an HTTP request", (testCase) => {
-    const result = classifyFailure(testCase.create(), "http");
+    const result = classifyAppFailure(testCase.create(), "http");
     expect(result).toEqual({
       disposition: "fail",
       code: testCase.code,
@@ -241,7 +257,7 @@ describe("classifyFailure", () => {
   });
 
   test.each(CASES)("$name maps to the documented queue disposition", (testCase) => {
-    const result = classifyFailure(testCase.create(), "queue");
+    const result = classifyAppFailure(testCase.create(), "queue");
     expect(result).toEqual({
       disposition: testCase.retryable ? "retry" : "fail",
       code: testCase.code,
@@ -250,7 +266,7 @@ describe("classifyFailure", () => {
   });
 
   test.each(CASES)("$name maps to the documented outbox disposition", (testCase) => {
-    const result = classifyFailure(testCase.create(), "outbox");
+    const result = classifyAppFailure(testCase.create(), "outbox");
     expect(result).toEqual({
       disposition: testCase.retryable ? "retry" : "fail",
       code: testCase.code,
@@ -266,7 +282,7 @@ describe("classifyFailure", () => {
     ["an object with a code-like shape", { code: ERROR_CODES.VALIDATION_ERROR, retryable: true }],
   ])("treats %s as a non-retryable internal failure", (_name, error) => {
     for (const context of ["http", "queue", "outbox"] as const) {
-      const result = classifyFailure(error, context);
+      const result = classifyAppFailure(error, context);
       expect(result.disposition).toBe("fail");
       expect(result.code).toBe(ERROR_CODES.INTERNAL_ERROR);
       expect(result.reason).not.toContain("boom");
@@ -275,14 +291,17 @@ describe("classifyFailure", () => {
 
   test("rate-limited provider failures retry in queue and outbox contexts", () => {
     const error = rateLimitProvider();
-    expect(classifyFailure(error, "queue")).toMatchObject({ disposition: "retry", code: ERROR_CODES.PROVIDER_ERROR });
-    expect(classifyFailure(error, "outbox")).toMatchObject({
+    expect(classifyAppFailure(error, "queue")).toMatchObject({
+      disposition: "retry",
+      code: ERROR_CODES.PROVIDER_ERROR,
+    });
+    expect(classifyAppFailure(error, "outbox")).toMatchObject({
       disposition: "retry",
       code: ERROR_CODES.PROVIDER_ERROR,
     });
   });
 
   test("explicit HTTP classification stays fail even for a retryable error", () => {
-    expect(classifyFailure(new RateLimitError("slow down"), "http").disposition).toBe("fail");
+    expect(classifyAppFailure(new RateLimitError("slow down"), "http").disposition).toBe("fail");
   });
 });

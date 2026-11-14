@@ -1,7 +1,8 @@
 export { AppError } from "./app-error.js";
 export type { AppErrorOptions } from "./app-error.js";
-export { classifyFailure } from "./classify.js";
+export { classifyAppFailure } from "./classify.js";
 export type { FailureClassification, FailureContext, FailureDisposition } from "./classify.js";
+export { redactDetails, redactSecrets } from "./redact.js";
 export {
   AuthError,
   ConflictError,

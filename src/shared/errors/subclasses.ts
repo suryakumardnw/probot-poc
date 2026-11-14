@@ -173,7 +173,7 @@ function defaultProviderStatusCode(providerCode: ProviderFailureCode): number {
 
 /** Retry only rate-limit/network/provider-unavailable codes or an explicit 5xx. */
 export function isProviderFailureRetryable(providerCode: ProviderFailureCode, statusCode?: number): boolean {
-  if (statusCode !== undefined && statusCode >= 500) {
+  if (statusCode !== undefined && statusCode >= 500 && statusCode <= 599) {
     return true;
   }
   return providerCode === "rate_limit" || providerCode === "network" || providerCode === "provider_unavailable";

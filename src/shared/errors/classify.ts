@@ -1,9 +1,13 @@
 import { ERROR_CODES } from "../../contracts/errors.js";
 import { AppError } from "./app-error.js";
+import { redactSecrets } from "./redact.js";
 
 /**
- * The single error -> retry/fail mapping used by the HTTP mapper and the
- * queue/outbox policy.
+ * The single family-level error -> retry/fail mapping used by the HTTP mapper
+ * and, after PR 2.8 integration, the config-aware queue policy. The existing
+ * `src/observability/retry.ts` classifier remains the live queue policy until
+ * that staged migration lands; this function is named `classifyAppFailure` to
+ * keep both explicit.
  *
  * `http`: one request is never retried server-side, so the disposition is
  * always `fail`; the mapper uses the stable code and status.
@@ -27,7 +31,7 @@ const CONTEXT_DESCRIPTION: Readonly<Record<FailureContext, string>> = {
   outbox: "outbox event",
 };
 
-export function classifyFailure(error: unknown, context: FailureContext): FailureClassification {
+export function classifyAppFailure(error: unknown, context: FailureContext): FailureClassification {
   if (!(error instanceof AppError)) {
     return {
       disposition: "fail",
@@ -45,13 +49,15 @@ export function classifyFailure(error: unknown, context: FailureContext): Failur
   }
 
   const disposition: FailureDisposition = error.retryable ? "retry" : "fail";
+  const reason =
+    error.retryableReason ??
+    (error.retryable
+      ? `${error.code} is retryable for the ${CONTEXT_DESCRIPTION[context]}`
+      : `${error.code} is not retryable for the ${CONTEXT_DESCRIPTION[context]}`);
+
   return {
     disposition,
     code: error.code,
-    reason:
-      error.retryableReason ??
-      (error.retryable
-        ? `${error.code} is retryable for the ${CONTEXT_DESCRIPTION[context]}`
-        : `${error.code} is not retryable for the ${CONTEXT_DESCRIPTION[context]}`),
+    reason: redactSecrets(reason),
   };
 }

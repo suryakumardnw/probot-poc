@@ -9,7 +9,7 @@ RUN npm ci
 COPY prisma ./prisma
 # Generate the Prisma client before compiling TypeScript.
 RUN npx prisma generate
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build
 

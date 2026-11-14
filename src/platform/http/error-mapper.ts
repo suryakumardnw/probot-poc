@@ -1,6 +1,7 @@
 import { ERROR_CODES, errorEnvelopeSchema, type ErrorEnvelope } from "../../contracts/errors.js";
 import { AppError } from "../../shared/errors/app-error.js";
-import { classifyFailure, type FailureContext, type FailureDisposition } from "../../shared/errors/classify.js";
+import { classifyAppFailure, type FailureContext, type FailureDisposition } from "../../shared/errors/classify.js";
+import { redactDetails, redactSecrets } from "../../shared/errors/redact.js";
 
 /**
  * HTTP and log projections for the shared error family.
@@ -8,7 +9,14 @@ import { classifyFailure, type FailureContext, type FailureDisposition } from ".
  * Both projections are deliberately allow-list based: only the stable code, a
  * safe message, the status, and safe details cross the boundary. Stack traces,
  * causes, SQL, and filesystem paths never do. The retry/fail decision comes
- * from `classifyFailure`; this module does not re-implement it.
+ * from `classifyAppFailure`; this module does not re-implement it.
+ *
+ * Defense in depth:
+ * - 4xx messages and details pass through the redactors before serialization.
+ * - 5xx envelopes collapse to the generic internal response, so a caller's SQL,
+ *   path, or token cannot escape even if it is embedded in the message.
+ * - Log payloads redact messages/details for 4xx and suppress both for 5xx;
+ *   cause and stack are never logged.
  */
 
 export interface HttpErrorEnvelope {
@@ -23,13 +31,24 @@ export interface ErrorLogPayload {
   retryable: boolean;
   disposition: FailureDisposition;
   reason: string;
+  details?: unknown;
 }
 
 export function toHttpEnvelope(error: unknown): HttpErrorEnvelope {
-  const classification = classifyFailure(error, "http");
-
   if (error instanceof AppError) {
-    const body = safeEnvelope(classification.code, error.message, error.statusCode, error.details);
+    // Never expose caller-controlled 5xx text: it can carry SQL, paths, or
+    // credentials even when the error code itself is stable.
+    if (error.statusCode >= 500) {
+      return internalEnvelope();
+    }
+
+    const classification = classifyAppFailure(error, "http");
+    const body = safeEnvelope(
+      redactSecrets(classification.code),
+      redactSecrets(error.message),
+      error.statusCode,
+      redactDetails(error.details),
+    );
     if (body !== undefined) {
       return { statusCode: body.statusCode, body };
     }
@@ -40,36 +59,60 @@ export function toHttpEnvelope(error: unknown): HttpErrorEnvelope {
 }
 
 export function toErrorLogPayload(error: unknown, context: FailureContext = "http"): ErrorLogPayload {
-  const classification = classifyFailure(error, context);
+  if (!(error instanceof AppError)) {
+    return internalLogPayload(context);
+  }
 
-  if (error instanceof AppError) {
+  const classification = classifyAppFailure(error, context);
+  const code = redactSecrets(classification.code);
+
+  // 5xx messages/details can carry SQL, paths, or credentials. Keep the log
+  // useful through code/status/retryability only, and suppress caller reasons.
+  if (error.statusCode >= 500) {
     return {
-      code: classification.code,
-      message: error.message,
+      code,
+      message: "Internal server error",
       statusCode: error.statusCode,
       retryable: error.retryable,
       disposition: classification.disposition,
-      reason: classification.reason,
+      reason: `${code} failed with HTTP ${error.statusCode}; message and details suppressed`,
     };
   }
 
-  return {
-    code: classification.code,
-    message: "Internal server error",
-    statusCode: 500,
-    retryable: false,
+  const payload: ErrorLogPayload = {
+    code,
+    message: redactSecrets(error.message),
+    statusCode: error.statusCode,
+    retryable: error.retryable,
     disposition: classification.disposition,
-    reason: classification.reason,
+    reason: redactSecrets(classification.reason),
   };
+  if (error.details !== undefined) {
+    payload.details = redactDetails(error.details);
+  }
+  return payload;
 }
 
 function safeEnvelope(code: string, message: string, statusCode: number, details: unknown): ErrorEnvelope | undefined {
-  const candidate: Record<string, unknown> = { code, message, statusCode };
+  const withDetails: Record<string, unknown> = { code, message, statusCode };
   if (details !== undefined) {
-    candidate.details = details;
+    withDetails.details = details;
   }
-  const parsed = errorEnvelopeSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : undefined;
+
+  const parsedWithDetails = errorEnvelopeSchema.safeParse(withDetails);
+  if (parsedWithDetails.success) {
+    return parsedWithDetails.data;
+  }
+
+  // Preserve the original 4xx status/code when only the details are invalid.
+  if (details !== undefined) {
+    const parsedWithoutDetails = errorEnvelopeSchema.safeParse({ code, message, statusCode });
+    if (parsedWithoutDetails.success) {
+      return parsedWithoutDetails.data;
+    }
+  }
+
+  return undefined;
 }
 
 function internalEnvelope(): HttpErrorEnvelope {
@@ -80,5 +123,17 @@ function internalEnvelope(): HttpErrorEnvelope {
       message: "Internal server error",
       statusCode: 500,
     },
+  };
+}
+
+function internalLogPayload(context: FailureContext): ErrorLogPayload {
+  const classification = classifyAppFailure(undefined, context);
+  return {
+    code: classification.code,
+    message: "Internal server error",
+    statusCode: 500,
+    retryable: false,
+    disposition: classification.disposition,
+    reason: classification.reason,
   };
 }

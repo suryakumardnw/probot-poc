@@ -90,10 +90,11 @@ const CASES: MapperCase[] = [
 describe("toHttpEnvelope", () => {
   test.each(CASES)("$name maps to its status and stable code", (testCase) => {
     const result = toHttpEnvelope(testCase.create());
-    expect(result.statusCode).toBe(testCase.statusCode);
-    expect(result.body.code).toBe(testCase.code);
-    expect(result.body.statusCode).toBe(testCase.statusCode);
-    expect(result.body.message).toBe(testCase.create().message);
+    const serverFailure = testCase.statusCode >= 500;
+    expect(result.statusCode).toBe(serverFailure ? 500 : testCase.statusCode);
+    expect(result.body.code).toBe(serverFailure ? ERROR_CODES.INTERNAL_ERROR : testCase.code);
+    expect(result.body.statusCode).toBe(serverFailure ? 500 : testCase.statusCode);
+    expect(result.body.message).toBe(serverFailure ? "Internal server error" : testCase.create().message);
     expect(errorEnvelopeSchema.safeParse(result.body).success).toBe(true);
   });
 
@@ -114,6 +115,68 @@ describe("toHttpEnvelope", () => {
   test("omits the details key when no details were supplied", () => {
     const result = toHttpEnvelope(new NotFoundError("missing"));
     expect(result.body).not.toHaveProperty("details");
+  });
+
+  test("redacts tokens in a 4xx message", () => {
+    const token = "ghp_messageSecret1234567890";
+    const result = toHttpEnvelope(new ValidationError(`invalid token ${token}`));
+
+    expect(result.statusCode).toBe(400);
+    expect(result.body.message).toBe("invalid token [REDACTED]");
+    expect(JSON.stringify(result.body)).not.toContain(token);
+  });
+
+  test("redacts tokens in 4xx details while preserving field paths and messages", () => {
+    const token = "ghp_detailsSecret1234567890";
+    const result = toHttpEnvelope(
+      new ValidationError("invalid request", {
+        details: {
+          token,
+          fields: [{ path: "repository", message: `token ${token} is invalid` }],
+        },
+      }),
+    );
+
+    expect(result.statusCode).toBe(400);
+    expect(result.body.details).toEqual({
+      token: "[REDACTED]",
+      fields: [{ path: "repository", message: "token [REDACTED] is invalid" }],
+    });
+    expect(JSON.stringify(result.body)).not.toContain(token);
+  });
+
+  test("drops invalid details without downgrading the 4xx status or code", () => {
+    const result = toHttpEnvelope(
+      new ValidationError("invalid request", {
+        details: { callback: () => undefined },
+      }),
+    );
+
+    expect(result.statusCode).toBe(400);
+    expect(result.body).toEqual({
+      code: ERROR_CODES.VALIDATION_ERROR,
+      message: "invalid request",
+      statusCode: 400,
+    });
+    expect(result.body).not.toHaveProperty("details");
+  });
+
+  test("never exposes a 5xx message or details, including SQL and paths", () => {
+    const error = new InternalError("query failed: SELECT * FROM reviews at /srv/app/db.ts", {
+      details: { query: "SELECT * FROM reviews", path: "/srv/app/db.ts" },
+    });
+    const result = toHttpEnvelope(error);
+
+    expect(result).toEqual({
+      statusCode: 500,
+      body: {
+        code: ERROR_CODES.INTERNAL_ERROR,
+        message: "Internal server error",
+        statusCode: 500,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("SELECT");
+    expect(JSON.stringify(result)).not.toContain("/srv/app");
   });
 
   test("maps an unknown error to a generic 500 without its message or stack", () => {
@@ -137,9 +200,10 @@ describe("toHttpEnvelope", () => {
 describe("toErrorLogPayload", () => {
   test.each(CASES)("$name produces a safe structured log payload", (testCase) => {
     const payload = toErrorLogPayload(testCase.create(), "queue");
+    const serverFailure = testCase.statusCode >= 500;
     expect(payload.code).toBe(testCase.code);
     expect(payload.statusCode).toBe(testCase.statusCode);
-    expect(payload.message).toBe(testCase.create().message);
+    expect(payload.message).toBe(serverFailure ? "Internal server error" : testCase.create().message);
     expect(payload.retryable).toBe(testCase.retryable);
     expect(payload.disposition).toBe(testCase.retryable ? "retry" : "fail");
   });
@@ -159,6 +223,43 @@ describe("toErrorLogPayload", () => {
       disposition: "fail",
     });
     expect(JSON.stringify(payload)).not.toContain("ghp_logSecret");
+  });
+
+  test("redacts tokens in 4xx messages and details but keeps field errors", () => {
+    const token = "ghp_logDetailsSecret1234567890";
+    const error = new ValidationError(`invalid token ${token}`, {
+      details: { token, field: "repository", issues: [{ path: "repository", message: `token ${token}` }] },
+      cause: new Error(token),
+    });
+    const payload = toErrorLogPayload(error, "queue");
+
+    expect(payload.message).toBe("invalid token [REDACTED]");
+    expect(payload.details).toEqual({
+      token: "[REDACTED]",
+      field: "repository",
+      issues: [{ path: "repository", message: "token [REDACTED]" }],
+    });
+    expect(JSON.stringify(payload)).not.toContain(token);
+    expect(payload).not.toHaveProperty("cause");
+    expect(payload).not.toHaveProperty("stack");
+  });
+
+  test("suppresses 5xx messages, details, and caller reasons in the log payload", () => {
+    const token = "ghp_internalSecret1234567890";
+    const error = new InternalError("query failed: SELECT * FROM reviews at /srv/app/db.ts", {
+      retryable: true,
+      retryableReason: `token ${token} at /srv/app/db.ts`,
+      details: { query: "SELECT * FROM reviews" },
+    });
+    const payload = toErrorLogPayload(error, "queue");
+
+    expect(payload.message).toBe("Internal server error");
+    expect(payload).not.toHaveProperty("details");
+    expect(payload.reason).not.toContain(token);
+    expect(payload.reason).not.toContain("SELECT");
+    expect(payload.reason).not.toContain("/srv/app");
+    expect(payload).not.toHaveProperty("cause");
+    expect(payload).not.toHaveProperty("stack");
   });
 });
 
