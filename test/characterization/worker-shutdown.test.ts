@@ -3,15 +3,23 @@ import { once } from "node:events";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import type pino from "pino";
+import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { closeReviewQueue, getReviewQueue, type ReviewJobPayload } from "../../src/ingestion/queue.js";
+import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
+import type { ReviewWorkspaceService, WorkspaceResult } from "../../src/workspace/workspace.js";
+import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogger } from "./support.js";
 
 /**
  * Characterization: graceful worker shutdown (ARCHITECTURE.md §12.4 / §17.3).
  *
- * The real `registerGracefulShutdown` helper runs in a child process so SIGTERM
- * delivery, deadline enforcement and `process.exit` codes are observed exactly
- * as production code sees them. The child fixture represents the worker's
- * active-job step; no production seam is added.
+ * Two layers are covered:
+ *  - the real `registerGracefulShutdown` helper runs in a child process so
+ *    SIGTERM delivery, deadline enforcement and `process.exit` codes are real;
+ *  - a real BullMQ worker with an active, blocking job proves `stopReviewWorker`
+ *    waits for in-flight work before closing.
+ *
+ * No production seam is added.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -88,7 +96,28 @@ async function runWithSigterm(mode: "complete" | "timeout"): Promise<ShutdownRun
   return { code, signal, stdout, stderr, elapsedMs: Date.now() - sentAt };
 }
 
-describe("graceful shutdown", () => {
+async function clearQueuedJobs(): Promise<void> {
+  const queue = getReviewQueue();
+  await queue.waitUntilReady();
+  const jobs = await queue.getJobs(["waiting", "paused", "delayed", "failed"]);
+  await Promise.all(jobs.map((job) => job.remove().catch(() => {})));
+}
+
+beforeEach(async () => {
+  await cleanDatabase();
+  // The shared review-jobs queue can contain waiting fixtures from earlier
+  // characterization files. A real worker below must only see its own job.
+  await clearQueuedJobs();
+});
+
+afterAll(async () => {
+  await clearQueuedJobs();
+  await closeReviewQueue();
+  await cleanDatabase();
+  await disconnectDatabase();
+});
+
+describe("graceful shutdown helper (synthetic active step)", () => {
   test("SIGTERM during an active job waits for the job and cleanup to finish before exit 0", async () => {
     const run = await runWithSigterm("complete");
 
@@ -119,4 +148,99 @@ describe("graceful shutdown", () => {
     expect(run.elapsedMs).toBeGreaterThanOrEqual(150);
     expect(run.elapsedMs).toBeLessThan(2_000);
   });
+});
+
+describe("real BullMQ worker drain", () => {
+  test("stopReviewWorker waits for a real active job before closing", async () => {
+    const chain = await seedReviewChain({
+      prefix: "shutdown-active",
+      state: "queued",
+      job: { status: "enqueued" },
+    });
+
+    let prepareStarted!: () => void;
+    const prepareStartedPromise = new Promise<void>((resolve) => {
+      prepareStarted = resolve;
+    });
+    let releasePrepare!: () => void;
+    const releasePreparePromise = new Promise<void>((resolve) => {
+      releasePrepare = resolve;
+    });
+
+    const service = {
+      prepare: async (): Promise<WorkspaceResult> => {
+        prepareStarted();
+        await releasePreparePromise;
+        return {
+          workspacePath: "/tmp/characterization-shutdown",
+          headSha: chain.headSha,
+          baseSha: null,
+          mergeBaseSha: null,
+          diff: "",
+          changedFiles: [],
+        };
+      },
+      cleanupAfterReview: async () => {},
+      cleanupAfterFailure: async () => {},
+    } as unknown as ReviewWorkspaceService;
+
+    const worker = startReviewWorker(process.env.REDIS_URL ?? "redis://localhost:6379", {
+      prisma,
+      service,
+      logger: silentLogger as unknown as pino.Logger,
+      concurrency: 1,
+    });
+    const queue = getReviewQueue();
+    await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
+
+    const active = once(worker, "active");
+    const payload: ReviewJobPayload = {
+      reviewId: chain.reviewId,
+      jobKey: chain.jobKey!,
+      githubInstallationId: String(chain.githubInstallationId),
+      githubRepositoryId: String(chain.githubRepositoryId),
+      repositoryFullName: chain.repositoryFullName,
+      pullRequestNumber: 101,
+      headSha: chain.headSha,
+      baseSha: null,
+      reviewMode: "adaptive",
+      reviewType: "standard",
+      trigger: "opened",
+    };
+    const queueJob = await queue.add("review", payload, { jobId: chain.jobId! });
+
+    let stopped = false;
+    let stopPromise: Promise<void> | undefined;
+    try {
+      await active;
+      await prepareStartedPromise;
+      const activeJob = await queue.getJob(chain.jobId!);
+      expect(await activeJob!.getState()).toBe("active");
+
+      stopPromise = stopReviewWorker(worker).then(() => {
+        stopped = true;
+      });
+
+      // The worker must still be draining: closing does not abandon the
+      // in-flight handle just because the processor is blocked.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(stopped).toBe(false);
+      expect(await activeJob!.getState()).toBe("active");
+
+      releasePrepare();
+      await stopPromise;
+      expect(stopped).toBe(true);
+
+      // The active job ran to completion instead of being acknowledged early.
+      const jobRow = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+      expect(jobRow.status).toBe("completed");
+      const reviewRow = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+      expect(reviewRow.state).toBe("analyzing");
+    } finally {
+      releasePrepare();
+      await stopPromise?.catch(() => {});
+      await stopReviewWorker(worker).catch(() => {});
+      await queueJob.remove().catch(() => {});
+    }
+  }, 30_000);
 });

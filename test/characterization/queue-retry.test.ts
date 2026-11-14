@@ -13,14 +13,15 @@ import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogge
 /**
  * Characterization: queue retry policy (ARCHITECTURE.md §12.4).
  *
- * Three externally visible contracts are pinned:
- *  1. failure classification decides retry vs immediate failure;
+ * Three boundaries are pinned:
+ *  1. the exported policy marks failure classes retryable or terminal;
  *  2. the outbox passes the configured attempts/backoff to BullMQ;
  *  3. an exhausted durable job ends `failed`.
  *
- * NOTE: the worker processor currently records the retry decision in logs but
- * returns instead of rethrowing, so BullMQ never executes a retry for a review
- * failure. The suite pins the observable state and the README records the gap.
+ * POLICY ONLY: the two policy tests below call the exported classifier/policy
+ * functions directly. They do not enqueue or observe a retried BullMQ job.
+ * Worker retry execution is a known production gap deferred to PR 2.8; see
+ * test/characterization/README.md.
  */
 
 async function ageJobRow(jobId: string): Promise<void> {
@@ -37,7 +38,7 @@ afterAll(async () => {
 });
 
 describe("retry policy from configuration (§12.4)", () => {
-  test("transient failures retry with the configured attempts and backoff", () => {
+  test("the configured policy marks transient failures as retryable", () => {
     const { config } = loadReviewConfig(DEFAULT_CONFIG_PATH);
     const policy = retryPolicyConfigFromReviewConfig(config);
     expect(policy).toMatchObject({
@@ -61,7 +62,7 @@ describe("retry policy from configuration (§12.4)", () => {
     }
   });
 
-  test("permanent failures are not retried", () => {
+  test("the configured policy marks permanent failures as non-retryable", () => {
     const { config } = loadReviewConfig(DEFAULT_CONFIG_PATH);
     const policy = retryPolicyConfigFromReviewConfig(config);
 

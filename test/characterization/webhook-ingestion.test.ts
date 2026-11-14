@@ -169,6 +169,12 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  // Leave Redis clean for the next suite: webhook tests only need their jobs
+  // during the test, and no worker consumes them here.
+  const queue = getReviewQueue();
+  await queue.waitUntilReady().catch(() => {});
+  const jobs = await queue.getJobs(["waiting", "paused", "delayed", "failed"]).catch(() => []);
+  await Promise.all(jobs.map((job) => job.remove().catch(() => {})));
   await closeReviewQueue();
   await cleanDatabase();
   await disconnectDatabase();
