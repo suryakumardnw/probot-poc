@@ -239,11 +239,12 @@ function splitSections(text: string, filePath: string): Array<{ key: string; bod
     return [{ key: `${filePath}#`, body: text.trim() }].filter((s) => s.body);
   }
   const sections: Array<{ key: string; body: string }> = [];
-  for (let i = 0; i < headings.length; i += 1) {
-    const end = i + 1 < headings.length ? headings[i + 1].start : text.length;
-    const body = text.slice(headings[i].start, end).trim();
+  for (const [i, heading] of headings.entries()) {
+    const nextHeading = headings[i + 1];
+    const end = nextHeading !== undefined ? nextHeading.start : text.length;
+    const body = text.slice(heading.start, end).trim();
     if (body) {
-      sections.push({ key: `${filePath}#${headings[i].heading}`, body });
+      sections.push({ key: `${filePath}#${heading.heading}`, body });
     }
   }
   return sections;
@@ -346,11 +347,12 @@ export function selectHandbookUnderBudget(
     tryAdd(file, sections);
     // Degenerate budget: not even ONE section of the top-ranked file fit.
     // Prefer a single truncated fragment over an empty injection.
-    if (parts.length === 0 && sections.length > 0) {
+    const [firstSection] = sections;
+    if (parts.length === 0 && firstSection !== undefined) {
       const header = handbookHeader(file.path, options.workspacePrefix);
-      const render = `${header}\n\n${sections[0].body.slice(0, maxChars)}\n(truncated)`;
-      seenKeys.add(sections[0].key);
-      seenBodies.add(bodyHash(sections[0].body));
+      const render = `${header}\n\n${firstSection.body.slice(0, maxChars)}\n(truncated)`;
+      seenKeys.add(firstSection.key);
+      seenBodies.add(bodyHash(firstSection.body));
       parts.push(render);
       usedFiles.add(file.path);
       used += render.length + 2;

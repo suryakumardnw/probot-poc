@@ -93,9 +93,9 @@ class Histogram {
   }
 
   observe(value: number): void {
-    for (let i = 0; i < this.buckets.length; i++) {
-      if (value <= this.buckets[i]) {
-        this.bucketCounts[i] += 1;
+    for (const [index, upperBound] of this.buckets.entries()) {
+      if (value <= upperBound) {
+        this.bucketCounts[index] = (this.bucketCounts[index] ?? 0) + 1;
       }
     }
     this.count += 1;
@@ -104,8 +104,8 @@ class Histogram {
 
   render(): string {
     const lines = [`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} histogram`];
-    for (let i = 0; i < this.buckets.length; i++) {
-      lines.push(`${this.name}_bucket{le="${this.buckets[i]}"} ${this.bucketCounts[i]}`);
+    for (const [index, upperBound] of this.buckets.entries()) {
+      lines.push(`${this.name}_bucket{le="${upperBound}"} ${this.bucketCounts[index] ?? 0}`);
     }
     lines.push(`${this.name}_bucket{le="+Inf"} ${this.count}`);
     lines.push(`${this.name}_count ${this.count}`);

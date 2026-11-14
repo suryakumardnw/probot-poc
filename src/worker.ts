@@ -224,7 +224,7 @@ async function main(): Promise<void> {
   const evaluateAlerts = async (): Promise<void> => {
     try {
       const counts = await recoveryQueue.getJobCounts("waiting", "active", "delayed");
-      const depth = counts.waiting + counts.active + counts.delayed;
+      const depth = (counts.waiting ?? 0) + (counts.active ?? 0) + (counts.delayed ?? 0);
       metrics.queueDepth.set(depth);
 
       const failedTotal = counterTotal(metrics.reviewsFailed.values);

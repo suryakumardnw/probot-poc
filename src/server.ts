@@ -203,8 +203,9 @@ const server = http.createServer((req, res) => {
   }
 
   const reviewStatusMatch = /^\/api\/reviews\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
-  if (req.method === "GET" && reviewStatusMatch) {
-    void handleReviewStatus(res, reviewStatusMatch[1]);
+  const reviewId = reviewStatusMatch?.[1];
+  if (req.method === "GET" && reviewId !== undefined) {
+    void handleReviewStatus(res, reviewId);
     return;
   }
 

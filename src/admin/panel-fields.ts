@@ -32,6 +32,11 @@ export const PANEL_SECTIONS = ["general", "ai-model", "review-rules", "execution
 
 export type PanelSection = (typeof PANEL_SECTIONS)[number];
 
+/** Narrow an untrusted path segment to a known panel section. */
+export function isPanelSection(value: string): value is PanelSection {
+  return PANEL_SECTIONS.some((section) => section === value);
+}
+
 export const SECTION_LABELS: Record<PanelSection, string> = {
   general: "General",
   "ai-model": "AI Model",

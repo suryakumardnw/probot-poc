@@ -21,7 +21,14 @@ import {
 import type { ReviewConfig } from "../config/review-schema.js";
 import { isAdminConfigured } from "./api.js";
 import { recordAuditLog, type AuditAction } from "./audit.js";
-import { PANEL_FIELDS, PANEL_SECTIONS, SECTION_LABELS, type PanelField, type PanelSection } from "./panel-fields.js";
+import {
+  PANEL_FIELDS,
+  PANEL_SECTIONS,
+  SECTION_LABELS,
+  isPanelSection,
+  type PanelField,
+  type PanelSection,
+} from "./panel-fields.js";
 import {
   AUDIT_TEMPLATE,
   INTERSTITIAL_TEMPLATE,
@@ -559,8 +566,9 @@ export function createAdminPanel(
         return;
       }
       const sectionMatch = /^\/admin\/([a-z-]+)$/.exec(path);
-      if (sectionMatch && (PANEL_SECTIONS as readonly string[]).includes(sectionMatch[1])) {
-        await handleSectionPost(res, url, sectionMatch[1] as PanelSection, form.fields, session, version);
+      const section = sectionMatch?.[1];
+      if (section !== undefined && isPanelSection(section)) {
+        await handleSectionPost(res, url, section, form.fields, session, version);
         return;
       }
       messagePage(res, 404, "Not found", "Unknown admin panel action.", "error", session);
@@ -591,8 +599,8 @@ export function createAdminPanel(
     }
 
     const sectionMatch = /^\/admin\/([a-z-]+)$/.exec(path);
-    if (sectionMatch && (PANEL_SECTIONS as readonly string[]).includes(sectionMatch[1])) {
-      const section = sectionMatch[1] as PanelSection;
+    const section = sectionMatch?.[1];
+    if (section !== undefined && isPanelSection(section)) {
       const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
       const redacted = redactConfiguration(loaded.config) as unknown as Record<string, unknown>;
       const body = renderEjs(SECTION_TEMPLATE, {

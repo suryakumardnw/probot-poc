@@ -69,14 +69,16 @@ export function parseNameStatus(output: string): ChangedFile[] {
     if (parts.length < 2) {
       continue;
     }
-    const status = STATUS_MAP[parts[0][0]];
-    if (!status) {
+    const [statusPart, secondPart] = parts;
+    const path = parts[parts.length - 1];
+    const status = statusPart === undefined ? undefined : STATUS_MAP[statusPart[0] ?? ""];
+    if (!status || secondPart === undefined || path === undefined) {
       continue;
     }
     if ((status === "renamed" || status === "copied") && parts.length >= 3) {
-      files.push({ status, previousPath: parts[1], path: parts[parts.length - 1] });
+      files.push({ status, previousPath: secondPart, path });
     } else {
-      files.push({ status, path: parts[parts.length - 1] });
+      files.push({ status, path });
     }
   }
   return files;

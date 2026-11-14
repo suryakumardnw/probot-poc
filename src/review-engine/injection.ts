@@ -190,14 +190,15 @@ export function selectHandbookSections(text: string, changedFiles: string[], max
   }
 
   const sections: Array<{ heading: string; body: string; score: number }> = [];
-  for (let i = 0; i < headings.length; i += 1) {
-    const start = headings[i].start;
-    const end = i + 1 < headings.length ? headings[i + 1].start : text.length;
+  for (const [i, heading] of headings.entries()) {
+    const nextHeading = headings[i + 1];
+    const start = heading.start;
+    const end = nextHeading !== undefined ? nextHeading.start : text.length;
     const sectionText = text.slice(start, end).trim();
     if (!sectionText) {
       continue;
     }
-    const tokens = headingTokens(headings[i].heading);
+    const tokens = headingTokens(heading.heading);
     let score = 0;
     for (const token of tokens) {
       if (prTokens.has(token)) {
@@ -206,7 +207,7 @@ export function selectHandbookSections(text: string, changedFiles: string[], max
         score += 1;
       }
     }
-    sections.push({ heading: headings[i].heading, body: sectionText, score });
+    sections.push({ heading: heading.heading, body: sectionText, score });
   }
 
   const relevant = sections.filter((s) => s.score > 0);

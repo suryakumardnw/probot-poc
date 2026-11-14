@@ -15,8 +15,9 @@ import type { CaseScore, BenchmarkScore, ExpectedFinding } from "./types.js";
 export const DEFAULT_LINE_TOLERANCE = 5;
 
 interface Match {
-  expected: number;
-  predicted: number;
+  expectedIndex: number;
+  expected: ExpectedFinding;
+  predicted: Finding;
   lineDelta: number;
 }
 
@@ -24,32 +25,41 @@ function matchFindings(predicted: Finding[], expected: ExpectedFinding[]): Match
   const matches: Match[] = [];
   const usedPredicted = new Set<number>();
 
-  const candidates: Array<{ e: number; p: number; delta: number }> = [];
-  for (let e = 0; e < expected.length; e++) {
-    for (let p = 0; p < predicted.length; p++) {
-      if (usedPredicted.has(p)) {
+  const candidates: Array<{
+    expectedIndex: number;
+    predictedIndex: number;
+    expected: ExpectedFinding;
+    predicted: Finding;
+    delta: number;
+  }> = [];
+  for (const [expectedIndex, exp] of expected.entries()) {
+    for (const [predictedIndex, pred] of predicted.entries()) {
+      if (usedPredicted.has(predictedIndex)) {
         continue;
       }
-      const exp = expected[e];
-      const pred = predicted[p];
       if (pred.category !== exp.category || pred.file !== exp.file) {
         continue;
       }
       const tolerance = exp.lineTolerance ?? DEFAULT_LINE_TOLERANCE;
       const delta = Math.abs(pred.line - exp.line);
       if (delta <= tolerance) {
-        candidates.push({ e, p, delta });
+        candidates.push({ expectedIndex, predictedIndex, expected: exp, predicted: pred, delta });
       }
     }
   }
   // Greedy: closest line pairs first.
   candidates.sort((a, b) => a.delta - b.delta);
   for (const c of candidates) {
-    if (usedPredicted.has(c.p) || matches.some((m) => m.expected === c.e)) {
+    if (usedPredicted.has(c.predictedIndex) || matches.some((m) => m.expectedIndex === c.expectedIndex)) {
       continue;
     }
-    usedPredicted.add(c.p);
-    matches.push({ expected: c.e, predicted: c.p, lineDelta: c.delta });
+    usedPredicted.add(c.predictedIndex);
+    matches.push({
+      expectedIndex: c.expectedIndex,
+      expected: c.expected,
+      predicted: c.predicted,
+      lineDelta: c.delta,
+    });
   }
   return matches;
 }
@@ -90,9 +100,7 @@ export function scoreCase(
   const fp = predicted.length - tp;
   const fn = expected.length - tp;
 
-  const severityMatches = matches.filter(
-    (m) => predicted[m.predicted].severity === expected[m.expected].severity,
-  ).length;
+  const severityMatches = matches.filter((m) => m.predicted.severity === m.expected.severity).length;
   const lineMatches = matches.filter((m) => m.lineDelta === 0).length;
 
   return {
@@ -116,7 +124,10 @@ export function percentile(values: number[], p: number): number | null {
   }
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
-  return Math.max(0, Math.floor(sorted[index]));
+  // `p = 0` produces a negative index. `?? Number.NaN` keeps the historical
+  // NaN result rather than substituting a made-up value.
+  const value = sorted[index] ?? Number.NaN;
+  return Math.max(0, Math.floor(value));
 }
 
 const WEIGHTS = { recall: 0.35, precision: 0.25, severity: 0.2, line: 0.2 } as const;

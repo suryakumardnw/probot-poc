@@ -767,18 +767,19 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
   ): AgentResult {
     // 1. Parse the NDJSON event stream.
     const parsed = parseEvents(outcome.stdout);
-    if (parsed.errors.length > 0) {
+    const [firstError] = parsed.errors;
+    if (firstError !== undefined) {
       // Malformed runtime output is a runtime failure, not a model failure.
       throw new AgentRuntimeError("invalid_output", "agent runtime emitted unparseable events", {
         sessionId,
-        detail: truncate(scrub(parsed.errors[0], this.config)),
+        detail: truncate(scrub(firstError, this.config)),
       });
     }
 
     // 2. Runtime-level error events (e.g. provider auth failures come back as
     //    `type:"error"` events with exit code 0 — they must not pass silently).
-    if (parsed.errorMessages.length > 0) {
-      const message = parsed.errorMessages[0];
+    const [message] = parsed.errorMessages;
+    if (message !== undefined) {
       const code = classifyErrorEvent(message);
       throw new AgentRuntimeError(code, describeError(code), {
         sessionId,
@@ -1061,8 +1062,8 @@ function describeError(code: "provider_unavailable" | "permission_denied" | "inv
 export function extractJson(text: string): string | undefined {
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) {
-    const inner = fence[1].trim();
-    if (inner.startsWith("{")) {
+    const inner = fence[1]?.trim();
+    if (inner && inner.startsWith("{")) {
       return inner;
     }
   }
@@ -1149,7 +1150,8 @@ function scrub(text: string, config: AgentRuntimeConfigSource): string {
 function tracingPluginCacheDir(plugin: string): string {
   const versionSeparator = plugin.lastIndexOf("@");
   const name = versionSeparator > 0 ? plugin.slice(0, versionSeparator) : plugin;
-  const scope = name.split("/")[0];
+  const scopeSeparator = name.indexOf("/");
+  const scope = scopeSeparator === -1 ? name : name.slice(0, scopeSeparator);
   return path.join(os.homedir(), ".cache", "opencode", "npm", scope);
 }
 

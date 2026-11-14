@@ -47,6 +47,28 @@ an adaptation or deviation is accepted.
 | “Features” in `apps/web/features` | Vertical modules aligned to capabilities: webhooks, ingestion, review engine, publishing, admin, execution, knowledge. |
 | React components, design tokens, forms | N/A — no frontend. |
 
+## Compiler strictness
+
+`tsconfig.json` enables `strict`, `noUncheckedIndexedAccess`,
+`noImplicitOverride`, and `verbatimModuleSyntax` (PR 0.3). Indexing a
+`string[]`, `Record`, or regex match result therefore yields `T | undefined`,
+overrides must be marked `override`, and type-only imports must use
+`import type`.
+
+- **`exactOptionalPropertyTypes` is deferred, not rejected** (2026-11-15,
+  PR 0.3). The codebase declares hundreds of optional properties (`?:`), and
+  several assign `undefined` into them on purpose — for example
+  `ParsedDiffFile.previousPath` and `AgentRuntimeError.detail`. Enabling the
+  flag would reject those assignments unless the property types become
+  `field: T | undefined`, which erases the distinction between an absent key
+  and a present `undefined` value in every consumer (object spreads, `in`
+  checks, `Object.keys`, and Prisma writes). That is a data-shape decision, not
+  a mechanical fix, so it stays out of the compiler-flag PR.
+  - Follow-up: a dedicated compiler-hardening PR after PR 4.2 (fakes and
+    unit-test migration). It audits every optional property that is written
+    with `undefined`, splits "absent" from "explicitly undefined", adds tests
+    for serialized payloads, then enables the flag in its own commit.
+
 ## N/A
 
 - `09_components-ui.md`, `10_design-tokens.md`, and `11_forms.md` are not
