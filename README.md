@@ -28,20 +28,20 @@ You need:
 
 In GitHub: **Settings → Developer settings → GitHub Apps → New GitHub App**.
 
-| Setting | Value |
-|---|---|
-| Homepage URL | `https://<your-domain>` |
-| Webhook URL | `https://<your-domain>/` (trailing slash, no path) |
+| Setting        | Value                                                   |
+| -------------- | ------------------------------------------------------- |
+| Homepage URL   | `https://<your-domain>`                                 |
+| Webhook URL    | `https://<your-domain>/` (trailing slash, no path)      |
 | Webhook secret | a random secret — you will reuse it as `WEBHOOK_SECRET` |
 
 **Repository permissions** (minimum):
 
-| Permission | Access |
-|---|---|
-| Contents | Read |
-| Pull requests | Read and write |
-| Checks | Read |
-| Metadata | Read (always on) |
+| Permission    | Access           |
+| ------------- | ---------------- |
+| Contents      | Read             |
+| Pull requests | Read and write   |
+| Checks        | Read             |
+| Metadata      | Read (always on) |
 
 **Subscribe to events:** `Pull request`, `Issue comment`, `Installation`,
 `Installation repositories`.
@@ -93,25 +93,25 @@ base64 -i github-app.private-key.pem | tr -d '\n'        # macOS
 
 **Required variables:**
 
-| Variable | Meaning |
-|---|---|
-| `POSTGRES_PASSWORD` | Database password (any strong random value). |
-| `APP_ID` | GitHub App ID. |
-| `WEBHOOK_SECRET` | Webhook secret configured on the GitHub App. |
+| Variable                    | Meaning                                                                                                                                                                |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`         | Database password (any strong random value).                                                                                                                           |
+| `APP_ID`                    | GitHub App ID.                                                                                                                                                         |
+| `WEBHOOK_SECRET`            | Webhook secret configured on the GitHub App.                                                                                                                           |
 | `GITHUB_PRIVATE_KEY_BASE64` | The App private key PEM as single-line base64. Alternatives: `GITHUB_PRIVATE_KEY` (raw PEM) or `GITHUB_PRIVATE_KEY_PATH` (file inside the container). Use exactly one. |
-| `MODEL_API_KEY` | API key for the model endpoint. |
-| `MODEL_NAME` | Model identifier in `provider/model` form (default: `workers-ai/@cf/zai-org/glm-4.7-flash`). |
-| `MODEL_BASE_URL` | OpenAI-compatible base URL (default: `https://llm.nativewit.app/compat`). |
+| `MODEL_API_KEY`             | API key for the model endpoint.                                                                                                                                        |
+| `MODEL_NAME`                | Model identifier in `provider/model` form (default: `workers-ai/@cf/zai-org/glm-4.7-flash`).                                                                           |
+| `MODEL_BASE_URL`            | OpenAI-compatible base URL (default: `https://llm.nativewit.app/compat`).                                                                                              |
 
 **Optional but recommended:**
 
-| Variable | Meaning |
-|---|---|
-| `SESSION_SECRET` | Required for the admin panel; also set the `ADMIN_*` OAuth variables below. |
-| `DOKPLOY_NETWORK` | Ingress network name. Default `dokploy-network` matches Dokploy; change only if your host uses another name (`docker network ls \| grep dokploy`). |
-| `BACKUP_INTERVAL_HOURS`, `BACKUP_RETENTION_DAYS`, `BACKUP_MAX_AGE_HOURS` | Backup cadence, retention, and staleness alarm (defaults `24`, `14`, `26`). |
-| `PHOENIX_ENDPOINT` | Optional Phoenix OTLP/HTTP endpoint (default `http://phoenix:6006`). See [docs/deployment.md](docs/deployment.md#agent-tracing-optional--phoenixopentelemetry). |
-| `OPENCODE_OTLP_HEADERS` | Only when Phoenix auth is enabled: `authorization=Bearer <phoenix-system-api-key>` for trace ingestion. |
+| Variable                                                                 | Meaning                                                                                                                                                         |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SESSION_SECRET`                                                         | Required for the admin panel; also set the `ADMIN_*` OAuth variables below.                                                                                     |
+| `DOKPLOY_NETWORK`                                                        | Ingress network name. Default `dokploy-network` matches Dokploy; change only if your host uses another name (`docker network ls \| grep dokploy`).              |
+| `BACKUP_INTERVAL_HOURS`, `BACKUP_RETENTION_DAYS`, `BACKUP_MAX_AGE_HOURS` | Backup cadence, retention, and staleness alarm (defaults `24`, `14`, `26`).                                                                                     |
+| `PHOENIX_ENDPOINT`                                                       | Optional Phoenix OTLP/HTTP endpoint (default `http://phoenix:6006`). See [docs/deployment.md](docs/deployment.md#agent-tracing-optional--phoenixopentelemetry). |
+| `OPENCODE_OTLP_HEADERS`                                                  | Only when Phoenix auth is enabled: `authorization=Bearer <phoenix-system-api-key>` for trace ingestion.                                                         |
 
 `PROBOT_PORT` is only used by the local smoke-run override; leave it as-is on
 Dokploy.
@@ -306,16 +306,16 @@ npm run model:smoke      # check model endpoint connectivity
 
 ## Troubleshooting
 
-| Symptom | Likely cause / fix |
-|---|---|
-| `docker compose config` fails with `set POSTGRES_PASSWORD` | A required variable is missing from the Dokploy environment. |
-| `probot` healthy but no reviews | `APP_ID` / private key missing or unreadable; App not installed on the repo. |
-| GitHub webhook deliveries show 404 | Webhook URL must be `https://<your-domain>/` (root, trailing slash). |
-| Domain returns 502 | Domain must target service `probot`, container port `3000`; `probot` must be on `dokploy-network`. |
-| Admin routes return 503 | `ADMIN_OAUTH_*` + `SESSION_SECRET` are not set. |
-| `migrate` fails | Usually a wrong `POSTGRES_PASSWORD` or Postgres not yet healthy — check its logs. |
-| `worker` unhealthy | Check worker logs; it exposes `/metrics` on port `9100` inside the container. |
-| Private key parse error | Use single-line base64 (`GITHUB_PRIVATE_KEY_BASE64`) or a correctly quoted raw PEM. |
+| Symptom                                                    | Likely cause / fix                                                                                 |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `docker compose config` fails with `set POSTGRES_PASSWORD` | A required variable is missing from the Dokploy environment.                                       |
+| `probot` healthy but no reviews                            | `APP_ID` / private key missing or unreadable; App not installed on the repo.                       |
+| GitHub webhook deliveries show 404                         | Webhook URL must be `https://<your-domain>/` (root, trailing slash).                               |
+| Domain returns 502                                         | Domain must target service `probot`, container port `3000`; `probot` must be on `dokploy-network`. |
+| Admin routes return 503                                    | `ADMIN_OAUTH_*` + `SESSION_SECRET` are not set.                                                    |
+| `migrate` fails                                            | Usually a wrong `POSTGRES_PASSWORD` or Postgres not yet healthy — check its logs.                  |
+| `worker` unhealthy                                         | Check worker logs; it exposes `/metrics` on port `9100` inside the container.                      |
+| Private key parse error                                    | Use single-line base64 (`GITHUB_PRIVATE_KEY_BASE64`) or a correctly quoted raw PEM.                |
 
 ---
 

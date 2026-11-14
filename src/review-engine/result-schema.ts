@@ -26,7 +26,7 @@ const findingEvidenceSchema = z.object({
     .min(0)
     .nullable()
     .optional()
-    .transform((v) => (v === 0 ? undefined : v ?? undefined)),
+    .transform((v) => (v === 0 ? undefined : (v ?? undefined))),
   excerpt: z.string().min(1).max(2_000),
   reason: z.string().min(1).max(2_000),
 });
@@ -40,9 +40,7 @@ const findingEvidenceSchema = z.object({
 const MAX_CONVENTION_CHARS = 500;
 const conventionSchema = z.string().transform((value) => {
   const trimmed = value.trim();
-  return trimmed.length <= MAX_CONVENTION_CHARS
-    ? trimmed
-    : `${trimmed.slice(0, MAX_CONVENTION_CHARS - 1)}…`;
+  return trimmed.length <= MAX_CONVENTION_CHARS ? trimmed : `${trimmed.slice(0, MAX_CONVENTION_CHARS - 1)}…`;
 });
 
 /** Optional string that the model may legitimately omit as `null`/empty. */
@@ -68,46 +66,48 @@ export const findingSchema = z.object({
   recommendation: optionalString(1_000),
   guideline: optionalString(300),
   evidence: z.array(findingEvidenceSchema).min(1, "every finding must carry at least one evidence reference"),
-  verified: z.boolean().nullish().transform((v) => v ?? undefined),
+  verified: z
+    .boolean()
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
-export const reviewResultSchema = z
-  .preprocess(
-    (raw) => {
-      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
-      const value = { ...(raw as Record<string, unknown>) };
-      // The model is shown snake_case keys in the prompt template; accept both
-      // spellings so the validation boundary stays strict on content, not casing.
-      if ("uncertain_findings" in value) {
-        value.uncertainFindings = value.uncertain_findings;
-        delete value.uncertain_findings;
-      }
-      // Models sometimes omit or null an empty list. Normalize it to the
-      // documented empty-array shape instead of failing the whole review.
-      for (const key of ["findings", "uncertainFindings", "conventions"] as const) {
-        if (value[key] === null || value[key] === undefined) value[key] = [];
-      }
-      // The engine already falls back to the analysis objective; accept a
-      // missing/null summary rather than failing the whole review.
-      if (value.summary === null || value.summary === undefined) value.summary = "";
-      // schemaVersion is a constant in this protocol; normalize omission.
-      if (value.schemaVersion === null || value.schemaVersion === undefined) value.schemaVersion = 1;
-      return value;
-    },
-    z
-      .object({
-    schemaVersion: z.literal(1),
-    /** Two-sentence verdict for developers; the full audit answer is in findings. */
-    summary: z.string().max(4_000),
-    /** Inline-eligible findings. An empty array is VALID (no invented quota). */
-    findings: z.array(findingSchema),
-    /** Low-confidence findings; published in the summary, never inline. */
-    uncertainFindings: z.array(findingSchema).default([]),
-    /** Detected project conventions relevant to this review (§6.5). */
-    conventions: z.array(conventionSchema).default([]),
-  })
-      .strict(),
-  );
+export const reviewResultSchema = z.preprocess(
+  (raw) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+    const value = { ...(raw as Record<string, unknown>) };
+    // The model is shown snake_case keys in the prompt template; accept both
+    // spellings so the validation boundary stays strict on content, not casing.
+    if ("uncertain_findings" in value) {
+      value.uncertainFindings = value.uncertain_findings;
+      delete value.uncertain_findings;
+    }
+    // Models sometimes omit or null an empty list. Normalize it to the
+    // documented empty-array shape instead of failing the whole review.
+    for (const key of ["findings", "uncertainFindings", "conventions"] as const) {
+      if (value[key] === null || value[key] === undefined) value[key] = [];
+    }
+    // The engine already falls back to the analysis objective; accept a
+    // missing/null summary rather than failing the whole review.
+    if (value.summary === null || value.summary === undefined) value.summary = "";
+    // schemaVersion is a constant in this protocol; normalize omission.
+    if (value.schemaVersion === null || value.schemaVersion === undefined) value.schemaVersion = 1;
+    return value;
+  },
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      /** Two-sentence verdict for developers; the full audit answer is in findings. */
+      summary: z.string().max(4_000),
+      /** Inline-eligible findings. An empty array is VALID (no invented quota). */
+      findings: z.array(findingSchema),
+      /** Low-confidence findings; published in the summary, never inline. */
+      uncertainFindings: z.array(findingSchema).default([]),
+      /** Detected project conventions relevant to this review (§6.5). */
+      conventions: z.array(conventionSchema).default([]),
+    })
+    .strict(),
+);
 
 export type ParsedReviewResult = z.infer<typeof reviewResultSchema>;
 
@@ -121,19 +121,14 @@ export const analysisOutputSchema = z.preprocess(
     // report's summary as the objective when the model omitted one. Unknown
     // keys still fail the strict schema below.
     const value: Record<string, unknown> = { ...(input as Record<string, unknown>) };
-    const preliminary = Array.isArray(value.preliminary_findings)
-      ? [...(value.preliminary_findings as unknown[])]
-      : [];
+    const preliminary = Array.isArray(value.preliminary_findings) ? [...(value.preliminary_findings as unknown[])] : [];
     for (const key of ["findings", "uncertain_findings"] as const) {
       const extra = value[key];
       if (Array.isArray(extra)) preliminary.push(...extra);
       delete value[key];
     }
     if (preliminary.length > 0) value.preliminary_findings = preliminary;
-    if (
-      (typeof value.objective !== "string" || value.objective.length === 0) &&
-      typeof value.summary === "string"
-    ) {
+    if ((typeof value.objective !== "string" || value.objective.length === 0) && typeof value.summary === "string") {
       value.objective = value.summary;
     }
     delete value.summary;

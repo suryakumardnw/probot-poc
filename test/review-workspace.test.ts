@@ -1,19 +1,31 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { AgentRuntimeError } from "../src/agent/types.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { disconnectRedis } from "../src/lib/redis.js";
-import { ReviewWorkspaceService, StaleCommitError, CloneFailedError, DiffFailedError } from "../src/workspace/workspace.js";
-import { parseNameStatus, readWorkspaceFile, resolveWorkspacePath, PathEscapeError, FileTooLargeError, looksBinary } from "../src/workspace/files.js";
-import { redactCredentials, sanitizeGitUrl } from "../src/workspace/redact.js";
-import { processReviewJob, type ProcessReviewJobDeps } from "../src/workspace/processor.js";
 import type { InstallationTokenProvider } from "../src/workspace/credentials.js";
-import { AgentRuntimeError } from "../src/agent/types.js";
+import {
+  parseNameStatus,
+  readWorkspaceFile,
+  resolveWorkspacePath,
+  PathEscapeError,
+  FileTooLargeError,
+  looksBinary,
+} from "../src/workspace/files.js";
+import { processReviewJob, type ProcessReviewJobDeps } from "../src/workspace/processor.js";
+import { redactCredentials, sanitizeGitUrl } from "../src/workspace/redact.js";
+import {
+  ReviewWorkspaceService,
+  StaleCommitError,
+  CloneFailedError,
+  DiffFailedError,
+} from "../src/workspace/workspace.js";
 
 /**
  * Ticket 04 integration tests: repository review workspace.
@@ -147,7 +159,14 @@ type ServiceHandle = {
   tokens: ReturnType<typeof makeTokenProvider>;
 };
 
-function makeService(opts: { retentionHours?: number; cleanupAfterReview?: boolean; cloneDepth?: number; cloneUrlBuilder?: (ctx: { repositoryFullName: string; token: string }) => string } = {}): ServiceHandle {
+function makeService(
+  opts: {
+    retentionHours?: number;
+    cleanupAfterReview?: boolean;
+    cloneDepth?: number;
+    cloneUrlBuilder?: (ctx: { repositoryFullName: string; token: string }) => string;
+  } = {},
+): ServiceHandle {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ws-root-"));
   const tokens = makeTokenProvider();
   const service = new ReviewWorkspaceService({
@@ -218,7 +237,11 @@ async function createReviewChain(): Promise<{ reviewId: string; jobId: string }>
     },
   });
   const job = await prisma.reviewJob.create({
-    data: { reviewId: review.id, status: "enqueued", jobKey: `${INSTALLATION_ID}:12345:${PR_NUMBER}:${headSha}:standard` },
+    data: {
+      reviewId: review.id,
+      status: "enqueued",
+      jobKey: `${INSTALLATION_ID}:12345:${PR_NUMBER}:${headSha}:standard`,
+    },
   });
   return { reviewId: review.id, jobId: job.id };
 }
@@ -235,7 +258,13 @@ async function seedReviewRow(id: string): Promise<void> {
   });
   const repository = await prisma.repository.upsert({
     where: { githubRepositoryId: 12345n },
-    create: { githubRepositoryId: 12345n, installationId: installation.id, fullName: REPO_FULL_NAME, defaultBranch: "main", status: "active" },
+    create: {
+      githubRepositoryId: 12345n,
+      installationId: installation.id,
+      fullName: REPO_FULL_NAME,
+      defaultBranch: "main",
+      status: "active",
+    },
     update: {},
   });
   const pullRequest = await prisma.pullRequest.upsert({
@@ -282,7 +311,8 @@ describe("redaction helpers", () => {
   });
 
   test("redactCredentials removes the known secret and URL-encoded variants", () => {
-    const text = "fatal: unable to access 'https://x-access-token:ghs_secret@github.com/o/r.git/' encoded ghs%5Fsecret end";
+    const text =
+      "fatal: unable to access 'https://x-access-token:ghs_secret@github.com/o/r.git/' encoded ghs%5Fsecret end";
     const out = redactCredentials(text, "ghs_secret");
     expect(out).not.toContain("ghs_secret");
     expect(out).toContain("[REDACTED]");
@@ -452,9 +482,9 @@ describe("workspace prepare", () => {
     expect(() => resolveWorkspacePath(result.workspacePath, "added.txt")).not.toThrow();
 
     // Large file above the configurable limit is rejected.
-    await expect(
-      readWorkspaceFile(result.workspacePath, "large.txt", { maxFileBytes: 1_000 }),
-    ).rejects.toBeInstanceOf(FileTooLargeError);
+    await expect(readWorkspaceFile(result.workspacePath, "large.txt", { maxFileBytes: 1_000 })).rejects.toBeInstanceOf(
+      FileTooLargeError,
+    );
     // But allowed under a bigger limit.
     const big = await readWorkspaceFile(result.workspacePath, "large.txt", { maxFileBytes: 100_000 });
     expect(big.truncated).toBe(false);
@@ -505,7 +535,10 @@ describe("workspace prepare", () => {
 });
 
 describe("worker processor", () => {
-  function makeDeps(service: ReviewWorkspaceService, logger: { info(): void; warn(): void; error(): void }): ProcessReviewJobDeps {
+  function makeDeps(
+    service: ReviewWorkspaceService,
+    logger: { info(): void; warn(): void; error(): void },
+  ): ProcessReviewJobDeps {
     return {
       prisma,
       service,
@@ -525,17 +558,21 @@ describe("worker processor", () => {
     const { service } = makeService();
     const chain = await createReviewChain();
     await prisma.reviewJob.update({ where: { id: chain.jobId }, data: { status: "superseded" } });
-    const outcome = await processReviewJob(chain.jobId, {
-      reviewId: chain.reviewId,
-      jobKey: "k",
-      githubInstallationId: INSTALLATION_ID.toString(),
-      githubRepositoryId: "12345",
-      repositoryFullName: REPO_FULL_NAME,
-      pullRequestNumber: PR_NUMBER,
-      headSha,
-      reviewMode: "standard",
-      trigger: "opened",
-    }, makeDeps(service, silentLogger));
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        reviewMode: "standard",
+        trigger: "opened",
+      },
+      makeDeps(service, silentLogger),
+    );
     expect(outcome).toBe("skipped_superseded");
     // No workspace was created for the skipped job.
     expect(await prisma.reviewWorkspace.count({ where: { reviewId: chain.reviewId } })).toBe(0);
@@ -545,17 +582,26 @@ describe("worker processor", () => {
     const { service, root } = makeService();
     const chain = await createReviewChain();
     let prepared = 0;
-    const outcome = await processReviewJob(chain.jobId, {
-      reviewId: chain.reviewId,
-      jobKey: "k",
-      githubInstallationId: INSTALLATION_ID.toString(),
-      githubRepositoryId: "12345",
-      repositoryFullName: REPO_FULL_NAME,
-      pullRequestNumber: PR_NUMBER,
-      headSha,
-      reviewMode: "standard",
-      trigger: "opened",
-    }, { ...makeDeps(service, silentLogger), onWorkspacePrepared: async () => { prepared += 1; } });
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        reviewMode: "standard",
+        trigger: "opened",
+      },
+      {
+        ...makeDeps(service, silentLogger),
+        onWorkspacePrepared: async () => {
+          prepared += 1;
+        },
+      },
+    );
 
     expect(outcome).toBe("processed");
     expect(prepared).toBe(1);
@@ -576,24 +622,28 @@ describe("worker processor", () => {
       ...silentLogger,
       error: (obj: Record<string, unknown>) => errors.push(obj),
     };
-    const outcome = await processReviewJob(chain.jobId, {
-      reviewId: chain.reviewId,
-      jobKey: "k",
-      githubInstallationId: INSTALLATION_ID.toString(),
-      githubRepositoryId: "12345",
-      repositoryFullName: REPO_FULL_NAME,
-      pullRequestNumber: PR_NUMBER,
-      headSha,
-      reviewMode: "standard",
-      trigger: "opened",
-    }, {
-      ...makeDeps(service, capturingLogger),
-      onWorkspacePrepared: async () => {
-        throw new AgentRuntimeError("crash", "agent runtime exited with code 1", {
-          detail: "provider rejected request: model not found",
-        });
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        reviewMode: "standard",
+        trigger: "opened",
       },
-    });
+      {
+        ...makeDeps(service, capturingLogger),
+        onWorkspacePrepared: async () => {
+          throw new AgentRuntimeError("crash", "agent runtime exited with code 1", {
+            detail: "provider rejected request: model not found",
+          });
+        },
+      },
+    );
 
     expect(outcome).toBe("failed");
     const failure = errors.find((entry) => entry.failure_class !== undefined);
@@ -611,17 +661,26 @@ describe("worker processor", () => {
     const chain = await createReviewChain();
     await prisma.reviewJob.update({ where: { id: chain.jobId }, data: { status: "pending_outbox" } });
     let prepared = 0;
-    const outcome = await processReviewJob(chain.jobId, {
-      reviewId: chain.reviewId,
-      jobKey: "k",
-      githubInstallationId: INSTALLATION_ID.toString(),
-      githubRepositoryId: "12345",
-      repositoryFullName: REPO_FULL_NAME,
-      pullRequestNumber: PR_NUMBER,
-      headSha,
-      reviewMode: "standard",
-      trigger: "opened",
-    }, { ...makeDeps(service, silentLogger), onWorkspacePrepared: async () => { prepared += 1; } });
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        reviewMode: "standard",
+        trigger: "opened",
+      },
+      {
+        ...makeDeps(service, silentLogger),
+        onWorkspacePrepared: async () => {
+          prepared += 1;
+        },
+      },
+    );
 
     expect(outcome).toBe("processed");
     expect(prepared).toBe(1);
@@ -634,17 +693,21 @@ describe("worker processor", () => {
     const { service } = makeService();
     const chain = await createReviewChain();
     await prisma.reviewJob.update({ where: { id: chain.jobId }, data: { status: "completed" } });
-    const outcome = await processReviewJob(chain.jobId, {
-      reviewId: chain.reviewId,
-      jobKey: "k",
-      githubInstallationId: INSTALLATION_ID.toString(),
-      githubRepositoryId: "12345",
-      repositoryFullName: REPO_FULL_NAME,
-      pullRequestNumber: PR_NUMBER,
-      headSha,
-      reviewMode: "standard",
-      trigger: "opened",
-    }, makeDeps(service, silentLogger));
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        reviewMode: "standard",
+        trigger: "opened",
+      },
+      makeDeps(service, silentLogger),
+    );
     expect(outcome).toBe("skipped_status");
     expect(await prisma.reviewWorkspace.count({ where: { reviewId: chain.reviewId } })).toBe(0);
   });
@@ -657,24 +720,28 @@ describe("worker processor", () => {
     const chain = await createReviewChain();
     await prisma.review.update({ where: { id: chain.reviewId }, data: { baseSha: null } });
     let prepared = 0;
-    const outcome = await processReviewJob(chain.jobId, {
-      reviewId: chain.reviewId,
-      jobKey: "k",
-      githubInstallationId: INSTALLATION_ID.toString(),
-      githubRepositoryId: "12345",
-      repositoryFullName: REPO_FULL_NAME,
-      pullRequestNumber: PR_NUMBER,
-      headSha,
-      baseSha: null,
-      reviewMode: "standard",
-      trigger: "manual",
-    }, {
-      ...makeDeps(service, silentLogger),
-      onWorkspacePrepared: async ({ workspace }) => {
-        prepared += 1;
-        expect(workspace.baseSha).toBeTruthy();
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        baseSha: null,
+        reviewMode: "standard",
+        trigger: "manual",
       },
-    });
+      {
+        ...makeDeps(service, silentLogger),
+        onWorkspacePrepared: async ({ workspace }) => {
+          prepared += 1;
+          expect(workspace.baseSha).toBeTruthy();
+        },
+      },
+    );
 
     expect(outcome).toBe("processed");
     expect(prepared).toBe(1);
@@ -683,17 +750,21 @@ describe("worker processor", () => {
   test("processing failure marks job + review failed and cleans up", async () => {
     const { service } = makeService({ cloneUrlBuilder: () => path.join(fixtureDir, "missing.git") });
     const chain = await createReviewChain();
-    const outcome = await processReviewJob(chain.jobId, {
-      reviewId: chain.reviewId,
-      jobKey: "k",
-      githubInstallationId: INSTALLATION_ID.toString(),
-      githubRepositoryId: "12345",
-      repositoryFullName: REPO_FULL_NAME,
-      pullRequestNumber: PR_NUMBER,
-      headSha,
-      reviewMode: "standard",
-      trigger: "opened",
-    }, makeDeps(service, silentLogger));
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        reviewMode: "standard",
+        trigger: "opened",
+      },
+      makeDeps(service, silentLogger),
+    );
     expect(outcome).toBe("failed");
     const job = await prisma.reviewJob.findUnique({ where: { id: chain.jobId } });
     expect(job?.status).toBe("failed");

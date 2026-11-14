@@ -1,7 +1,7 @@
 /** Triage service — business logic for triaging GitHub issues via LLM. */
 
-import { chat, truncate } from "./llm.service.js";
 import type { IssueData } from "../models/triage.js";
+import { chat, truncate } from "./llm.service.js";
 
 const SYSTEM_PROMPT = `You are an experienced maintainer triaging GitHub issues.
 Given an issue title and body, respond with:

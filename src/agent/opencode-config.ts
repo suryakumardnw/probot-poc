@@ -27,7 +27,11 @@ export interface AgentRuntimeConfigSource {
     timeoutMs: number;
   };
   agent: {
-    runtime: { type: "opencode-cli" | "opencode-sdk" | "opencode-server" | "custom"; sessionStrategy: string; timeoutMs: number };
+    runtime: {
+      type: "opencode-cli" | "opencode-sdk" | "opencode-server" | "custom";
+      sessionStrategy: string;
+      timeoutMs: number;
+    };
     context: {
       adaptive: boolean;
       maxFiles: number;
@@ -121,14 +125,7 @@ export function buildPermissionRules(config: AgentRuntimeConfigSource): Record<s
 export const DEFAULT_AGENT_TRACING_PLUGIN = "@devtheops/opencode-plugin-otel@2.1.0";
 
 /** Environment variables the OpenCode child process is allowed to inherit. */
-const CHILD_ENV_ALLOWLIST = [
-  "PATH",
-  "HOME",
-  "TMPDIR",
-  "LANG",
-  "LC_ALL",
-  "TERM",
-] as const;
+const CHILD_ENV_ALLOWLIST = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM"] as const;
 
 /**
  * OpenCode OTel credentials/headers forwarded to the child so the configured
@@ -193,9 +190,7 @@ export function buildChildEnv(
   if (agentTracing?.enabled) {
     const plugin = agentTracing.plugin ?? DEFAULT_AGENT_TRACING_PLUGIN;
     const isLangfuse = /langfuse/i.test(plugin);
-    const allowlist = isLangfuse
-      ? LANGFUSE_ENV_ALLOWLIST
-      : OPENCODE_TRACING_ENV_ALLOWLIST;
+    const allowlist = isLangfuse ? LANGFUSE_ENV_ALLOWLIST : OPENCODE_TRACING_ENV_ALLOWLIST;
     for (const name of allowlist) {
       if (env[name] !== undefined) child[name] = env[name];
     }
@@ -286,9 +281,7 @@ export function buildAgentTracingPlugin(
   const tags = buildTraceTags(input);
   if (tags.length > 0) options.tags = tags;
   const spanAttributes = [
-    typeof agentTracing.options?.spanAttributes === "string"
-      ? agentTracing.options.spanAttributes
-      : "",
+    typeof agentTracing.options?.spanAttributes === "string" ? agentTracing.options.spanAttributes : "",
     buildSpanAttributes(input),
   ]
     .filter((value) => value.length > 0)

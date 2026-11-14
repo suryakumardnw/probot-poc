@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { describe, expect, it, vi } from "vitest";
 
-import { buildPrompt } from "../src/agent/opencode-runtime.js";
 import type { AgentRuntimeConfigSource } from "../src/agent/opencode-config.js";
+import { buildPrompt } from "../src/agent/opencode-runtime.js";
+import {
+  createSdkAgentRuntime,
+  OpenCodeSdkAgentRuntime,
+  type SdkRuntimeOptions,
+} from "../src/agent/opencode-sdk-runtime.js";
 import type { SdkHostClient, SdkHostClientOptions } from "../src/agent/sdk/client.js";
 import type {
   SdkCreateSessionInput,
@@ -13,11 +18,6 @@ import type {
   SdkSessionRef,
   SdkSessionRow,
 } from "../src/agent/sdk/types.js";
-import {
-  createSdkAgentRuntime,
-  OpenCodeSdkAgentRuntime,
-  type SdkRuntimeOptions,
-} from "../src/agent/opencode-sdk-runtime.js";
 import { AgentRuntimeError, type AgentSession } from "../src/agent/types.js";
 
 // ---------------------------------------------------------------------------
@@ -133,9 +133,7 @@ class FakeHostClient implements SdkHostClient {
     this.advance(10);
   }
 
-  async listMessages(
-    _input: SdkSessionRef & { order?: "asc" | "desc" },
-  ): Promise<SdkMessage[]> {
+  async listMessages(_input: SdkSessionRef & { order?: "asc" | "desc" }): Promise<SdkMessage[]> {
     return this.options.messages ?? DEFAULT_MESSAGES;
   }
 
@@ -198,10 +196,7 @@ function makeHarness(options: HarnessOptions = {}) {
 
 type Harness = ReturnType<typeof makeHarness>;
 
-function makeRuntime(
-  harness: Harness,
-  overrides: Partial<SdkRuntimeOptions> = {},
-): OpenCodeSdkAgentRuntime {
+function makeRuntime(harness: Harness, overrides: Partial<SdkRuntimeOptions> = {}): OpenCodeSdkAgentRuntime {
   return new OpenCodeSdkAgentRuntime(baseConfig, {
     createHostClient: harness.createHostClient,
     probeSdkHost: harness.probeSdkHost,
@@ -259,12 +254,8 @@ function makeCaptureLogger() {
 
 describe("SDK runtime adapter construction", () => {
   it("rejects a config whose runtime.type is opencode-cli", () => {
-    expect(() => new OpenCodeSdkAgentRuntime(cliConfig)).toThrowError(
-      expect.objectContaining({ code: "config" }),
-    );
-    expect(() => createSdkAgentRuntime(cliConfig)).toThrowError(
-      expect.objectContaining({ code: "config" }),
-    );
+    expect(() => new OpenCodeSdkAgentRuntime(cliConfig)).toThrowError(expect.objectContaining({ code: "config" }));
+    expect(() => createSdkAgentRuntime(cliConfig)).toThrowError(expect.objectContaining({ code: "config" }));
   });
 
   it("createSdkAgentRuntime builds the SDK adapter directly", () => {
@@ -417,9 +408,9 @@ describe("SDK execute", () => {
     });
     const runtimeMissing = makeRuntime(missing);
     const sessionMissing = await started(runtimeMissing);
-    await expect(
-      runtimeMissing.execute(sessionMissing, { instruction: "x", output: "json" }),
-    ).rejects.toMatchObject({ code: "invalid_output" });
+    await expect(runtimeMissing.execute(sessionMissing, { instruction: "x", output: "json" })).rejects.toMatchObject({
+      code: "invalid_output",
+    });
     await runtimeMissing.terminate(sessionMissing);
 
     const invalid = makeHarness({

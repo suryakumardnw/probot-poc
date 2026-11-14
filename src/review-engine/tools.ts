@@ -45,15 +45,7 @@ export const MAX_CONTEXT_CHARS = 48_000;
 /** Upper bound on search_code matches returned in one call. */
 const MAX_SEARCH_MATCHES = 100;
 /** Directories that are never useful (or safe) to search per request. */
-const SEARCH_SKIP_DIRS = new Set([
-  ".git",
-  "node_modules",
-  "dist",
-  "build",
-  "coverage",
-  ".next",
-  ".turbo",
-]);
+const SEARCH_SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", ".turbo"]);
 
 /**
  * Model-facing aliases. OpenCode exposes native tools as `read`/`glob`/`grep`,
@@ -125,18 +117,10 @@ export function parseToolRequests(value: unknown, budget: RetrievalBudget): Tool
     }
     const candidate = raw as Record<string, unknown>;
     const args =
-      typeof candidate.args === "object" && candidate.args !== null
-        ? (candidate.args as Record<string, unknown>)
-        : {};
-    const pathValue =
-      candidate.path ?? candidate.file ?? candidate.filePath ?? args.path ?? args.file ?? args.filePath;
+      typeof candidate.args === "object" && candidate.args !== null ? (candidate.args as Record<string, unknown>) : {};
+    const pathValue = candidate.path ?? candidate.file ?? candidate.filePath ?? args.path ?? args.file ?? args.filePath;
     const queryValue =
-      candidate.query ??
-      candidate.pattern ??
-      candidate.search ??
-      args.query ??
-      args.pattern ??
-      args.search;
+      candidate.query ?? candidate.pattern ?? candidate.search ?? args.query ?? args.pattern ?? args.search;
     let tool = candidate.tool;
     // Model drift: some providers omit `tool` and send only `path`/`reason`,
     // and native tool names arrive as read/glob/grep. Infer the safe read-only
@@ -147,8 +131,7 @@ export function parseToolRequests(value: unknown, budget: RetrievalBudget): Tool
         tool = /diff/i.test(pathValue) ? "get_diff" : "read_file";
       }
     }
-    const mappedTool =
-      typeof tool === "string" ? TOOL_ALIASES[tool] : undefined;
+    const mappedTool = typeof tool === "string" ? TOOL_ALIASES[tool] : undefined;
     if (!mappedTool) {
       budget.violation(`tool request: unsupported tool '${String(tool)}'; rejected`);
       continue;
@@ -187,7 +170,9 @@ function renderResult(result: ToolResult): string {
   if (!result.ok) {
     return `[${result.tool}${result.path ? ` ${result.path}` : ""}] NOT AVAILABLE: ${result.error}`;
   }
-  const header = result.path ? `[${result.tool} ${result.path}${result.truncated ? " (truncated)" : ""}]` : `[${result.tool}]`;
+  const header = result.path
+    ? `[${result.tool} ${result.path}${result.truncated ? " (truncated)" : ""}]`
+    : `[${result.tool}]`;
   return `${header}\n${result.content}`;
 }
 
@@ -295,12 +280,7 @@ export async function fulfillToolRequests(
       } else if (request.tool === "list_files") {
         content = await listFiles(workspacePath, request.path!);
       } else if (request.tool === "search_code") {
-        content = await searchCode(
-          workspacePath,
-          request.path ?? ".",
-          request.query!,
-          maxFileBytes,
-        );
+        content = await searchCode(workspacePath, request.path ?? ".", request.query!, maxFileBytes);
       } else {
         const file = await readWorkspaceFile(workspacePath, request.path!, { maxFileBytes });
         if (file.encoding === "binary") {

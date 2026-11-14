@@ -14,18 +14,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
 import { AgentRuntimeError } from "../types.js";
-import type {
-  SdkHostMethod,
-  SdkHostRequest,
-  SdkHostResponse,
-} from "./protocol.js";
-import type {
-  SdkCreateSessionInput,
-  SdkMessage,
-  SdkPromptInput,
-  SdkSessionRef,
-  SdkSessionRow,
-} from "./types.js";
+import type { SdkHostMethod, SdkHostRequest, SdkHostResponse } from "./protocol.js";
+import type { SdkCreateSessionInput, SdkMessage, SdkPromptInput, SdkSessionRef, SdkSessionRow } from "./types.js";
 
 /** Maximum bytes of a single protocol line (a global protocol constraint). */
 const MAX_LINE_BYTES = 1024 * 1024; // 1 MiB
@@ -114,9 +104,7 @@ class StdioSdkHostClient implements SdkHostClient {
     await this.request("session.prompt", input);
   }
 
-  async listMessages(
-    input: SdkSessionRef & { order?: "asc" | "desc" },
-  ): Promise<SdkMessage[]> {
+  async listMessages(input: SdkSessionRef & { order?: "asc" | "desc" }): Promise<SdkMessage[]> {
     return (await this.request("message.list", input)) as SdkMessage[];
   }
 
@@ -178,9 +166,7 @@ class StdioSdkHostClient implements SdkHostClient {
 
   private request(method: SdkHostMethod, params: unknown): Promise<unknown> {
     if (!this.child) {
-      return Promise.reject(
-        new AgentRuntimeError("crash", "opencode sdk host is not running", { detail: method }),
-      );
+      return Promise.reject(new AgentRuntimeError("crash", "opencode sdk host is not running", { detail: method }));
     }
     const id = this.nextId;
     this.nextId += 1;
@@ -215,9 +201,7 @@ class StdioSdkHostClient implements SdkHostClient {
     }
     if (Buffer.byteLength(this.stdoutBuffer, "utf8") > MAX_LINE_BYTES) {
       this.stdoutBuffer = "";
-      this.failAll(
-        new AgentRuntimeError("crash", "opencode sdk host emitted an over-long protocol line"),
-      );
+      this.failAll(new AgentRuntimeError("crash", "opencode sdk host emitted an over-long protocol line"));
     }
   }
 
@@ -310,10 +294,7 @@ export async function probeSdkHost(options: {
 }
 
 /** Send a single `health` request and resolve with its result. */
-function requestHealth(
-  child: ChildProcess,
-  timeoutMs: number,
-): Promise<unknown> {
+function requestHealth(child: ChildProcess, timeoutMs: number): Promise<unknown> {
   return new Promise<unknown>((resolve, reject) => {
     const decoder = new StringDecoder("utf8");
     let buffer = "";
@@ -346,19 +327,18 @@ function requestHealth(
           response = JSON.parse(line) as SdkHostResponse;
         } catch {
           cleanup();
-          reject(
-            new AgentRuntimeError("crash", "opencode sdk host health probe returned invalid output"),
-          );
+          reject(new AgentRuntimeError("crash", "opencode sdk host health probe returned invalid output"));
           return;
         }
         if (response.id === 1) {
           cleanup();
           if (response.ok) resolve(response.result);
-          else reject(
-            new AgentRuntimeError("unknown", response.error?.message ?? "health probe failed", {
-              detail: response.error?.message,
-            }),
-          );
+          else
+            reject(
+              new AgentRuntimeError("unknown", response.error?.message ?? "health probe failed", {
+                detail: response.error?.message,
+              }),
+            );
           return;
         }
         idx = buffer.indexOf("\n");
@@ -367,9 +347,7 @@ function requestHealth(
 
     const onExit = (code: number | null): void => {
       cleanup();
-      reject(
-        new AgentRuntimeError("crash", `opencode sdk host exited during health probe (code ${code ?? "?"})`),
-      );
+      reject(new AgentRuntimeError("crash", `opencode sdk host exited during health probe (code ${code ?? "?"})`));
     };
     const onError = (error: Error): void => {
       cleanup();

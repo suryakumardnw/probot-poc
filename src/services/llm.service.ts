@@ -7,10 +7,7 @@ import type { ChatMessage, ChatOptions } from "../models/chat.js";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-export async function chat(
-  messages: ChatMessage[],
-  opts: ChatOptions = {},
-): Promise<string> {
+export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error("GROQ_API_KEY is not set");
@@ -32,9 +29,7 @@ export async function chat(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(
-      `Groq API error ${response.status}: ${body.slice(0, 500)}`,
-    );
+    throw new Error(`Groq API error ${response.status}: ${body.slice(0, 500)}`);
   }
 
   const data = (await response.json()) as {
@@ -56,8 +51,5 @@ export function estimateTokens(text: string): number {
 export function truncate(text: string, maxTokens: number): string {
   if (estimateTokens(text) <= maxTokens) return text;
   const maxChars = maxTokens * 4;
-  return (
-    text.slice(0, maxChars) +
-    "\n\n... [truncated: diff/content too large to analyze fully]"
-  );
+  return text.slice(0, maxChars) + "\n\n... [truncated: diff/content too large to analyze fully]";
 }

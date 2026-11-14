@@ -43,8 +43,4 @@ export {
   type AgentRuntimePlugin,
 } from "./runtime-registry.js";
 
-export {
-  createSdkAgentRuntime,
-  OpenCodeSdkAgentRuntime,
-  type SdkRuntimeOptions,
-} from "./opencode-sdk-runtime.js";
+export { createSdkAgentRuntime, OpenCodeSdkAgentRuntime, type SdkRuntimeOptions } from "./opencode-sdk-runtime.js";

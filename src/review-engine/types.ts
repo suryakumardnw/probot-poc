@@ -95,13 +95,7 @@ export interface ReviewResult {
 // ---------------------------------------------------------------------------
 
 export type ComplexityFactorName =
-  | "diffSize"
-  | "changedFiles"
-  | "structural"
-  | "dependencyImpact"
-  | "riskyCode"
-  | "concurrency"
-  | "dataIntegrity";
+  "diffSize" | "changedFiles" | "structural" | "dependencyImpact" | "riskyCode" | "concurrency" | "dataIntegrity";
 
 export interface ComplexityFactor {
   name: ComplexityFactorName;

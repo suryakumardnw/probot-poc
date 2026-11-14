@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { createLogger, logRedactPaths } from "../src/lib/logger.js";
 import { loadEnv } from "../src/config/env.js";
+import { createLogger, logRedactPaths } from "../src/lib/logger.js";
 import { registerGracefulShutdown, type ShutdownStep } from "../src/lib/shutdown.js";
 
 describe("pino logger", () => {

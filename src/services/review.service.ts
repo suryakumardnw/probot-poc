@@ -1,7 +1,7 @@
 /** Review service — business logic for reviewing PRs via LLM. */
 
-import { chat, truncate } from "./llm.service.js";
 import type { PullRequestData } from "../models/review.js";
+import { chat, truncate } from "./llm.service.js";
 
 const SYSTEM_PROMPT = `You are a senior software engineer performing code reviews.
 Review the pull request diff and respond with:
@@ -14,10 +14,7 @@ Be concise (max ~300 words). Use GitHub-flavored markdown. Do not invent code th
 const MAX_DIFF_TOKENS = 6000;
 
 /** Ask the LLM to review a PR diff; returns raw markdown review. */
-export async function reviewPullRequest(
-  pr: PullRequestData,
-  diff: string,
-): Promise<string> {
+export async function reviewPullRequest(pr: PullRequestData, diff: string): Promise<string> {
   return chat([
     { role: "system", content: SYSTEM_PROMPT },
     {

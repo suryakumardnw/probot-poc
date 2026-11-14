@@ -1,30 +1,26 @@
 import "dotenv/config";
 import path from "node:path";
+import type { Worker } from "bullmq";
+import { createAgentRuntime } from "./agent/index.js";
 import { loadEnv } from "./config/env.js";
+import { loadIngestionConfig } from "./ingestion/orchestrator.js";
+import { recoverOutbox } from "./ingestion/outbox.js";
+import { closeReviewQueue } from "./ingestion/queue.js";
+import { getReviewQueue } from "./ingestion/queue.js";
+import { ensureKnowledgeSources, setKnowledgeSnapshot } from "./knowledge/index.js";
 import { createLogger } from "./lib/logger.js";
-import { registerGracefulShutdown } from "./lib/shutdown.js";
 import { checkPrisma, disconnectPrisma, getPrisma } from "./lib/prisma.js";
 import { checkRedis, disconnectRedis, getRedis, waitRedisReady } from "./lib/redis.js";
-import { closeReviewQueue } from "./ingestion/queue.js";
-import { recoverOutbox } from "./ingestion/outbox.js";
-import { loadIngestionConfig } from "./ingestion/orchestrator.js";
-import { ensureKnowledgeSources, setKnowledgeSnapshot } from "./knowledge/index.js";
-import {
-  createDefaultTokenProvider,
-  startReviewWorker,
-  stopReviewWorker,
-} from "./workspace/processor.js";
-import { ReviewWorkspaceService } from "./workspace/workspace.js";
-import { workspaceDirectorySizeBytes } from "./workspace/disk.js";
-import { createReviewPipelineHook } from "./publishing/index.js";
-import { createAgentRuntime } from "./agent/index.js";
-import { getReviewQueue } from "./ingestion/queue.js";
-import { reconcileIncompleteReviews } from "./recovery/reconciliation.js";
+import { registerGracefulShutdown } from "./lib/shutdown.js";
 import { AlertManager } from "./observability/alerts.js";
+import { startMetricsServer, metricsServerPort } from "./observability/metrics-endpoint.js";
 import { getMetricsRegistry } from "./observability/metrics.js";
 import { retryPolicyConfigFromReviewConfig } from "./observability/retry.js";
-import { startMetricsServer, metricsServerPort } from "./observability/metrics-endpoint.js";
-import type { Worker } from "bullmq";
+import { createReviewPipelineHook } from "./publishing/index.js";
+import { reconcileIncompleteReviews } from "./recovery/reconciliation.js";
+import { workspaceDirectorySizeBytes } from "./workspace/disk.js";
+import { createDefaultTokenProvider, startReviewWorker, stopReviewWorker } from "./workspace/processor.js";
+import { ReviewWorkspaceService } from "./workspace/workspace.js";
 
 /**
  * Review worker entry point.
@@ -183,8 +179,7 @@ async function main(): Promise<void> {
         logger,
         queue: recoveryQueue,
         staleThresholdMs: Number(process.env.RECOVERY_STALE_THRESHOLD_MS) || undefined,
-        sweepExpiredWorkspaces: () =>
-          workspaceService.sweepExpired(config.repository.workspace.retentionHours),
+        sweepExpiredWorkspaces: () => workspaceService.sweepExpired(config.repository.workspace.retentionHours),
       });
       if (summary.scanned > 0) {
         logger.info({ phase, ...summary }, "Incomplete review reconciliation pass");
@@ -211,8 +206,7 @@ async function main(): Promise<void> {
   let lastProviderErrorTotal = 0;
   let consecutiveReviewFailures = 0;
 
-  const counterTotal = (values: Map<string, number>): number =>
-    [...values.values()].reduce((a, b) => a + b, 0);
+  const counterTotal = (values: Map<string, number>): number => [...values.values()].reduce((a, b) => a + b, 0);
 
   const diskUsageBytes = async (): Promise<number> => {
     try {

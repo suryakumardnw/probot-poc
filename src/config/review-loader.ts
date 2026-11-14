@@ -1,12 +1,9 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { z } from "zod";
-import {
-  CURRENT_SCHEMA_VERSION,
-  ReviewConfig,
-  reviewConfigSchema,
-} from "./review-schema.js";
+import type { z } from "zod";
+import type { ReviewConfig } from "./review-schema.js";
+import { CURRENT_SCHEMA_VERSION, reviewConfigSchema } from "./review-schema.js";
 
 /**
  * Central configuration loader (ARCHITECTURE.md §11.2, §11.4, §3.2).
@@ -100,7 +97,12 @@ export function checkForEmbeddedSecrets(value: unknown, path = ""): void {
         throw new EmbeddedSecretError(childPath);
       }
       // Ignore env-var *references* (${VAR}) — they are not secrets.
-      if (FORBIDDEN_SECRET_KEYS.has(key.toLowerCase()) && typeof child !== "undefined" && child !== null && typeof child !== "string") {
+      if (
+        FORBIDDEN_SECRET_KEYS.has(key.toLowerCase()) &&
+        typeof child !== "undefined" &&
+        child !== null &&
+        typeof child !== "string"
+      ) {
         throw new EmbeddedSecretError(childPath);
       }
       checkForEmbeddedSecrets(child, childPath);
@@ -260,7 +262,9 @@ export function validateAllowedSections(allowedSections: string[], baseConfig: R
   ];
   for (const section of allowedSections) {
     if (getPath(baseConfig, section) === undefined) {
-      throw new ConfigValidationError(`repositoryOverrides.allowedSections: '${section}' is not a known configuration section`);
+      throw new ConfigValidationError(
+        `repositoryOverrides.allowedSections: '${section}' is not a known configuration section`,
+      );
     }
     for (const mandatory of mandatoryPaths) {
       if (section === mandatory || mandatory.startsWith(`${section}.`)) {
@@ -310,9 +314,7 @@ export function resolveRepositoryOverrides(
 
   const patched: Record<string, unknown> = structuredClone(baseConfig) as unknown as Record<string, unknown>;
   for (const [path, patch] of Object.entries(overrides)) {
-    const allowedBy = allowed.find(
-      (section) => path === section || path.startsWith(`${section}.`),
-    );
+    const allowedBy = allowed.find((section) => path === section || path.startsWith(`${section}.`));
     if (!allowedBy) {
       throw new ConfigValidationError(
         `Repository override at '${path}' is not permitted. Allowed sections: ${allowed.join(", ")}`,
@@ -332,7 +334,7 @@ export function resolveRepositoryOverrides(
 
 export function formatZodIssues(error: z.ZodError): string {
   return error.issues
-    .map((issue) => `  - ${(issue.path.length > 0 ? issue.path.join(".") : "(root)")}: ${issue.message}`)
+    .map((issue) => `  - ${issue.path.length > 0 ? issue.path.join(".") : "(root)"}: ${issue.message}`)
     .join("\n");
 }
 
@@ -341,9 +343,7 @@ export function validateRawConfig(raw: unknown): ReviewConfig {
   // Allow editor-only metadata keys (e.g. "$schema") that are not part of the
   // configuration itself.
   const candidate =
-    raw !== null && typeof raw === "object" && !Array.isArray(raw)
-      ? { ...(raw as Record<string, unknown>) }
-      : raw;
+    raw !== null && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>) } : raw;
   if (candidate !== null && typeof candidate === "object" && !Array.isArray(candidate)) {
     delete (candidate as Record<string, unknown>).$schema;
   }

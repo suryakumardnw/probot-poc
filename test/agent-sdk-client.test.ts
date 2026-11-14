@@ -1,13 +1,9 @@
+import type { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { spawn } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  createStdioSdkHostClient,
-  probeSdkHost,
-  type SdkHostClientOptions,
-} from "../src/agent/sdk/client.js";
+import { createStdioSdkHostClient, probeSdkHost, type SdkHostClientOptions } from "../src/agent/sdk/client.js";
 
 // ---------------------------------------------------------------------------
 // Fake child process
@@ -70,10 +66,7 @@ const baseOptions: SdkHostClientOptions = {
   reviewId: "rev_test",
 };
 
-function makeClient(
-  child: FakeChild,
-  overrides: Partial<SdkHostClientOptions> = {},
-) {
+function makeClient(child: FakeChild, overrides: Partial<SdkHostClientOptions> = {}) {
   const spawnImpl = vi.fn(() => child) as unknown as typeof spawn;
   const client = createStdioSdkHostClient({ ...baseOptions, ...overrides, spawnImpl });
   return { client, spawnImpl };
@@ -139,9 +132,7 @@ describe("SDK host stdio client", () => {
     await started(client, child);
 
     const pending = client.getSession({ sessionID: "sdksess_1" });
-    child.emitStdout(
-      `${JSON.stringify({ id: 2, ok: true, result: { id: "sdksess_1", time: { idle: 5 } } })}\n`,
-    );
+    child.emitStdout(`${JSON.stringify({ id: 2, ok: true, result: { id: "sdksess_1", time: { idle: 5 } } })}\n`);
     await expect(pending).resolves.toEqual({ id: "sdksess_1", time: { idle: 5 } });
   });
 
@@ -172,9 +163,7 @@ describe("SDK host stdio client", () => {
     await started(client, child);
 
     const pending = client.getSession({ sessionID: "missing" });
-    child.emitStdout(
-      `${JSON.stringify({ id: 2, ok: false, error: { message: "session not found" } })}\n`,
-    );
+    child.emitStdout(`${JSON.stringify({ id: 2, ok: false, error: { message: "session not found" } })}\n`);
     const error = await pending.catch((cause) => cause as { code?: string });
     expect(error.code).toBe("unknown");
     expect(error.code).not.toBe("crash");

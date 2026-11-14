@@ -7,6 +7,10 @@ coverage
 /lib/
 tsconfig.tsbuildinfo
 
+# Tool caches
+.eslintcache
+.prettiercache
+
 # Ignore Scratch
 .scratch
 

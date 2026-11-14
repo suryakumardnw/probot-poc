@@ -1,19 +1,18 @@
-import { Probot, ProbotOctokit } from "probot";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ReviewState } from "@prisma/client";
+import type { Queue } from "bullmq";
+import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import myProbotApp from "../src/index.js";
+import { ingestManualReview, getReviewStatus } from "../src/ingestion/orchestrator.js";
+import { publishOutboxEvent, recoverOutbox } from "../src/ingestion/outbox.js";
+import { closeReviewQueue, getReviewQueue, getQueueConnection } from "../src/ingestion/queue.js";
+import type { ReviewJobPayload } from "../src/ingestion/queue.js";
+import { transitionReviewState, InvalidStateTransitionError } from "../src/ingestion/review-state.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { checkRedis, disconnectRedis } from "../src/lib/redis.js";
-import { closeReviewQueue, getReviewQueue, getQueueConnection } from "../src/ingestion/queue.js";
-import { publishOutboxEvent, recoverOutbox } from "../src/ingestion/outbox.js";
-import type { Queue } from "bullmq";
-import type { ReviewJobPayload } from "../src/ingestion/queue.js";
-import { ingestManualReview, getReviewStatus } from "../src/ingestion/orchestrator.js";
-import { transitionReviewState, InvalidStateTransitionError } from "../src/ingestion/review-state.js";
-import type { ReviewState } from "@prisma/client";
 
 /**
  * Ticket 03 integration tests: durable review ingestion.
@@ -58,7 +57,10 @@ const INSTALLATION_ID = 9901;
 const REPOSITORY_ID = 5501;
 const REPO_FULL_NAME = "octo-org/widget";
 
-function pullRequestPayload(action: "opened" | "synchronize" | "ready_for_review" | "closed", overrides: Record<string, unknown> = {}) {
+function pullRequestPayload(
+  action: "opened" | "synchronize" | "ready_for_review" | "closed",
+  overrides: Record<string, unknown> = {},
+) {
   const headSha = (overrides.headSha as string) ?? "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
   // Top-level overrides are applied BEFORE the pull_request block is built, so
   // a partial `pull_request` override (e.g. `{ draft: true }`) deep-merges over
@@ -122,7 +124,11 @@ function commentPayload(body: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function installationPayload(installationId: number, accountLogin: string, repos: Array<{ id: number; full_name: string }>) {
+function installationPayload(
+  installationId: number,
+  accountLogin: string,
+  repos: Array<{ id: number; full_name: string }>,
+) {
   return {
     action: "created",
     installation: { id: installationId, account: { login: accountLogin } },
@@ -223,15 +229,11 @@ describe("review ingestion", () => {
   });
 
   test("pull_request.opened persists installation, repository, PR, review (queued) and enqueues the job", async () => {
-    await receiveDelivery(
-      probot,
-      "pull_request",
-      "opened",
-      pullRequestPayload("opened"),
-      "delivery-opened-1",
-    );
+    await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-opened-1");
 
-    const installation = await prisma.installation.findUnique({ where: { githubInstallationId: BigInt(INSTALLATION_ID) } });
+    const installation = await prisma.installation.findUnique({
+      where: { githubInstallationId: BigInt(INSTALLATION_ID) },
+    });
     expect(installation?.status).toBe("active");
 
     const repository = await prisma.repository.findUnique({ where: { githubRepositoryId: BigInt(REPOSITORY_ID) } });
@@ -247,7 +249,9 @@ describe("review ingestion", () => {
     expect(review!.schemaVersion).toBe(1);
 
     const job = await prisma.reviewJob.findFirst({ where: { reviewId: review!.id } });
-    expect(job?.jobKey).toBe(`${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:standard`);
+    expect(job?.jobKey).toBe(
+      `${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:standard`,
+    );
     // Redis is up in the integration environment: the outbox publishes immediately.
     expect(job?.status).toBe("enqueued");
 
@@ -274,7 +278,13 @@ describe("review ingestion", () => {
 
   test("same commit delivered with a new delivery id does not create a second review (identity)", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-id-1");
-    const result = await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-id-2");
+    const result = await receiveDelivery(
+      probot,
+      "pull_request",
+      "opened",
+      pullRequestPayload("opened"),
+      "delivery-id-2",
+    );
 
     const reviews = await prisma.review.findMany();
     expect(reviews).toHaveLength(1);
@@ -325,7 +335,13 @@ describe("review ingestion", () => {
   });
 
   test("ready_for_review triggers a review with the ready_for_review trigger", async () => {
-    await receiveDelivery(probot, "pull_request", "ready_for_review", pullRequestPayload("ready_for_review"), "delivery-rfr-1");
+    await receiveDelivery(
+      probot,
+      "pull_request",
+      "ready_for_review",
+      pullRequestPayload("ready_for_review"),
+      "delivery-rfr-1",
+    );
 
     const review = await prisma.review.findFirstOrThrow();
     expect(review.trigger).toBe("ready_for_review");
@@ -376,13 +392,7 @@ describe("review ingestion", () => {
     expect(await prisma.review.count()).toBe(1);
 
     // /review on the same head SHA: forced re-review must be created anyway.
-    await receiveDelivery(
-      probot,
-      "issue_comment",
-      "created",
-      commentPayload("/review"),
-      "delivery-cmd-1",
-    );
+    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review"), "delivery-cmd-1");
 
     const reviews = await prisma.review.findMany({ orderBy: { createdAt: "asc" } });
     expect(reviews).toHaveLength(2);
@@ -395,7 +405,9 @@ describe("review ingestion", () => {
     const manualJob = await prisma.reviewJob.findFirstOrThrow({ where: { reviewId: manual.id } });
     expect(manualJob.status).toBe("enqueued");
     expect(manual.reviewType).toBe("handbook");
-    expect(manualJob.jobKey).toBe(`${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:handbook:a1`);
+    expect(manualJob.jobKey).toBe(
+      `${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:handbook:a1`,
+    );
   });
 
   test("repeated /review comments create one fresh review per command", async () => {
@@ -414,7 +426,13 @@ describe("review ingestion", () => {
 
   test("/review type:handbook ingests a handbook review with its own attempt counter", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-handbook-open-1");
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:handbook"), "delivery-handbook-1");
+    await receiveDelivery(
+      probot,
+      "issue_comment",
+      "created",
+      commentPayload("/review type:handbook"),
+      "delivery-handbook-1",
+    );
 
     const reviews = await prisma.review.findMany({ orderBy: { createdAt: "asc" } });
     expect(reviews).toHaveLength(2);
@@ -423,11 +441,22 @@ describe("review ingestion", () => {
     expect(handbook.trigger).toBe("manual");
     expect(handbook.attempt).toBe(1);
     const job = await prisma.reviewJob.findFirstOrThrow({ where: { reviewId: handbook.id } });
-    expect(job.jobKey).toBe(`${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:handbook:a1`);
+    expect(job.jobKey).toBe(
+      `${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:handbook:a1`,
+    );
 
     // Repeating the handbook command increments the handbook attempt counter.
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review handbook"), "delivery-handbook-2");
-    const handbookReviews = await prisma.review.findMany({ where: { reviewType: "handbook" }, orderBy: { createdAt: "asc" } });
+    await receiveDelivery(
+      probot,
+      "issue_comment",
+      "created",
+      commentPayload("/review handbook"),
+      "delivery-handbook-2",
+    );
+    const handbookReviews = await prisma.review.findMany({
+      where: { reviewType: "handbook" },
+      orderBy: { createdAt: "asc" },
+    });
     expect(handbookReviews.map((r) => r.attempt)).toEqual([1, 2]);
   });
 
@@ -436,7 +465,13 @@ describe("review ingestion", () => {
     // An explicit standard /review creates a standard review (attempt 1, forced).
     await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review standard"), "delivery-types-1");
     // A handbook review of the SAME head SHA is an independent identity.
-    await receiveDelivery(probot, "issue_comment", "created", commentPayload("/review type:handbook"), "delivery-types-2");
+    await receiveDelivery(
+      probot,
+      "issue_comment",
+      "created",
+      commentPayload("/review type:handbook"),
+      "delivery-types-2",
+    );
 
     const reviews = await prisma.review.findMany();
     expect(reviews).toHaveLength(3);
@@ -541,7 +576,13 @@ describe("review ingestion", () => {
   });
 
   test("manual ingestion creates a manual review and status lookup reports job + transitions", async () => {
-    await receiveDelivery(probot, "installation", "created", installationPayload(9903, "octo-org", [{ id: 6603, full_name: "octo-org/gamma" }]), "delivery-manual-0");
+    await receiveDelivery(
+      probot,
+      "installation",
+      "created",
+      installationPayload(9903, "octo-org", [{ id: 6603, full_name: "octo-org/gamma" }]),
+      "delivery-manual-0",
+    );
 
     // Seed a PR for the repository (manual ingestion reviews an existing PR).
     const repository = await prisma.repository.findUniqueOrThrow({ where: { githubRepositoryId: BigInt(6603) } });
@@ -565,7 +606,11 @@ describe("review ingestion", () => {
 
     // Manual ingestion accepts a review type (§4.1): same PR/SHA, independent
     // identity.
-    const skillResult = await ingestManualReview({ repository: "octo-org/gamma", pullRequestNumber: 7, reviewType: "skill" });
+    const skillResult = await ingestManualReview({
+      repository: "octo-org/gamma",
+      pullRequestNumber: 7,
+      reviewType: "skill",
+    });
     expect(skillResult.outcome).toBe("created");
     const skillReview = await prisma.review.findUniqueOrThrow({ where: { id: skillResult.reviewId! } });
     expect(skillReview.reviewType).toBe("skill");
@@ -587,7 +632,13 @@ describe("review ingestion", () => {
 describe("review state machine", () => {
   test("rejects transitions out of terminal states", async () => {
     const repository = await prisma.repository.create({
-      data: { githubRepositoryId: BigInt(7701), installationId: (await prisma.installation.create({ data: { githubInstallationId: BigInt(8801), organization: "org" } })).id, fullName: "org/terminal" },
+      data: {
+        githubRepositoryId: BigInt(7701),
+        installationId: (
+          await prisma.installation.create({ data: { githubInstallationId: BigInt(8801), organization: "org" } })
+        ).id,
+        fullName: "org/terminal",
+      },
     });
     const pullRequest = await prisma.pullRequest.create({
       data: { repositoryId: repository.id, githubPrNumber: 1, headSha: "eeee5555eeee5555eeee5555eeee5555eeee5555" },
@@ -624,7 +675,10 @@ describe("review state machine", () => {
     });
     const moved = await transitionReviewState(review2.id, "preparing" as ReviewState);
     expect(moved.state).toBe("preparing");
-    const transitions = await prisma.reviewStateTransition.findMany({ where: { reviewId: review2.id }, orderBy: { createdAt: "asc" } });
+    const transitions = await prisma.reviewStateTransition.findMany({
+      where: { reviewId: review2.id },
+      orderBy: { createdAt: "asc" },
+    });
     expect(transitions.map((t) => t.toState)).toEqual(["preparing"]);
   });
 });

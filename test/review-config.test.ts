@@ -102,9 +102,7 @@ describe("reviewConfigSchema (strict validation)", () => {
   it("defaults agent tracing to disabled with the pinned OpenTelemetry plugin", () => {
     const config = validateRawConfig(validConfig());
     expect(config.observability.agentTracing.enabled).toBe(false);
-    expect(config.observability.agentTracing.plugin).toBe(
-      "@devtheops/opencode-plugin-otel@2.1.0",
-    );
+    expect(config.observability.agentTracing.plugin).toBe("@devtheops/opencode-plugin-otel@2.1.0");
     expect(config.observability.agentTracing.options).toEqual({});
   });
 
@@ -138,15 +136,15 @@ describe("reviewConfigSchema (strict validation)", () => {
   });
 
   it("rejects the removed langfuse block", () => {
-    expect(() =>
-      validateRawConfig(validConfig({ observability: { langfuse: { enabled: true } } })),
-    ).toThrow(/Invalid review configuration/);
+    expect(() => validateRawConfig(validConfig({ observability: { langfuse: { enabled: true } } }))).toThrow(
+      /Invalid review configuration/,
+    );
   });
 
   it("rejects a missing required provider block", () => {
-    expect(() =>
-      validateRawConfig({ schemaVersion: 1, github: { organization: "acme" } }),
-    ).toThrow(/Invalid review configuration/);
+    expect(() => validateRawConfig({ schemaVersion: 1, github: { organization: "acme" } })).toThrow(
+      /Invalid review configuration/,
+    );
   });
 
   it("rejects a missing github.organization", () => {
@@ -160,43 +158,33 @@ describe("reviewConfigSchema (strict validation)", () => {
   });
 
   it("rejects an invalid enum value", () => {
-    expect(() =>
-      validateRawConfig(validConfig({ execution: { mode: "full-root" } })),
-    ).toThrow(/Invalid review configuration/);
+    expect(() => validateRawConfig(validConfig({ execution: { mode: "full-root" } }))).toThrow(
+      /Invalid review configuration/,
+    );
   });
 
   it("rejects invalid numeric limits (out-of-range confidence)", () => {
     expect(() =>
-      validateRawConfig(
-        validConfig({ review: { confidence: { minimumInline: 1.5, minimumVerified: 0.8 } } }),
-      ),
+      validateRawConfig(validConfig({ review: { confidence: { minimumInline: 1.5, minimumVerified: 0.8 } } })),
     ).toThrow(/Invalid review configuration/);
   });
 
   it("rejects minimumInline < minimumVerified", () => {
     expect(() =>
-      validateRawConfig(
-        validConfig({ review: { confidence: { minimumInline: 0.5, minimumVerified: 0.9 } } }),
-      ),
+      validateRawConfig(validConfig({ review: { confidence: { minimumInline: 0.5, minimumVerified: 0.9 } } })),
     ).toThrow(/minimumInline must be >= review\.confidence\.minimumVerified/);
   });
 
   it("rejects sandbox mode without an enabled sandbox", () => {
-    expect(() =>
-      validateRawConfig(validConfig({ execution: { mode: "sandbox" } })),
-    ).toThrow(/sandbox/);
+    expect(() => validateRawConfig(validConfig({ execution: { mode: "sandbox" } }))).toThrow(/sandbox/);
   });
 
   it("rejects an unsupported schemaVersion", () => {
-    expect(() => validateRawConfig(validConfig({ schemaVersion: 2 }))).toThrow(
-      /unsupported schemaVersion/,
-    );
+    expect(() => validateRawConfig(validConfig({ schemaVersion: 2 }))).toThrow(/unsupported schemaVersion/);
   });
 
   it("rejects unknown top-level keys (strict mode)", () => {
-    expect(() => validateRawConfig(validConfig({ notASection: true }))).toThrow(
-      /Invalid review configuration/,
-    );
+    expect(() => validateRawConfig(validConfig({ notASection: true }))).toThrow(/Invalid review configuration/);
   });
 
   it("strips the editor-only $schema key before validation", () => {
@@ -220,26 +208,17 @@ describe("agent runtime selection", () => {
   });
 
   it("accepts the OpenCode SDK runtime", () => {
-    const parsed = reviewConfigSchema.parse(
-      validConfig({ agent: { runtime: { type: "opencode-sdk" } } }),
-    );
+    const parsed = reviewConfigSchema.parse(validConfig({ agent: { runtime: { type: "opencode-sdk" } } }));
     expect(parsed.agent.runtime.type).toBe("opencode-sdk");
   });
 
   it("rejects an unknown runtime type", () => {
-    expect(() =>
-      reviewConfigSchema.parse(
-        validConfig({ agent: { runtime: { type: "opencode-http" } } }),
-      ),
-    ).toThrow();
+    expect(() => reviewConfigSchema.parse(validConfig({ agent: { runtime: { type: "opencode-http" } } }))).toThrow();
   });
 
   it("mirrors the runtime enum in the JSON Schema", () => {
     const schema = JSON.parse(
-      readFileSync(
-        join(__dirname, "../config/schemas/review-config-v1.schema.json"),
-        "utf8",
-      ),
+      readFileSync(join(__dirname, "../config/schemas/review-config-v1.schema.json"), "utf8"),
     ) as {
       properties: {
         agent: {
@@ -266,9 +245,7 @@ describe("secret hygiene", () => {
   it("rejects embedded secret values", () => {
     expect(() => checkForEmbeddedSecrets({ apiKey: "sk-live-123" })).toThrow(EmbeddedSecretError);
     expect(() => checkForEmbeddedSecrets({ webhook_secret: "whsec" })).toThrow(EmbeddedSecretError);
-    expect(() => checkForEmbeddedSecrets({ provider: { token: 12345 } })).toThrow(
-      EmbeddedSecretError,
-    );
+    expect(() => checkForEmbeddedSecrets({ provider: { token: 12345 } })).toThrow(EmbeddedSecretError);
   });
 
   it("allows the apiKeyEnv indirection (env var NAME, not a secret)", () => {
@@ -295,9 +272,7 @@ describe("env var resolution", () => {
   });
 
   it("throws a clear error when a required variable is missing", () => {
-    expect(() => loadReviewConfig(track(validConfig()).path, { env: {} })).toThrow(
-      MissingEnvVarError,
-    );
+    expect(() => loadReviewConfig(track(validConfig()).path, { env: {} })).toThrow(MissingEnvVarError);
     try {
       loadReviewConfig(track(validConfig()).path, { env: {} });
     } catch (error) {
@@ -335,11 +310,11 @@ describe("mandatory security policies", () => {
 
   it("raise confidence floors", () => {
     const config = applyMandatorySecurityPolicies(
-      validateRawConfig(
-        validConfig({ review: { confidence: { minimumInline: 0.5, minimumVerified: 0.5 } } }),
-      ),
+      validateRawConfig(validConfig({ review: { confidence: { minimumInline: 0.5, minimumVerified: 0.5 } } })),
     );
-    expect(config.review.confidence.minimumInline).toBe(MANDATORY_SECURITY_POLICIES.floors["review.confidence.minimumInline"]);
+    expect(config.review.confidence.minimumInline).toBe(
+      MANDATORY_SECURITY_POLICIES.floors["review.confidence.minimumInline"],
+    );
     expect(config.review.confidence.minimumVerified).toBe(0.5);
   });
 });
@@ -351,38 +326,32 @@ describe("mandatory security policies", () => {
 describe("repository overrides", () => {
   it("allow listed sections and re-apply security policies", () => {
     const base = validateRawConfig(validConfig());
-    const patched = resolveRepositoryOverrides(
-      base,
-      { "review.severity": ["critical", "high"] },
-      { env: ENV },
-    );
+    const patched = resolveRepositoryOverrides(base, { "review.severity": ["critical", "high"] }, { env: ENV });
     expect(patched.review.severity).toEqual(["critical", "high"]);
     expect(patched.provider.failurePolicy).toBe("fail-immediately");
   });
 
   it("reject overrides outside the allowlist", () => {
     const base = validateRawConfig(validConfig());
-    expect(() =>
-      resolveRepositoryOverrides(base, { "provider.model": "other" }, { env: ENV }),
-    ).toThrow(/not permitted/);
+    expect(() => resolveRepositoryOverrides(base, { "provider.model": "other" }, { env: ENV })).toThrow(
+      /not permitted/,
+    );
   });
 
   it("reject overrides when repositoryOverrides are disabled", () => {
-    const base = validateRawConfig(
-      validConfig({ configuration: { repositoryOverrides: { enabled: false } } }),
+    const base = validateRawConfig(validConfig({ configuration: { repositoryOverrides: { enabled: false } } }));
+    expect(() => resolveRepositoryOverrides(base, { "review.severity": ["critical"] }, { env: ENV })).toThrow(
+      /disabled/,
     );
-    expect(() =>
-      resolveRepositoryOverrides(base, { "review.severity": ["critical"] }, { env: ENV }),
-    ).toThrow(/disabled/);
   });
 
   it("cannot allowlist a mandatory security path", () => {
     const base = validateRawConfig(
       validConfig({ configuration: { repositoryOverrides: { allowedSections: ["provider"] } } }),
     );
-    expect(() =>
-      resolveRepositoryOverrides(base, { "provider.model": "other" }, { env: ENV }),
-    ).toThrow(/mandatory security policy/);
+    expect(() => resolveRepositoryOverrides(base, { "provider.model": "other" }, { env: ENV })).toThrow(
+      /mandatory security policy/,
+    );
   });
 });
 
@@ -453,9 +422,7 @@ describe("updateReviewConfig", () => {
     const lkgBefore = readFileSync(fixture.path + LAST_KNOWN_GOOD_SUFFIX, "utf8");
 
     const invalid = validConfig({ schemaVersion: 2 });
-    expect(() => updateReviewConfig(fixture.path, invalid, { env: ENV })).toThrow(
-      /unsupported schemaVersion/,
-    );
+    expect(() => updateReviewConfig(fixture.path, invalid, { env: ENV })).toThrow(/unsupported schemaVersion/);
 
     expect(readFileSync(fixture.path, "utf8")).toBe(before);
     expect(readFileSync(fixture.path + LAST_KNOWN_GOOD_SUFFIX, "utf8")).toBe(lkgBefore);

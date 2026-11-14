@@ -143,7 +143,10 @@ export function scoreComplexity(workspace: WorkspaceResult, config: ReviewConfig
     RISKY_KEYWORDS,
   );
   const concurrencyMatches = countKeywordMatches(stats.bodyLines, CONCURRENCY_KEYWORDS);
-  const dataMatches = countKeywordMatches([...stats.bodyLines, ...workspace.changedFiles.map((f) => f.path)], DATA_KEYWORDS);
+  const dataMatches = countKeywordMatches(
+    [...stats.bodyLines, ...workspace.changedFiles.map((f) => f.path)],
+    DATA_KEYWORDS,
+  );
 
   const raw: Record<ComplexityFactorName, { subscore: number; detail: string }> = {
     diffSize: {
@@ -188,7 +191,10 @@ export function scoreComplexity(workspace: WorkspaceResult, config: ReviewConfig
     detail: raw[name].detail,
   }));
 
-  const score = Math.min(10, factors.reduce((sum, f) => sum + f.contribution, 0));
+  const score = Math.min(
+    10,
+    factors.reduce((sum, f) => sum + f.contribution, 0),
+  );
   const thresholds = config.review.complexity.thresholds;
   const tier: ComplexityTier = score < thresholds.low ? "low" : score < thresholds.medium ? "medium" : "high";
   return { score: Math.round(score * 100) / 100, tier, factors };

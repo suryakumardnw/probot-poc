@@ -8,12 +8,7 @@
   "github": {
     "organization": "YOUR_ORGANIZATION",
     "installationScope": "organization",
-    "events": [
-      "opened",
-      "synchronize",
-      "ready_for_review",
-      "issue_comment"
-    ],
+    "events": ["opened", "synchronize", "ready_for_review", "issue_comment"],
     "manualCommand": "/review",
     "defaultReviewType": "handbook",
     "draftPullRequests": {
@@ -68,13 +63,7 @@
         "maxChars": 20000
       }
     },
-    "severity": [
-      "critical",
-      "high",
-      "medium",
-      "low",
-      "informational"
-    ],
+    "severity": ["critical", "high", "medium", "low", "informational"],
     "confidence": {
       "minimumInline": 0.85,
       "minimumVerified": 0.8
@@ -125,13 +114,7 @@
       "maxOutputTokens": 8192
     },
     "tools": {
-      "enabled": [
-        "read_file",
-        "search_code",
-        "list_files",
-        "inspect_symbols",
-        "get_diff"
-      ],
+      "enabled": ["read_file", "search_code", "list_files", "inspect_symbols", "get_diff"],
       "permissionPolicy": "allowlist"
     }
   },
@@ -148,11 +131,7 @@
   "execution": {
     "mode": "static-analysis",
     "commands": {
-      "allowlist": [
-        "git",
-        "grep",
-        "find"
-      ],
+      "allowlist": ["git", "grep", "find"],
       "allowTests": false,
       "allowBuilds": false,
       "allowPackageScripts": false
@@ -199,10 +178,7 @@
       "ref": "main",
       "technologyRefs": [
         {
-          "technologies": [
-            "typescript",
-            "nodejs"
-          ],
+          "technologies": ["typescript", "nodejs"],
           "ref": "feat/CU-86bcdv1c9-typescript-guidelines"
         }
       ],
@@ -236,12 +212,7 @@
     "reloadStrategy": "manual",
     "repositoryOverrides": {
       "enabled": true,
-      "allowedSections": [
-        "review.categories",
-        "review.severity",
-        "review.reporting",
-        "review.strategy"
-      ]
+      "allowedSections": ["review.categories", "review.severity", "review.reporting", "review.strategy"]
     },
     "validation": {
       "strict": true,

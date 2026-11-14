@@ -111,7 +111,11 @@ export function readSessionCookie(cookieHeader: string | undefined): string | un
  * Resolve a valid, unexpired session from the request cookie. Verifies the
  * HMAC signature before any lookup and prunes expired entries.
  */
-export function getSessionFromCookie(cookieValue: string | undefined, env: Env, now: number = Date.now()): AdminSession | null {
+export function getSessionFromCookie(
+  cookieValue: string | undefined,
+  env: Env,
+  now: number = Date.now(),
+): AdminSession | null {
   if (!cookieValue || !env.SESSION_SECRET) return null;
   const dot = cookieValue.lastIndexOf(".");
   if (dot <= 0) return null;

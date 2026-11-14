@@ -1,19 +1,14 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, test } from "vitest";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
-import { ExecutionService } from "../src/execution/index.js";
 import { DockerSandboxExecutor, DEFAULT_SANDBOX_IMAGE } from "../src/execution/docker-executor.js";
-import { LocalSandboxExecutor } from "../src/execution/local-executor.js";
+import { ExecutionService } from "../src/execution/index.js";
 import { evaluateCommand } from "../src/execution/policy.js";
-import {
-  ExecutionPolicyError,
-  type CommandRequest,
-  type ReviewExecutionConfig,
-} from "../src/execution/types.js";
+import { ExecutionPolicyError, type CommandRequest, type ReviewExecutionConfig } from "../src/execution/types.js";
+import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 
 /**
  * Ticket 11 integration tests: secure execution and resource isolation.
@@ -85,9 +80,7 @@ afterAll(async () => {
 // 1. Allowed command -----------------------------------------------------------
 
 test("allowlisted command executes with argv-only semantics and exits cleanly", async () => {
-  const result = await service.runCommand(
-    request({ command: "grep", args: ["-c", "", "file.txt"] }),
-  );
+  const result = await service.runCommand(request({ command: "grep", args: ["-c", "", "file.txt"] }));
   expect(result.decision).toBe("allowed");
   expect(result.reason).toBe("ok");
   expect(result.exitCode).toBe(0);
@@ -97,9 +90,7 @@ test("allowlisted command executes with argv-only semantics and exits cleanly", 
 });
 
 test("git log works inside the workspace with hardened env", async () => {
-  const result = await service.runCommand(
-    request({ command: "git", args: ["--version"] }),
-  );
+  const result = await service.runCommand(request({ command: "git", args: ["--version"] }));
   expect(result.decision).toBe("allowed");
   expect(result.stdout).toMatch(/^git version/);
 });
@@ -213,21 +204,15 @@ test("reading the repository .env file is denied (cat not allowlisted)", async (
 });
 
 test("grep on the GitHub private key path is confined to the workspace", async () => {
-  const hostFile = await service.runCommand(
-    request({ command: "grep", args: ["BEGIN", "/etc/passwd"] }),
-  );
+  const hostFile = await service.runCommand(request({ command: "grep", args: ["BEGIN", "/etc/passwd"] }));
   expect(hostFile.decision).toBe("denied");
   expect(hostFile.reason).toBe("path_escape");
 
-  const privateKey = await service.runCommand(
-    request({ command: "grep", args: ["PRIVATE KEY", "../id_rsa"] }),
-  );
+  const privateKey = await service.runCommand(request({ command: "grep", args: ["PRIVATE KEY", "../id_rsa"] }));
   expect(privateKey.decision).toBe("denied");
   expect(privateKey.reason).toBe("path_escape");
 
-  const homeEscape = await service.runCommand(
-    request({ command: "grep", args: ["x", "~/.ssh/id_rsa"] }),
-  );
+  const homeEscape = await service.runCommand(request({ command: "grep", args: ["x", "~/.ssh/id_rsa"] }));
   expect(homeEscape.decision).toBe("denied");
   expect(homeEscape.reason).toBe("path_escape");
 });
@@ -239,9 +224,7 @@ test("find over host roots is rejected", async () => {
 });
 
 test("workspace traversal via .. is rejected", async () => {
-  const result = await service.runCommand(
-    request({ command: "grep", args: ["hello", "../../.env"] }),
-  );
+  const result = await service.runCommand(request({ command: "grep", args: ["hello", "../../.env"] }));
   expect(result.decision).toBe("denied");
   expect(result.reason).toBe("path_escape");
 });
@@ -250,15 +233,11 @@ test("shell execution is never allowlisted by default", async () => {
   // Even with argv-only execution, a shell in the allowlist would accept
   // arbitrary strings after -c — so sh/bash are structurally kept off the
   // default allowlist and denied here.
-  const result = await service.runCommand(
-    request({ command: "sh", args: ["-c", "printenv DATABASE_URL"] }),
-  );
+  const result = await service.runCommand(request({ command: "sh", args: ["-c", "printenv DATABASE_URL"] }));
   expect(result.decision).toBe("denied");
   expect(result.reason).toBe("not_allowlisted");
 
-  const nul = await service.runCommand(
-    request({ command: "grep", args: ["a\u0000b"] }),
-  );
+  const nul = await service.runCommand(request({ command: "grep", args: ["a\u0000b"] }));
   expect(nul.decision).toBe("denied");
   expect(nul.reason).toBe("invalid_arg");
 });
@@ -303,10 +282,7 @@ test("audit rows never contain output content", async () => {
 
 // 6. Docker sandbox (skipped when Docker is unavailable) -------------------------
 
-docker.test(
-  "sandboxed static-analysis command runs as non-root with no network",
-  { timeout: 120_000 },
-  async () => {
+docker.test("sandboxed static-analysis command runs as non-root with no network", { timeout: 120_000 }, async () => {
   const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE });
   await executor.ensureImage();
   const cfg = execConfig({
@@ -314,20 +290,14 @@ docker.test(
     sandbox: { enabled: true, networkMode: "none", allowedDomains: [], runAsNonRoot: true },
   });
   const { policy } = evaluateCommand(cfg, request({ command: "grep", args: ["hello", "file.txt"] }));
-  const result = await executor.execute(
-    request({ command: "grep", args: ["hello", "file.txt"] }),
-    policy,
-  );
+  const result = await executor.execute(request({ command: "grep", args: ["hello", "file.txt"] }), policy);
   expect(result.decision).toBe("allowed");
   expect(result.sandboxed).toBe(true);
   expect(result.terminated).toBe(true);
   expect(result.stdout).toContain("hello world");
 });
 
-docker.test(
-  "sandbox blocks all network egress in networkMode none",
-  { timeout: 120_000 },
-  async () => {
+docker.test("sandbox blocks all network egress in networkMode none", { timeout: 120_000 }, async () => {
   const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE });
   await executor.ensureImage();
   const cfg = execConfig({
@@ -347,24 +317,22 @@ docker.test(
   "allowlist networkMode fails closed to none without a configured network",
   { timeout: 120_000 },
   async () => {
-  const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE, networkName: undefined });
-  await executor.ensureImage();
-  const cfg = execConfig({
-    mode: "sandbox",
-    sandbox: { enabled: true, networkMode: "allowlist", allowedDomains: ["example.com"], runAsNonRoot: true },
-    commands: { ...execConfig().commands, allowlist: ["wget"], allowTests: true },
-  });
-  const req = request({ command: "wget", args: ["-T", "3", "-q", "-O", "-", "http://example.com"] });
-  const { policy } = evaluateCommand(cfg, req);
-  const result = await executor.execute(req, policy);
-  expect(result.decision).toBe("error");
-  expect(result.detail).toContain("network_not_enforced");
-});
+    const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE, networkName: undefined });
+    await executor.ensureImage();
+    const cfg = execConfig({
+      mode: "sandbox",
+      sandbox: { enabled: true, networkMode: "allowlist", allowedDomains: ["example.com"], runAsNonRoot: true },
+      commands: { ...execConfig().commands, allowlist: ["wget"], allowTests: true },
+    });
+    const req = request({ command: "wget", args: ["-T", "3", "-q", "-O", "-", "http://example.com"] });
+    const { policy } = evaluateCommand(cfg, req);
+    const result = await executor.execute(req, policy);
+    expect(result.decision).toBe("error");
+    expect(result.detail).toContain("network_not_enforced");
+  },
+);
 
-docker.test(
-  "sandboxed command cannot read host files outside the mount",
-  { timeout: 120_000 },
-  async () => {
+docker.test("sandboxed command cannot read host files outside the mount", { timeout: 120_000 }, async () => {
   const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE });
   await executor.ensureImage();
   const cfg = execConfig({

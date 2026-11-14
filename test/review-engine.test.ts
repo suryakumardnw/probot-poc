@@ -1,19 +1,7 @@
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
-import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
-import { scoreComplexity, parseDiffStats } from "../src/review-engine/complexity.js";
-import { createReviewPlan, skippedStageIds } from "../src/review-engine/plan.js";
-import {
-  RetrievalBudget,
-  fulfillToolRequests,
-  parseToolRequests,
-  renderToolContext,
-} from "../src/review-engine/tools.js";
-import { reviewResultSchema, analysisOutputSchema } from "../src/review-engine/result-schema.js";
-import { runReview } from "../src/review-engine/engine.js";
-import { ReviewEngineError } from "../src/review-engine/types.js";
+import { describe, expect, test } from "vitest";
 import {
   AgentRuntimeError,
   type AgentRuntime,
@@ -21,6 +9,18 @@ import {
   type AgentSessionOptions,
   type AgentTask,
 } from "../src/agent/types.js";
+import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
+import { scoreComplexity, parseDiffStats } from "../src/review-engine/complexity.js";
+import { runReview } from "../src/review-engine/engine.js";
+import { createReviewPlan, skippedStageIds } from "../src/review-engine/plan.js";
+import { reviewResultSchema, analysisOutputSchema } from "../src/review-engine/result-schema.js";
+import {
+  RetrievalBudget,
+  fulfillToolRequests,
+  parseToolRequests,
+  renderToolContext,
+} from "../src/review-engine/tools.js";
+import { ReviewEngineError } from "../src/review-engine/types.js";
 import type { ChangedFile } from "../src/workspace/files.js";
 import type { WorkspaceResult } from "../src/workspace/workspace.js";
 
@@ -268,13 +268,22 @@ describe("complexity scoring", () => {
 
   test("weights are configurable (zero weights → zero score)", () => {
     const zero = makeConfig({
-      review: { complexity: { weights: { diffSize: 0, changedFiles: 0, structural: 0, dependencyImpact: 0, riskyCode: 0, concurrency: 0, dataIntegrity: 0 } } },
+      review: {
+        complexity: {
+          weights: {
+            diffSize: 0,
+            changedFiles: 0,
+            structural: 0,
+            dependencyImpact: 0,
+            riskyCode: 0,
+            concurrency: 0,
+            dataIntegrity: 0,
+          },
+        },
+      },
     });
     const diff = makeDiff([{ path: "src/auth/x.ts", before: ["a"], after: ["transaction(secret)"] }]);
-    const score = scoreComplexity(
-      workspace("/tmp", diff, [{ path: "src/auth/x.ts", status: "modified" }]),
-      zero,
-    );
+    const score = scoreComplexity(workspace("/tmp", diff, [{ path: "src/auth/x.ts", status: "modified" }]), zero);
     expect(score.score).toBe(0);
     expect(score.tier).toBe("low");
   });
@@ -324,7 +333,10 @@ describe("review plan", () => {
 
   test("verifyFindings=false skips verification with a config justification", () => {
     const cfg = makeConfig({ review: { strategy: { verifyFindings: false } } });
-    const complexity = scoreComplexity(workspace("/tmp", "diff --git a/x b/x", [{ path: "x", status: "modified" }]), cfg);
+    const complexity = scoreComplexity(
+      workspace("/tmp", "diff --git a/x b/x", [{ path: "x", status: "modified" }]),
+      cfg,
+    );
     const plan = createReviewPlan(complexity, cfg);
     const verification = plan.stages.find((s) => s.id === "finding-verification")!;
     expect(verification.enabled).toBe(false);
@@ -339,7 +351,10 @@ describe("review plan", () => {
         after: Array.from({ length: 40 }, (_, j) => `await transaction(saveSession(user${j}, token)); // auth`),
       })),
     );
-    const { complexity, plan } = planFor(diff, Array.from({ length: 12 }, (_, i) => ({ path: `module${i}/service.ts`, status: "modified" as const })));
+    const { complexity, plan } = planFor(
+      diff,
+      Array.from({ length: 12 }, (_, i) => ({ path: `module${i}/service.ts`, status: "modified" as const })),
+    );
     expect(complexity.tier).toBe("high");
     expect(skippedStageIds(plan)).toEqual([]);
     expect(plan.budgets.maxModelCalls).toBe(6);
@@ -538,13 +553,7 @@ describe("tool-request protocol", () => {
   test("list_files and get_diff are fulfilled inside the workspace", async () => {
     const dir = await makeWorkspaceDir({ "src/a.ts": "A\n", "src/b.ts": "B\n" });
     const budget = new RetrievalBudget(10);
-    const requests = parseToolRequests(
-      [
-        { tool: "list_files", path: "src" },
-        { tool: "get_diff" },
-      ],
-      budget,
-    );
+    const requests = parseToolRequests([{ tool: "list_files", path: "src" }, { tool: "get_diff" }], budget);
     const results = await fulfillToolRequests(dir, requests, budget, "diff --git a/x b/x", 1_000_000);
     expect(results[0]).toMatchObject({ ok: true });
     expect((results[0] as { content: string }).content).toBe("a.ts\nb.ts");
@@ -732,9 +741,15 @@ describe("review result schema", () => {
   });
 
   test("out-of-range confidence and unknown enum values are rejected", () => {
-    expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ confidence: 1.5 })] }).success).toBe(false);
-    expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ category: "vibes" })] }).success).toBe(false);
-    expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ line: 0 })] }).success).toBe(false);
+    expect(
+      reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ confidence: 1.5 })] }).success,
+    ).toBe(false);
+    expect(
+      reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ category: "vibes" })] }).success,
+    ).toBe(false);
+    expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding({ line: 0 })] }).success).toBe(
+      false,
+    );
   });
 
   test("extra keys are rejected (strict boundary)", () => {
@@ -799,7 +814,10 @@ describe("runReview (fake runtime)", () => {
       () => reportingResponse({ summary: "Clean change, no issues found." }),
     ];
     const config = makeConfig();
-    const { result, meta } = await runReview(input(workspace(dir, diff, [{ path: "src/index.ts", status: "modified" }])), { runtime, config });
+    const { result, meta } = await runReview(
+      input(workspace(dir, diff, [{ path: "src/index.ts", status: "modified" }])),
+      { runtime, config },
+    );
 
     expect(result.schemaVersion).toBe(1);
     expect(result.findings).toEqual([]);
@@ -839,15 +857,17 @@ describe("runReview (fake runtime)", () => {
   test("findings without evidence are rejected at the boundary", async () => {
     const dir = await makeWorkspaceDir({ "src/utils.ts": "code\n" });
     const runtime = new FakeRuntime();
-    runtime.responders = [
-      () => analysisResponse(),
-      () => reportingResponse({ findings: [finding({ evidence: [] })] }),
-    ];
+    runtime.responders = [() => analysisResponse(), () => reportingResponse({ findings: [finding({ evidence: [] })] })];
     await expect(
-      runReview(input(workspace(dir, "diff --git a/src/utils.ts b/src/utils.ts", [{ path: "src/utils.ts", status: "modified" }])), {
-        runtime,
-        config: makeConfig(),
-      }),
+      runReview(
+        input(
+          workspace(dir, "diff --git a/src/utils.ts b/src/utils.ts", [{ path: "src/utils.ts", status: "modified" }]),
+        ),
+        {
+          runtime,
+          config: makeConfig(),
+        },
+      ),
     ).rejects.toMatchObject({ code: "invalid_output" });
     await fsp.rm(dir, { recursive: true, force: true });
   });
@@ -925,10 +945,13 @@ describe("runReview (fake runtime)", () => {
       () => analysisResponse({ conventions: ["vitest", "pino logging"] }),
       () => reportingResponse({ conventions: ["pino logging", "strict TS"] }),
     ];
-    const { result } = await runReview(input(workspace(dir, "diff --git a/x b/x", [{ path: "x", status: "modified" }])), {
-      runtime,
-      config: makeConfig(),
-    });
+    const { result } = await runReview(
+      input(workspace(dir, "diff --git a/x b/x", [{ path: "x", status: "modified" }])),
+      {
+        runtime,
+        config: makeConfig(),
+      },
+    );
     expect(result.conventions).toEqual(["vitest", "pino logging", "strict TS"]);
     await fsp.rm(dir, { recursive: true, force: true });
   });
@@ -970,10 +993,10 @@ describe("runReview (fake runtime)", () => {
         }),
       () => reportingResponse(),
     ];
-    const { meta } = await runReview(
-      input(workspace(dir, diff, [{ path: "src/auth/utils.ts", status: "modified" }])),
-      { runtime, config: makeConfig() },
-    );
+    const { meta } = await runReview(input(workspace(dir, diff, [{ path: "src/auth/utils.ts", status: "modified" }])), {
+      runtime,
+      config: makeConfig(),
+    });
     expect(meta.usage.modelCalls).toHaveLength(2);
     expect(meta.usage.modelCalls.map((c) => c.stage)).toEqual(["initial-analysis", "reporting-prep"]);
     expect(meta.skippedStages).not.toContain("context-investigation"); // risk signals keep it enabled
@@ -1014,16 +1037,19 @@ describe("runReview (fake runtime)", () => {
     const dir = await makeWorkspaceDir({ "a.ts": big, "b.ts": big, "c.ts": big });
     const runtime = new FakeRuntime();
     runtime.responders = [
-      () => analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "a.ts" }] }),
-      () => analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "b.ts" }] }),
-      () => analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "c.ts" }] }),
+      () =>
+        analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "a.ts" }] }),
+      () =>
+        analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "b.ts" }] }),
+      () =>
+        analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "c.ts" }] }),
       () => analysisResponse({ no_additional_context_needed: true }),
       () => reportingResponse(),
     ];
-    await runReview(
-      input(workspace(dir, "diff --git a/a.ts b/a.ts", [{ path: "a.ts", status: "modified" }])),
-      { runtime, config: highTierConfig() },
-    );
+    await runReview(input(workspace(dir, "diff --git a/a.ts b/a.ts", [{ path: "a.ts", status: "modified" }])), {
+      runtime,
+      config: highTierConfig(),
+    });
     // The final reporting prompt sees the retrieved context once, not three
     // times (per-round 48k slices used to accumulate without a global cap).
     const reporting = runtime.tasks.at(-1)!;
@@ -1035,7 +1061,11 @@ describe("runReview (fake runtime)", () => {
     const dir = await makeWorkspaceDir({ "src/utils.ts": "code\n" });
     const runtime = new FakeRuntime();
     runtime.responders = [
-      () => analysisResponse({ no_additional_context_needed: false, tool_requests: [{ tool: "read_file", path: "src/utils.ts" }] }),
+      () =>
+        analysisResponse({
+          no_additional_context_needed: false,
+          tool_requests: [{ tool: "read_file", path: "src/utils.ts" }],
+        }),
       () => reportingResponse(),
     ];
     const config = highTierConfig({ agent: { context: { maxRetrievalCalls: 2 } } });
@@ -1083,7 +1113,11 @@ describe("runReview (fake runtime)", () => {
       () => reportingResponse(),
     ];
     const { meta } = await runReview(
-      input(workspace(dir, "diff --git a/src/auth/utils.ts b/src/auth/utils.ts", [{ path: "src/auth/utils.ts", status: "modified" }])),
+      input(
+        workspace(dir, "diff --git a/src/auth/utils.ts b/src/auth/utils.ts", [
+          { path: "src/auth/utils.ts", status: "modified" },
+        ]),
+      ),
       { runtime, config: highTierConfig() },
     );
     expect(meta.retrieval.fulfilled).toBe(0);
@@ -1133,7 +1167,11 @@ describe("runReview (fake runtime)", () => {
       {
         path: "src/utils.ts",
         before: ["export function formatName(user: { name: string }) {", "  return user.name;", "}"],
-        after: ["export function formatName(user: { name: string }) {", "  return { name: user.name }; // session", "}"],
+        after: [
+          "export function formatName(user: { name: string }) {",
+          "  return { name: user.name }; // session",
+          "}",
+        ],
       },
     ]);
     const runtime = new FakeRuntime();

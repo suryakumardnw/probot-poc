@@ -5,9 +5,9 @@
  */
 
 import type { Context } from "probot";
+import type { PullRequestData } from "../models/review.js";
 import { reviewPullRequest } from "../services/review.service.js";
 import { renderReviewComment } from "../views/review.view.js";
-import type { PullRequestData } from "../models/review.js";
 
 export async function handlePullRequest(
   context: Context<"pull_request.opened" | "pull_request.synchronize">,
@@ -33,10 +33,7 @@ export async function handlePullRequest(
     repoFullName: repository.full_name,
   };
 
-  const review = await reviewPullRequest(
-    prData,
-    String(diffResponse.data),
-  );
+  const review = await reviewPullRequest(prData, String(diffResponse.data));
 
   await context.octokit.rest.pulls.createReview({
     owner: repository.owner.login,

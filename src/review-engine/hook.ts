@@ -15,14 +15,14 @@
 import type pino from "pino";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
-import { redactCredentials } from "../workspace/redact.js";
-import { transitionReviewState } from "../ingestion/review-state.js";
 import type { ReviewJobPayload } from "../ingestion/queue.js";
+import { transitionReviewState } from "../ingestion/review-state.js";
+import { recordProviderCall, recordReviewFindings } from "../observability/metrics.js";
+import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
+import { redactCredentials } from "../workspace/redact.js";
 import type { WorkspaceResult } from "../workspace/workspace.js";
 import { runReview } from "./engine.js";
 import type { PromptInjection, RunReviewOutput } from "./types.js";
-import { recordProviderCall, recordReviewFindings } from "../observability/metrics.js";
-import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 
 export interface ReviewEngineHookDeps {
   runtime: AgentRuntime;

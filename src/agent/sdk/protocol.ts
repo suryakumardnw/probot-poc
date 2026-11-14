@@ -25,8 +25,7 @@ export interface SdkHostRequest {
 }
 
 export type SdkHostResponse =
-  | { id: number; ok: true; result?: unknown }
-  | { id: number; ok: false; error: { message: string; code?: string } };
+  { id: number; ok: true; result?: unknown } | { id: number; ok: false; error: { message: string; code?: string } };
 
 export interface SdkHostLogEvent {
   type: "log";

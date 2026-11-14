@@ -341,10 +341,21 @@ async function ensureSource(
     const cached = await readCachedEntry(cacheDir, spec.kind, normalizedSha);
     if (cached) {
       logger.info(
-        { source: spec.kind, ref: cached.manifest.ref, status: cached.manifest.status, files: cached.manifest.files.length },
+        {
+          source: spec.kind,
+          ref: cached.manifest.ref,
+          status: cached.manifest.status,
+          files: cached.manifest.files.length,
+        },
         "Knowledge source: reusing validated cache entry",
       );
-      return toSnapshot(cached.manifest.status, cached.manifest.ref, cached.manifest.contentHash, cached.dir, cached.manifest.files);
+      return toSnapshot(
+        cached.manifest.status,
+        cached.manifest.ref,
+        cached.manifest.contentHash,
+        cached.dir,
+        cached.manifest.files,
+      );
     }
   }
 
@@ -355,13 +366,7 @@ async function ensureSource(
       timeoutMs,
       `knowledge source '${spec.kind}'`,
     );
-    const { dir, manifest } = await writeCacheEntry(
-      cacheDir,
-      spec.kind,
-      fetched.ref,
-      fetched.files,
-      fetched.contents,
-    );
+    const { dir, manifest } = await writeCacheEntry(cacheDir, spec.kind, fetched.ref, fetched.files, fetched.contents);
     logger.info(
       { source: spec.kind, ref: manifest.ref, files: manifest.files.length, contentHash: manifest.contentHash },
       "Knowledge source fetched and cached",
@@ -405,7 +410,10 @@ export interface HandbookVariantSpec {
 }
 
 /** Build the per-source specs from the (validated) review configuration. */
-export function knowledgeSpecsFromConfig(config: ReviewConfig, env: NodeJS.ProcessEnv = process.env): {
+export function knowledgeSpecsFromConfig(
+  config: ReviewConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): {
   cacheDir: string;
   timeoutMs: number;
   skill: KnowledgeSourceSpec;

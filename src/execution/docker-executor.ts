@@ -80,15 +80,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
       return;
     } catch {
       const contextDir = join(process.cwd(), "docker", "sandbox");
-      await this.docker(
-        "build",
-        "-q",
-        "-f",
-        join(contextDir, "Dockerfile.sandbox"),
-        "-t",
-        this.image,
-        contextDir,
-      );
+      await this.docker("build", "-q", "-f", join(contextDir, "Dockerfile.sandbox"), "-t", this.image, contextDir);
     }
   }
 
@@ -97,9 +89,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
   }
 
   private docker(...args: readonly string[]): Promise<string> {
-    return execFileAsync(this.dockerBin, this.dockerArgs(...args), { timeout: 120_000 }).then(
-      (r) => r.stdout,
-    );
+    return execFileAsync(this.dockerBin, this.dockerArgs(...args), { timeout: 120_000 }).then((r) => r.stdout);
   }
 
   async execute(request: CommandRequest, policy: EffectivePolicy): Promise<ExecutionResult> {
@@ -178,9 +168,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
       const timer = setTimeout(() => {
         timedOut = true;
         // Kill the container; --rm removes it afterwards.
-        void execFileAsync(this.dockerBin, this.dockerArgs("kill", containerName), { timeout: 15_000 }).catch(
-          () => {},
-        );
+        void execFileAsync(this.dockerBin, this.dockerArgs("kill", containerName), { timeout: 15_000 }).catch(() => {});
       }, policy.timeoutMs);
       timer.unref?.();
 
@@ -227,7 +215,9 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     } finally {
       try {
         rmSync(homeDir, { recursive: true, force: true });
-      } catch {}
+      } catch {
+        // Best-effort cleanup: the sandbox may have removed the directory.
+      }
     }
   }
 }

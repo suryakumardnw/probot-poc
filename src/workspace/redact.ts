@@ -37,11 +37,7 @@ export function redactCredentials(text: string, secret?: string): string {
   let output = text;
   if (secret && secret.length > 0) {
     // Split on every occurrence, including URL-encoded variants.
-    output = output
-      .split(secret)
-      .join(REDACTED)
-      .split(encodeURIComponent(secret))
-      .join(REDACTED);
+    output = output.split(secret).join(REDACTED).split(encodeURIComponent(secret)).join(REDACTED);
   }
   // Generic defense: `scheme://user:secret@host` and `x-access-token:<t>@`.
   output = output.replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, `$1${REDACTED}@`);

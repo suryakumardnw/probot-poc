@@ -300,4 +300,3 @@ networks:
   edge:
     external: true
     name: ${DOKPLOY_NETWORK:-dokploy-network}
-

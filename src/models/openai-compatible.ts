@@ -90,7 +90,10 @@ function endpointLabel(baseURL: string): string {
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
 }
 
-function normalizeFinishReason(raw: unknown): { finishReason: ModelResponse["finishReason"]; rawFinishReason?: string } {
+function normalizeFinishReason(raw: unknown): {
+  finishReason: ModelResponse["finishReason"];
+  rawFinishReason?: string;
+} {
   if (typeof raw !== "string" || raw.length === 0) {
     return { finishReason: "other" };
   }
@@ -138,7 +141,8 @@ function extractErrorDetail(body: unknown): string | undefined {
 }
 
 function statusToErrorCode(status: number): { code: ModelErrorCode; retryable: boolean; label: string } {
-  if (status === 401 || status === 403) return { code: "auth_failure", retryable: false, label: "authentication failed" };
+  if (status === 401 || status === 403)
+    return { code: "auth_failure", retryable: false, label: "authentication failed" };
   if (status === 429) return { code: "rate_limit", retryable: true, label: "rate limited" };
   if (status === 400 || status === 422) return { code: "invalid_request", retryable: false, label: "invalid request" };
   if (status >= 500) return { code: "provider_unavailable", retryable: true, label: "provider unavailable" };
@@ -251,12 +255,19 @@ export function createOpenAICompatibleProvider(
       });
     } catch (error) {
       if (signal.aborted && (error as Error)?.name === "TimeoutError") {
-        throw new ModelProviderError("timeout", `Model request timed out after ${config.timeoutMs}ms`, { cause: error });
+        throw new ModelProviderError("timeout", `Model request timed out after ${config.timeoutMs}ms`, {
+          cause: error,
+        });
       }
       if (signal.aborted) {
-        throw new ModelProviderError("network", "Model request aborted by the caller", { cause: error, retryable: false });
+        throw new ModelProviderError("network", "Model request aborted by the caller", {
+          cause: error,
+          retryable: false,
+        });
       }
-      throw new ModelProviderError("network", `Model request failed: ${truncateDetail((error as Error).message)}`, { cause: error });
+      throw new ModelProviderError("network", `Model request failed: ${truncateDetail((error as Error).message)}`, {
+        cause: error,
+      });
     }
 
     const latencyMs = Date.now() - started;
@@ -269,11 +280,15 @@ export function createOpenAICompatibleProvider(
         { event: "model_failure", endpoint, model, status: response.status, code: classified.code, latencyMs },
         "Model request failed",
       );
-      throw new ModelProviderError(classified.code, `Model request failed: ${classified.label} (HTTP ${response.status})`, {
-        statusCode: response.status,
-        retryable: classified.retryable,
-        providerDetail: detail,
-      });
+      throw new ModelProviderError(
+        classified.code,
+        `Model request failed: ${classified.label} (HTTP ${response.status})`,
+        {
+          statusCode: response.status,
+          retryable: classified.retryable,
+          providerDetail: detail,
+        },
+      );
     }
 
     // --- Structured response parsing / normalization -----------------------
@@ -294,7 +309,10 @@ export function createOpenAICompatibleProvider(
       });
     }
     const first = parsed.choices[0] as Record<string, unknown>;
-    const message = (typeof first.message === "object" && first.message !== null ? first.message : {}) as Record<string, unknown>;
+    const message = (typeof first.message === "object" && first.message !== null ? first.message : {}) as Record<
+      string,
+      unknown
+    >;
     const rawContent = typeof message.content === "string" ? message.content : undefined;
     // Reasoning models (e.g. GLM-4.7-Flash) put chain-of-thought in
     // `reasoning_content`/`reasoning` and may return `content: null` when the
@@ -358,7 +376,11 @@ export function createOpenAICompatibleProvider(
         latencyMs,
         finishReason,
         usage: usage
-          ? { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens }
+          ? {
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              totalTokens: usage.totalTokens,
+            }
           : undefined,
         contentBytes: Buffer.byteLength(content, "utf8"),
       },

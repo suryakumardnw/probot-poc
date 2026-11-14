@@ -102,9 +102,7 @@ export async function transitionReviewState(
       where: { id: review.id },
       data: {
         state: toState,
-        ...(toState === "completed" || toState === "completed_with_warnings"
-          ? { completedAt: new Date() }
-          : {}),
+        ...(toState === "completed" || toState === "completed_with_warnings" ? { completedAt: new Date() } : {}),
         ...(toState === "failed"
           ? { errorCode: options.errorCode ?? "REVIEW_FAILED", errorMessage: options.errorMessage ?? null }
           : {}),

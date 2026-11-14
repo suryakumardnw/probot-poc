@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { AgentRuntimeConfigSource } from "../src/agent/opencode-config.js";
 import {
   buildSdkInlineConfig,
   buildSdkPermissions,
   evaluateSdkPermission,
   validateSdkPermissions,
 } from "../src/agent/sdk/config.js";
-import type { AgentRuntimeConfigSource } from "../src/agent/opencode-config.js";
 
 // ---------------------------------------------------------------------------
 // Test configuration fixture (mirrors the parsed review config shape)
@@ -80,9 +80,13 @@ describe("SDK permission rules", () => {
 
 describe("SDK inline config", () => {
   it("emits the verified provider shape with env-referenced credentials", () => {
-    const config = buildSdkInlineConfig(baseConfig, { MODEL_NAME: "workers-ai/@cf/zai-org/glm-4.7-flash" }, {
-      maxOutputTokens: 8192,
-    });
+    const config = buildSdkInlineConfig(
+      baseConfig,
+      { MODEL_NAME: "workers-ai/@cf/zai-org/glm-4.7-flash" },
+      {
+        maxOutputTokens: 8192,
+      },
+    );
     expect(config.model).toBe("reviewer/glm");
     expect(config.share).toBe("disabled");
     expect(config.snapshots).toBe(false);
@@ -104,12 +108,16 @@ describe("SDK inline config", () => {
       ...baseConfig,
       observability: { agentTracing: { enabled: true } },
     };
-    const config = buildSdkInlineConfig(traced, {}, {
-      maxOutputTokens: 8192,
-      reviewId: "rev_123",
-      repository: "acme/app",
-      pullRequestNumber: 42,
-    });
+    const config = buildSdkInlineConfig(
+      traced,
+      {},
+      {
+        maxOutputTokens: 8192,
+        reviewId: "rev_123",
+        repository: "acme/app",
+        pullRequestNumber: 42,
+      },
+    );
     expect(config.plugins).toEqual([
       {
         package: "@devtheops/opencode-plugin-otel@2.1.0",

@@ -28,14 +28,7 @@ export interface PanelField {
   readonly?: boolean;
 }
 
-export const PANEL_SECTIONS = [
-  "general",
-  "ai-model",
-  "review-rules",
-  "execution",
-  "github",
-  "storage",
-] as const;
+export const PANEL_SECTIONS = ["general", "ai-model", "review-rules", "execution", "github", "storage"] as const;
 
 export type PanelSection = (typeof PANEL_SECTIONS)[number];
 
@@ -81,7 +74,12 @@ export const PANEL_FIELDS: Record<PanelSection, readonly PanelField[]> = {
       type: "enum",
       options: ["supersede", "append"],
     },
-    { path: "agent.runtime.timeoutMs", label: "Review timeout (ms)", type: "number", help: "Per-review agent runtime timeout" },
+    {
+      path: "agent.runtime.timeoutMs",
+      label: "Review timeout (ms)",
+      type: "number",
+      help: "Per-review agent runtime timeout",
+    },
     { path: "configuration.reloadStrategy", label: "Reload strategy", type: "enum", options: ["manual", "restart"] },
     { path: "configuration.rollbackEnabled", label: "Rollback enabled", type: "boolean" },
   ],

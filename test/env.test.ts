@@ -28,9 +28,7 @@ describe("loadEnv", () => {
   });
 
   test("rejects an invalid DATABASE_URL with a clear error naming the variable", () => {
-    expect(() =>
-      loadEnv({ DATABASE_URL: "not-a-url" } as unknown as NodeJS.ProcessEnv),
-    ).toThrow(EnvValidationError);
+    expect(() => loadEnv({ DATABASE_URL: "not-a-url" } as unknown as NodeJS.ProcessEnv)).toThrow(EnvValidationError);
 
     try {
       loadEnv({ DATABASE_URL: "mysql://localhost/db" } as unknown as NodeJS.ProcessEnv);
@@ -53,8 +51,6 @@ describe("loadEnv", () => {
   });
 
   test("rejects a non-numeric PORT", () => {
-    expect(() => loadEnv({ PORT: "abc" } as unknown as NodeJS.ProcessEnv)).toThrow(
-      EnvValidationError,
-    );
+    expect(() => loadEnv({ PORT: "abc" } as unknown as NodeJS.ProcessEnv)).toThrow(EnvValidationError);
   });
 });

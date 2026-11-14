@@ -35,9 +35,9 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import type pino from "pino";
 import type { ReviewConfig } from "../config/review-schema.js";
-import { ReviewEngineError, type PromptInjection, type KnowledgeInjectionMetrics } from "./types.js";
 import { handbookVariantDir } from "../knowledge/materialize.js";
 import type { KnowledgeHandbookVariant, KnowledgeSnapshot } from "../knowledge/types.js";
+import { HANDBOOK_REFERENCE_INSTRUCTIONS } from "./prompts/index.js";
 import {
   CHARS_PER_TOKEN,
   detectTechnologies,
@@ -45,7 +45,7 @@ import {
   selectHandbookUnderBudget,
   type RankedHandbookFile,
 } from "./retrieval.js";
-import { HANDBOOK_REFERENCE_INSTRUCTIONS } from "./prompts/index.js";
+import { ReviewEngineError, type PromptInjection, type KnowledgeInjectionMetrics } from "./types.js";
 
 export type { PromptInjection, KnowledgeInjectionMetrics };
 
@@ -147,7 +147,11 @@ function pathTokens(filePath: string): Set<string> {
   const segments = normalized.split("/");
   const extension = path.posix.extname(normalized);
   const base = path.posix.basename(normalized, extension);
-  return new Set([...segments.filter(Boolean), ...(base ? base.split(/[^a-z0-9]+/) : []), extension.replace(/^\./, "")].filter((t) => t.length > 1));
+  return new Set(
+    [...segments.filter(Boolean), ...(base ? base.split(/[^a-z0-9]+/) : []), extension.replace(/^\./, "")].filter(
+      (t) => t.length > 1,
+    ),
+  );
 }
 
 function headingTokens(heading: string): string[] {
@@ -282,10 +286,7 @@ async function injectHandbookFromSnapshot(
   // The knowledge copy lives at `<workspace>/knowledge/...`; expose its
   // workspace-relative path so the model can read the full file when useful
   // instead of guessing the handbook repository path.
-  const relativeKnowledgeDir = path
-    .relative(path.dirname(knowledgeDir), dir)
-    .split(path.sep)
-    .join("/");
+  const relativeKnowledgeDir = path.relative(path.dirname(knowledgeDir), dir).split(path.sep).join("/");
   const workspacePrefix =
     relativeKnowledgeDir && !relativeKnowledgeDir.startsWith("..") && !path.isAbsolute(relativeKnowledgeDir)
       ? relativeKnowledgeDir

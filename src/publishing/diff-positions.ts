@@ -64,7 +64,14 @@ export function parseUnifiedDiff(diff: string): Map<string, ParsedDiffFile> {
       flushHunk();
       const match = /^diff --git a\/(.*) b\/(.*)$/.exec(raw);
       current = match
-        ? { path: match[2], previousPath: match[1] !== match[2] ? match[1] : undefined, isNewFile: false, isDeletedFile: false, isBinary: false, hunks: [] }
+        ? {
+            path: match[2],
+            previousPath: match[1] !== match[2] ? match[1] : undefined,
+            isNewFile: false,
+            isDeletedFile: false,
+            isBinary: false,
+            hunks: [],
+          }
         : null;
       if (current) files.set(current.path, current);
       continue;

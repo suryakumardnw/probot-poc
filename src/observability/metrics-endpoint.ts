@@ -14,10 +14,7 @@ import { getMetricsRegistry } from "./metrics.js";
 
 export const METRICS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8";
 
-export function metricsHandler(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): void {
+export function metricsHandler(req: http.IncomingMessage, res: http.ServerResponse): void {
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.statusCode = 405;
     res.setHeader("Allow", "GET, HEAD");

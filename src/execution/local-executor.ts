@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDiskQuotaWatcher, type DiskQuotaWatcher } from "./limits.js";
 import { buildExecutionEnv, FORBIDDEN_EXECUTION_ENV_VARS } from "./env.js";
+import { createDiskQuotaWatcher, type DiskQuotaWatcher } from "./limits.js";
 import {
   ExecutionError,
   type CommandRequest,
@@ -147,7 +147,13 @@ export class LocalSandboxExecutor implements SandboxExecutor {
 
       return {
         decision: exit.code === 0 && !timedOut && !pending.diskQuotaExceeded ? "allowed" : "error",
-        reason: timedOut ? "timeout_exceeded" : pending.diskQuotaExceeded ? "disk_quota_exceeded" : exit.code === 0 ? "ok" : "executor_error",
+        reason: timedOut
+          ? "timeout_exceeded"
+          : pending.diskQuotaExceeded
+            ? "disk_quota_exceeded"
+            : exit.code === 0
+              ? "ok"
+              : "executor_error",
         command: request.command,
         args: [...request.args],
         exitCode: exit.code,
@@ -164,10 +170,14 @@ export class LocalSandboxExecutor implements SandboxExecutor {
       // Lifecycle: destroy per-execution scratch state (§10.4).
       try {
         rmSync(homeDir, { recursive: true, force: true });
-      } catch {}
+      } catch {
+        // Best-effort cleanup: the directory may already be gone.
+      }
       try {
         rmSync(tmpDir, { recursive: true, force: true });
-      } catch {}
+      } catch {
+        // Best-effort cleanup: the directory may already be gone.
+      }
       void watcher?.stop();
     }
   }
@@ -176,11 +186,15 @@ export class LocalSandboxExecutor implements SandboxExecutor {
     pending.killed = true;
     try {
       process.kill(-pid, "SIGTERM");
-    } catch {}
+    } catch {
+      // The process group is already gone.
+    }
     setTimeout(() => {
       try {
         process.kill(-pid, "SIGKILL");
-      } catch {}
+      } catch {
+        // The process group is already gone.
+      }
     }, 1_000).unref?.();
   }
 

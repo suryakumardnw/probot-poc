@@ -18,8 +18,8 @@
  */
 
 import type { ReviewConfig } from "../config/review-schema.js";
-import { readWorkspaceFile } from "../workspace/files.js";
 import { FINDING_CATEGORIES, type Finding, type FindingSeverity } from "../review-engine/index.js";
+import { readWorkspaceFile } from "../workspace/files.js";
 
 export type FindingRejectionReason =
   | "invalid_file"
@@ -127,7 +127,12 @@ export async function validateFindings(
       reject("unsupported_severity", `severity '${finding.severity}' not enabled in configuration`);
       continue;
     }
-    if (typeof finding.confidence !== "number" || !Number.isFinite(finding.confidence) || finding.confidence < 0 || finding.confidence > 1) {
+    if (
+      typeof finding.confidence !== "number" ||
+      !Number.isFinite(finding.confidence) ||
+      finding.confidence < 0 ||
+      finding.confidence > 1
+    ) {
       reject("invalid_confidence", `confidence must be a number in [0, 1], got '${finding.confidence}'`);
       continue;
     }

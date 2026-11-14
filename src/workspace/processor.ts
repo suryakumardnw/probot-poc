@@ -1,22 +1,11 @@
+import fs from "node:fs";
+import type { PrismaClient } from "@prisma/client";
 import { Worker } from "bullmq";
 import { Redis } from "ioredis";
-import type { PrismaClient } from "@prisma/client";
 import type pino from "pino";
+import { AgentRuntimeError } from "../agent/types.js";
 import { REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../ingestion/queue.js";
 import { transitionReviewState } from "../ingestion/review-state.js";
-import {
-  ReviewWorkspaceService,
-  StaleCommitError,
-  ReviewRetrievalError,
-  type WorkspaceResult,
-} from "./workspace.js";
-import { redactCredentials } from "./redact.js";
-import {
-  AppInstallationTokenProvider,
-  NullTokenProvider,
-  type InstallationTokenProvider,
-} from "./credentials.js";
-import fs from "node:fs";
 import {
   createReviewLogger,
   startStage,
@@ -24,10 +13,13 @@ import {
   type StageTracker,
 } from "../observability/correlation.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
-import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 import { classifyFailure, retryPolicyFor, type RetryPolicyConfig } from "../observability/retry.js";
 import { DEFAULT_RETRY_POLICY_CONFIG } from "../observability/retry.js";
-import { AgentRuntimeError } from "../agent/types.js";
+import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
+import { AppInstallationTokenProvider, NullTokenProvider, type InstallationTokenProvider } from "./credentials.js";
+import { redactCredentials } from "./redact.js";
+import { StaleCommitError, ReviewRetrievalError, type WorkspaceResult } from "./workspace.js";
+import type { ReviewWorkspaceService } from "./workspace.js";
 
 /** Max characters of error detail attached to the structured failure log. */
 const MAX_LOGGED_ERROR_DETAIL_CHARS = 4_000;
@@ -55,10 +47,7 @@ export interface ProcessReviewJobDeps {
    * wiring (`createReviewEngineHook`) runs the adaptive review engine and
    * advances the review state machine (analyzing → investigating → validating).
    */
-  onWorkspacePrepared?: (ctx: {
-    payload: ReviewJobPayload;
-    workspace: WorkspaceResult;
-  }) => Promise<unknown>;
+  onWorkspacePrepared?: (ctx: { payload: ReviewJobPayload; workspace: WorkspaceResult }) => Promise<unknown>;
   /**
    * §12.4 retry policy (ticket 12): governs retry decisions per failure
    * class. Defaults to the §11.3 review.json-derived defaults when omitted.
@@ -137,7 +126,7 @@ export async function processReviewJob(
           where: { githubRepositoryId: job.review.githubRepositoryId },
           select: { defaultBranch: true },
         });
-    const baseRef = baseSha ? null : repository?.defaultBranch ?? null;
+    const baseRef = baseSha ? null : (repository?.defaultBranch ?? null);
 
     const workspace = await deps.service.prepare({
       reviewId: job.reviewId,
@@ -176,17 +165,13 @@ export async function processReviewJob(
     // it the worker only reports a generic message and the root cause is lost.
     const rawDetail = (error as { detail?: unknown } | null)?.detail;
     const errorDetail =
-      typeof rawDetail === "string"
-        ? redactCredentials(rawDetail).slice(0, MAX_LOGGED_ERROR_DETAIL_CHARS)
-        : undefined;
+      typeof rawDetail === "string" ? redactCredentials(rawDetail).slice(0, MAX_LOGGED_ERROR_DETAIL_CHARS) : undefined;
     // Both retrieval errors (`clone_failed`, …) and agent runtime errors
     // (`crash`, `timeout`, …) carry a normalized code. Dropping the agent code
     // made every runtime crash classify as "unknown" (no retry, no class in
     // metrics), so it must reach the classifier.
     const errorCode =
-      error instanceof ReviewRetrievalError || error instanceof AgentRuntimeError
-        ? error.code
-        : undefined;
+      error instanceof ReviewRetrievalError || error instanceof AgentRuntimeError ? error.code : undefined;
     const failureClass = classifyFailure({
       errorCode: errorCode ?? null,
       message,

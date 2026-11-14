@@ -35,6 +35,9 @@ import type { AgentRuntime, AgentSession, AgentTask } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
 import { scoreComplexity } from "./complexity.js";
 import { createReviewPlan, skippedStageIds } from "./plan.js";
+import { COMMON_REVIEW_INSTRUCTIONS, CONVENTIONS_INSTRUCTIONS, HANDBOOK_MODE_INSTRUCTIONS } from "./prompts/index.js";
+import { analysisOutputSchema, findingSchema, reviewResultSchema } from "./result-schema.js";
+import type { ParsedAnalysisOutput } from "./result-schema.js";
 import {
   RetrievalBudget,
   fulfillToolRequests,
@@ -42,7 +45,6 @@ import {
   renderToolContext,
   type ToolResult,
 } from "./tools.js";
-import { analysisOutputSchema, findingSchema, reviewResultSchema } from "./result-schema.js";
 import { ReviewEngineError } from "./types.js";
 import type {
   Finding,
@@ -53,12 +55,6 @@ import type {
   RetrievalUsage,
   RunReviewOutput,
 } from "./types.js";
-import type { ParsedAnalysisOutput } from "./result-schema.js";
-import {
-  COMMON_REVIEW_INSTRUCTIONS,
-  CONVENTIONS_INSTRUCTIONS,
-  HANDBOOK_MODE_INSTRUCTIONS,
-} from "./prompts/index.js";
 
 /** Diff characters delivered in the initial-analysis instruction. */
 const MAX_DIFF_CHARS = 30_000;
@@ -207,10 +203,7 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
     const remaining = MAX_TOOL_CONTEXT_CHARS - toolContextChars;
     if (remaining <= 0) return;
     const marker = "\n\n(retrieval context truncated to the total budget)";
-    const chunk =
-      text.length <= remaining
-        ? text
-        : `${text.slice(0, Math.max(0, remaining - marker.length))}${marker}`;
+    const chunk = text.length <= remaining ? text : `${text.slice(0, Math.max(0, remaining - marker.length))}${marker}`;
     toolContexts.push(chunk);
     toolContextChars += chunk.length;
   };
@@ -229,7 +222,15 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
     // ------------------------------------------------------------------
     // Stage 1 — initial analysis (+ stage 2 request planning)
     // ------------------------------------------------------------------
-    const analysis = await executeAnalysisCall(deps, session, accounting, workspace, changedFilesList, customInstructions, methodologyStage1);
+    const analysis = await executeAnalysisCall(
+      deps,
+      session,
+      accounting,
+      workspace,
+      changedFilesList,
+      customInstructions,
+      methodologyStage1,
+    );
 
     // ------------------------------------------------------------------
     // Stage 2 — context investigation via the controlled tool protocol
@@ -285,7 +286,15 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
             methodologyLaterStages,
           });
         }
-        latest = await executeInvestigationCall(deps, session, accounting, latest, toolContexts, customInstructions, methodologyLaterStages);
+        latest = await executeInvestigationCall(
+          deps,
+          session,
+          accounting,
+          latest,
+          toolContexts,
+          customInstructions,
+          methodologyLaterStages,
+        );
       }
     }
 
@@ -563,10 +572,7 @@ ${REVIEW_RESULT_FORMAT}`,
   const { findings, uncertainFindings } = normalizeFindings(checked, config);
   const result: ReviewResult = {
     schemaVersion: 1,
-    summary:
-      modelResult.summary.trim() ||
-      ctx.analysis.objective.trim() ||
-      "Pull request reviewed.",
+    summary: modelResult.summary.trim() || ctx.analysis.objective.trim() || "Pull request reviewed.",
     findings,
     uncertainFindings,
     conventions,
@@ -610,11 +616,7 @@ function countParseRejections(budget: RetrievalBudget): number {
   ).length;
 }
 
-function recordUsage(
-  accounting: TokenAccounting,
-  stage: string,
-  run: import("../agent/types.js").AgentResult,
-): void {
+function recordUsage(accounting: TokenAccounting, stage: string, run: import("../agent/types.js").AgentResult): void {
   accounting.inputTokens += run.usage?.inputTokens ?? 0;
   accounting.outputTokens += run.usage?.outputTokens ?? 0;
   accounting.calls.push({

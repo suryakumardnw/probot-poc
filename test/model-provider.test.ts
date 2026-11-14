@@ -1,17 +1,10 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  createModelProviderFromConfig,
-  createOpenAICompatibleProvider,
-} from "../src/models/openai-compatible.js";
-import {
-  ModelCapabilities,
-  ModelProviderError,
-  ProviderConfigError,
-  ProviderHealth,
-} from "../src/models/provider.js";
 import { logRedactPaths } from "../src/lib/logger.js";
+import { createModelProviderFromConfig, createOpenAICompatibleProvider } from "../src/models/openai-compatible.js";
+import type { ModelCapabilities, ProviderHealth } from "../src/models/provider.js";
+import { ModelProviderError, ProviderConfigError } from "../src/models/provider.js";
 
 // ---------------------------------------------------------------------------
 // Mock HTTP server (no external network — all failure/success modes are
@@ -97,11 +90,7 @@ describe("OpenAI-compatible model provider", () => {
   });
 
   afterEach(async () => {
-    await Promise.all(
-      servers.map(
-        (server) => new Promise<void>((resolve) => server.close(() => resolve())),
-      ),
-    );
+    await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
   });
 
   async function start(handler: Handler) {
@@ -131,9 +120,9 @@ describe("OpenAI-compatible model provider", () => {
   });
 
   it("rejects non-http baseURLs at construction", () => {
-    expect(() =>
-      createOpenAICompatibleProvider(providerConfig("ftp://example.com"), { env: ENV_WITH_KEY }),
-    ).toThrow(ProviderConfigError);
+    expect(() => createOpenAICompatibleProvider(providerConfig("ftp://example.com"), { env: ENV_WITH_KEY })).toThrow(
+      ProviderConfigError,
+    );
   });
 
   // -- Successful completion, usage capture, structured parsing ------------
@@ -161,7 +150,9 @@ describe("OpenAI-compatible model provider", () => {
   it("normalizes non-standard finish reasons", async () => {
     const { url } = await start((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(completionBody({ choices: [{ finish_reason: "max_tokens", message: { content: "cut" } }] })));
+      res.end(
+        JSON.stringify(completionBody({ choices: [{ finish_reason: "max_tokens", message: { content: "cut" } }] })),
+      );
     });
     const provider = createOpenAICompatibleProvider(providerConfig(url), { env: ENV_WITH_KEY });
     const response = await provider.chat({ messages: baseMessage });
@@ -172,7 +163,11 @@ describe("OpenAI-compatible model provider", () => {
   it("parses structured JSON output when responseFormat is json", async () => {
     const { url, requests } = await start((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(completionBody({ choices: [{ finish_reason: "stop", message: { content: '{"verdict":"ok"}' } }] })));
+      res.end(
+        JSON.stringify(
+          completionBody({ choices: [{ finish_reason: "stop", message: { content: '{"verdict":"ok"}' } }] }),
+        ),
+      );
     });
     const provider = createOpenAICompatibleProvider(providerConfig(url), { env: ENV_WITH_KEY });
     const response = await provider.chat({ messages: baseMessage, responseFormat: "json" });
@@ -483,11 +478,7 @@ describe("OpenAI-compatible model provider", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(completionBody()));
     });
-    const provider = createModelProviderFromConfig(
-      providerConfig(url),
-      undefined,
-      ENV_WITH_KEY,
-    );
+    const provider = createModelProviderFromConfig(providerConfig(url), undefined, ENV_WITH_KEY);
     const response = await provider.chat({ messages: baseMessage });
     expect(response.content).toBe("pong");
   });

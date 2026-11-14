@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createAgentRuntime,
-  listAgentRuntimePlugins,
   OpenCodeAgentRuntime,
   OpenCodeSdkAgentRuntime,
   registerAgentRuntimePlugin,
@@ -97,11 +96,7 @@ describe("agent runtime plugin registry", () => {
       },
     } as AgentRuntimeConfigSource);
     expect(runtime).toBe(fakeRuntime);
-    expect(fake.create).toHaveBeenCalledWith(
-      "test-runtime",
-      expect.any(Object),
-      expect.any(Object),
-    );
+    expect(fake.create).toHaveBeenCalledWith("test-runtime", expect.any(Object), expect.any(Object));
   });
 
   it("rejects duplicate runtime-type registration", () => {

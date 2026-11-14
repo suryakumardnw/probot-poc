@@ -22,10 +22,17 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
+import {
+  buildChildEnv,
+  buildSessionConfig,
+  DEFAULT_AGENT_TRACING_PLUGIN,
+  resolveModelId,
+  type AgentRuntimeConfigSource,
+} from "./opencode-config.js";
 import {
   AgentRuntimeError,
   type AgentResult,
@@ -35,13 +42,6 @@ import {
   type AgentTask,
   type RuntimeHealth,
 } from "./types.js";
-import {
-  buildChildEnv,
-  buildSessionConfig,
-  DEFAULT_AGENT_TRACING_PLUGIN,
-  resolveModelId,
-  type AgentRuntimeConfigSource,
-} from "./opencode-config.js";
 
 /** Minimal logger surface the adapter needs (compatible with the pino logger). */
 export interface AgentRuntimeLogger {
@@ -114,8 +114,7 @@ const KILL_GRACE_MS = 2_000;
  * E2BIG, which surfaced as the generic "failed to launch opencode runtime".
  */
 export const MAX_PROMPT_ARG_BYTES = 120 * 1024;
-const PROMPT_TRUNCATION_MARKER =
-  "\n\n…[prompt truncated to fit the opencode CLI argument limit]…\n\n";
+const PROMPT_TRUNCATION_MARKER = "\n\n…[prompt truncated to fit the opencode CLI argument limit]…\n\n";
 /**
  * Max characters kept from any runtime detail attached to errors. A crashing
  * CLI can emit 10KB+ of stderr; 500 chars only captured startup noise, which
@@ -148,17 +147,12 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
 
   constructor(config: AgentRuntimeConfigSource, options: OpenCodeRuntimeOptions = {}) {
     if (config.agent.runtime.type !== "opencode-cli") {
-      throw new AgentRuntimeError(
-        "config",
-        `unsupported agent runtime type "${config.agent.runtime.type}"`,
-      );
+      throw new AgentRuntimeError("config", `unsupported agent runtime type "${config.agent.runtime.type}"`);
     }
     this.config = config;
-    this.binaryPath =
-      options.binaryPath ?? process.env.OPENCODE_BINARY_PATH ?? "/opt/homebrew/bin/opencode";
+    this.binaryPath = options.binaryPath ?? process.env.OPENCODE_BINARY_PATH ?? "/opt/homebrew/bin/opencode";
     this.logger = options.logger;
-    this.defaultTimeoutMs =
-      options.defaultTimeoutMs ?? config.agent.runtime.timeoutMs;
+    this.defaultTimeoutMs = options.defaultTimeoutMs ?? config.agent.runtime.timeoutMs;
     this.spawnImpl = options.spawnImpl ?? spawn;
     this.rmImpl = options.rmImpl ?? rm;
     this.gitStatusImpl = options.gitStatusImpl ?? defaultGitStatus;
@@ -172,11 +166,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
     const id = `sess_${randomUUID()}`;
     // Session-owned directory: never inside the review workspace, never
     // writable by the agent (deny-by-default permissions cover that too).
-    const sessionDir = path.join(
-      os.tmpdir(),
-      "opencode-review-sessions",
-      `${options.reviewId}-${sessionIdKey(id)}`,
-    );
+    const sessionDir = path.join(os.tmpdir(), "opencode-review-sessions", `${options.reviewId}-${sessionIdKey(id)}`);
     const configDir = path.join(sessionDir, "config");
     // OpenCode resolves its *global* config from
     // `$XDG_CONFIG_HOME/opencode/opencode.json` (not directly under
@@ -206,22 +196,14 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
     // The config file contains no secret material — the API key is a
     // `{env:VAR}` reference resolved from the child environment.
     const configPath = path.join(opencodeConfigDir, "opencode.json");
-    await writeFile(
-      configPath,
-      JSON.stringify(sessionConfig, null, 2),
-      "utf8",
-    );
+    await writeFile(configPath, JSON.stringify(sessionConfig, null, 2), "utf8");
 
     const agentTracing = this.config.observability?.agentTracing;
     const tracingPlugin = agentTracing?.plugin ?? DEFAULT_AGENT_TRACING_PLUGIN;
     const tracingEndpoint =
-      typeof agentTracing?.options?.endpoint === "string"
-        ? agentTracing.options.endpoint
-        : undefined;
+      typeof agentTracing?.options?.endpoint === "string" ? agentTracing.options.endpoint : undefined;
     const tracingProtocol =
-      typeof agentTracing?.options?.protocol === "string"
-        ? agentTracing.options.protocol
-        : "grpc";
+      typeof agentTracing?.options?.protocol === "string" ? agentTracing.options.protocol : "grpc";
     this.logger?.info("agent session created", {
       event: "agent_session_created",
       sessionId: id,
@@ -371,11 +353,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
     if (!this.logger) return;
     const code = error instanceof AgentRuntimeError ? error.code : "unknown";
     const rawDetail =
-      error instanceof AgentRuntimeError
-        ? error.detail
-        : error instanceof Error
-          ? error.message
-          : String(error);
+      error instanceof AgentRuntimeError ? error.detail : error instanceof Error ? error.message : String(error);
     this.logger.error("agent runtime error", {
       event: "agent_runtime_error",
       sessionId: session.id,
@@ -406,10 +384,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
   // unenforced permission rules — see KNOWN_PERMISSION_GAP)
   // -------------------------------------------------------------------------
 
-  private async assertWorkspaceUnchanged(
-    session: AgentSession,
-    baseline: string | undefined,
-  ): Promise<void> {
+  private async assertWorkspaceUnchanged(session: AgentSession, baseline: string | undefined): Promise<void> {
     if (baseline === undefined) return; // git unavailable — guard skipped
     const after = await this.gitStatusImpl(session.workspacePath);
     if (after === undefined || after === baseline) return;
@@ -451,9 +426,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       child.stdout?.on("data", (chunk: Buffer) => {
         if (stdout.length < 1024) stdout += chunk.toString("utf8");
       });
-      child.once("error", () =>
-        done({ healthy: false, detail: "runtime binary unavailable", checkedAt }),
-      );
+      child.once("error", () => done({ healthy: false, detail: "runtime binary unavailable", checkedAt }));
       child.once("close", (code) => {
         if (code === 0) {
           const version = stdout.trim().split("\n")[0] ?? "";
@@ -839,11 +812,10 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
             detail: truncate(scrub(parseFailure, this.config)),
           });
         }
-        throw new AgentRuntimeError(
-          "invalid_output",
-          "agent output did not contain a JSON object",
-          { sessionId, detail: truncate(scrub(candidates[0] ?? parsed.text, this.config)) },
-        );
+        throw new AgentRuntimeError("invalid_output", "agent output did not contain a JSON object", {
+          sessionId,
+          detail: truncate(scrub(candidates[0] ?? parsed.text, this.config)),
+        });
       }
       result.text = chosen.text.trim();
       result.json = chosen.value;
@@ -893,8 +865,14 @@ export function capPromptArg(prompt: string): {
   // A byte slice can split a multi-byte code point; drop the replacement
   // character introduced at the cut. The result is slightly shorter, never
   // longer than the budget.
-  const head = bytes.subarray(0, headBudget).toString("utf8").replace(/\uFFFD+$/, "");
-  const tail = bytes.subarray(bytes.length - tailBudget).toString("utf8").replace(/^\uFFFD+/, "");
+  const head = bytes
+    .subarray(0, headBudget)
+    .toString("utf8")
+    .replace(/\uFFFD+$/, "");
+  const tail = bytes
+    .subarray(bytes.length - tailBudget)
+    .toString("utf8")
+    .replace(/^\uFFFD+/, "");
   return {
     prompt: `${head}${PROMPT_TRUNCATION_MARKER}${tail}`,
     truncated: true,
@@ -960,12 +938,7 @@ function parseEvents(stdout: string): {
       case "step_finish": {
         const tokens = event.part?.tokens;
         const u = tokens?.usage ?? tokens;
-        if (
-          u &&
-          (typeof u.input === "number" ||
-            typeof u.output === "number" ||
-            typeof u.reasoning === "number")
-        ) {
+        if (u && (typeof u.input === "number" || typeof u.output === "number" || typeof u.reasoning === "number")) {
           // The final text step may finish without usage; keep the last
           // step_finish that actually carries token counts.
           usage = {
@@ -1092,7 +1065,7 @@ function scrub(text: string, config: AgentRuntimeConfigSource): string {
       if (value.length >= 8) out = out.split(value).join("[redacted]");
     }
   }
-  out = out.replace(/(authorization|api[-_]?key|x-api-key)["'=:\s]+\S+/gi, '$1[redacted]');
+  out = out.replace(/(authorization|api[-_]?key|x-api-key)["'=:\s]+\S+/gi, "$1[redacted]");
   return out;
 }
 

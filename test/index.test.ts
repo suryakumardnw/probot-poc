@@ -1,22 +1,18 @@
 // Requiring our app implementation
-import myProbotApp from "../src/index.js";
-import { Probot, ProbotOctokit } from "probot";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Probot, ProbotOctokit } from "probot";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import myProbotApp from "../src/index.js";
 // Requiring our fixtures
 import issueOpenedPayload from "./fixtures/issues.opened.json" with { type: "json" };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const privateKey = fs.readFileSync(
-  path.join(__dirname, "fixtures/mock-cert.pem"),
-  "utf-8",
-);
+const privateKey = fs.readFileSync(path.join(__dirname, "fixtures/mock-cert.pem"), "utf-8");
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GITHUB_API = "https://api.github.com";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -97,11 +93,7 @@ describe("probot-poc app", () => {
       payload: issueOpenedPayload,
     });
 
-    const comment = captured.find(
-      (r) =>
-        r.url.pathname ===
-        "/repos/hiimbex/testing-things/issues/1/comments",
-    );
+    const comment = captured.find((r) => r.url.pathname === "/repos/hiimbex/testing-things/issues/1/comments");
     expect(comment).toBeDefined();
     expect(comment!.body.body).toContain("🤖 **AI Triage**");
     expect(comment!.body.body).toContain("Classification: Bug");
@@ -135,11 +127,7 @@ describe("probot-poc app", () => {
 
     // The app-level try/catch means the comment is simply never posted;
     // assert no GitHub comment (and no LLM call) happened.
-    const comment = captured.find(
-      (r) =>
-        r.url.pathname ===
-        "/repos/hiimbex/testing-things/issues/1/comments",
-    );
+    const comment = captured.find((r) => r.url.pathname === "/repos/hiimbex/testing-things/issues/1/comments");
     const llm = captured.find((r) => r.url.origin === new URL(GROQ_URL).origin);
     expect(comment).toBeUndefined();
     expect(llm).toBeUndefined();

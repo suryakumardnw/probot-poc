@@ -1,10 +1,8 @@
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
-import type { Finding, FindingEvidence } from "../src/review-engine/index.js";
 import {
   computeFindingFingerprint,
   normalizeTextSignature,
@@ -14,6 +12,8 @@ import {
   supersedeFindingsForReview,
   getFindingsForReview,
 } from "../src/findings/index.js";
+import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
+import type { Finding, FindingEvidence } from "../src/review-engine/index.js";
 
 /**
  * Ticket 08 integration tests: finding validation, verification,
@@ -256,10 +256,14 @@ describe("validation and independent verification (§6.4, §7.1)", () => {
       description: "the broken function has a problem maybe",
       evidence: evidence({ line: 6, excerpt: "function unused() {" }),
     });
-    const outcome = await validateFindings(workspacePath, [
-      { finding: good, fingerprint: computeFindingFingerprint(good, REPO_FULL_NAME) },
-      { finding: unsure, fingerprint: computeFindingFingerprint(unsure, REPO_FULL_NAME) },
-    ], makeConfig());
+    const outcome = await validateFindings(
+      workspacePath,
+      [
+        { finding: good, fingerprint: computeFindingFingerprint(good, REPO_FULL_NAME) },
+        { finding: unsure, fingerprint: computeFindingFingerprint(unsure, REPO_FULL_NAME) },
+      ],
+      makeConfig(),
+    );
     expect(outcome.rejected).toHaveLength(0);
     expect(outcome.verified).toHaveLength(1);
     expect(outcome.verified[0].finding.title).toBe(good.title);
@@ -273,9 +277,11 @@ describe("validation and independent verification (§6.4, §7.1)", () => {
       evidence: evidence({ excerpt: "function unused() {", line: 6 }),
       description: "the unused function should be removed",
     });
-    const outcome = await validateFindings(workspacePath, [
-      { finding: borderline, fingerprint: computeFindingFingerprint(borderline, REPO_FULL_NAME) },
-    ], makeConfig());
+    const outcome = await validateFindings(
+      workspacePath,
+      [{ finding: borderline, fingerprint: computeFindingFingerprint(borderline, REPO_FULL_NAME) }],
+      makeConfig(),
+    );
     expect(outcome.rejected).toHaveLength(0);
     expect(outcome.verified).toHaveLength(0);
     expect(outcome.uncertain).toHaveLength(1);
@@ -291,9 +297,11 @@ describe("validation and independent verification (§6.4, §7.1)", () => {
       description: "a fabricated claim about missing code",
       evidence: evidence({ excerpt: "totally absent function body() {", line: 2 }),
     });
-    const outcome = await validateFindings(workspacePath, [
-      { finding: liar, fingerprint: computeFindingFingerprint(liar, REPO_FULL_NAME) },
-    ], makeConfig());
+    const outcome = await validateFindings(
+      workspacePath,
+      [{ finding: liar, fingerprint: computeFindingFingerprint(liar, REPO_FULL_NAME) }],
+      makeConfig(),
+    );
     expect(outcome.verified).toHaveLength(0);
     expect(outcome.rejected).toHaveLength(0);
     expect(outcome.uncertain).toHaveLength(1);
@@ -327,17 +335,21 @@ describe("validation and independent verification (§6.4, §7.1)", () => {
   test("severity not enabled in configuration is rejected", async () => {
     const config = makeConfig({ review: { severity: ["critical", "high"] } });
     const f = makeFinding({ severity: "low", description: "a low severity issue exists here" });
-    const outcome = await validateFindings(workspacePath, [
-      { finding: f, fingerprint: computeFindingFingerprint(f, REPO_FULL_NAME) },
-    ], config);
+    const outcome = await validateFindings(
+      workspacePath,
+      [{ finding: f, fingerprint: computeFindingFingerprint(f, REPO_FULL_NAME) }],
+      config,
+    );
     expect(outcome.rejected.map((r) => r.reason)).toEqual(["unsupported_severity"]);
   });
 
   test("line-anchored evidence pointing past the file is not verified", async () => {
     const f = makeFinding({ evidence: evidence({ line: 500 }) });
-    const outcome = await validateFindings(workspacePath, [
-      { finding: f, fingerprint: computeFindingFingerprint(f, REPO_FULL_NAME) },
-    ], makeConfig());
+    const outcome = await validateFindings(
+      workspacePath,
+      [{ finding: f, fingerprint: computeFindingFingerprint(f, REPO_FULL_NAME) }],
+      makeConfig(),
+    );
     expect(outcome.verified).toHaveLength(0);
     expect(outcome.uncertain).toHaveLength(1);
   });
@@ -389,8 +401,6 @@ describe("persistence: store-only-valid contract", () => {
 
 describe("lifecycle across commits (§7.2)", () => {
   test("unchanged issue → existing; changed lines/severity → updated; removed issue → resolved; reintroduced → reopened", async () => {
-    const config = makeConfig();
-
     // Commit 1: issues A and B are first seen.
     const review1 = await seedReview("c1");
     const a1 = bugRiskFinding({ title: "A" });
@@ -423,7 +433,11 @@ describe("lifecycle across commits (§7.2)", () => {
       "utf-8",
     );
     const review3 = await seedReview("c3");
-    const a3 = bugRiskFinding({ title: "A", line: 4, evidence: evidence({ line: 4, excerpt: "function broken(a, b) {" }) });
+    const a3 = bugRiskFinding({
+      title: "A",
+      line: 4,
+      evidence: evidence({ line: 4, excerpt: "function broken(a, b) {" }),
+    });
     const r3 = await persist(review3, [a3]);
     expect(r3.stored[0].status).toBe("updated");
 
@@ -446,7 +460,11 @@ describe("lifecycle across commits (§7.2)", () => {
       "utf-8",
     );
     const review5 = await seedReview("c5");
-    const a5 = bugRiskFinding({ title: "A", line: 4, evidence: evidence({ line: 4, excerpt: "function broken(a, b) {" }) });
+    const a5 = bugRiskFinding({
+      title: "A",
+      line: 4,
+      evidence: evidence({ line: 4, excerpt: "function broken(a, b) {" }),
+    });
     const r5 = await persist(review5, [a5]);
     expect(r5.stored).toHaveLength(1);
     expect(r5.stored[0].status).toBe("new");

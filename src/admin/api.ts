@@ -1,7 +1,8 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { PrismaClient } from "@prisma/client";
+import { z } from "zod";
 import type { Env } from "../config/env.js";
 import {
   DEFAULT_CONFIG_PATH,
@@ -16,9 +17,15 @@ import {
   updateReviewConfig,
   validateRawConfig,
 } from "../config/review-loader.js";
-import { getReviewStatus, ingestManualReview, ManualIngestionError, REVIEW_TYPES, type ReviewTypeValue } from "../ingestion/orchestrator.js";
+import {
+  getReviewStatus,
+  ingestManualReview,
+  ManualIngestionError,
+  REVIEW_TYPES,
+  type ReviewTypeValue,
+} from "../ingestion/orchestrator.js";
 import { summarizeKnowledgeMetrics, summarizeKnowledgeSnapshot } from "../knowledge/index.js";
-import { z } from "zod";
+import { recordAuditLog, type AuditAction } from "./audit.js";
 import {
   buildAuthorizeUrl,
   exchangeOAuthCode,
@@ -26,6 +33,7 @@ import {
   fetchOrgMembership,
   GithubOauthError,
 } from "./github-client.js";
+import { checkRateLimit, clientIpOf } from "./rate-limit.js";
 import {
   CSRF_HEADER,
   buildClearCookieHeader,
@@ -37,8 +45,6 @@ import {
   verifyCsrfToken,
   type AdminSession,
 } from "./session.js";
-import { checkRateLimit, clientIpOf } from "./rate-limit.js";
-import { recordAuditLog, type AuditAction } from "./audit.js";
 
 /**
  * Admin API (ticket 10, §14.2 + §15): GitHub OAuth authentication, membership
@@ -64,10 +70,7 @@ export interface AdminApiDeps {
 
 export function isAdminConfigured(env: Env): boolean {
   return Boolean(
-    env.ADMIN_OAUTH_CLIENT_ID &&
-      env.ADMIN_OAUTH_CLIENT_SECRET &&
-      env.SESSION_SECRET &&
-      env.ADMIN_GITHUB_ORG,
+    env.ADMIN_OAUTH_CLIENT_ID && env.ADMIN_OAUTH_CLIENT_SECRET && env.SESSION_SECRET && env.ADMIN_GITHUB_ORG,
   );
 }
 
@@ -148,11 +151,15 @@ function consumeOauthState(state: string | null, now: number): boolean {
 // ---------------------------------------------------------------------------
 
 function parseLoginAllowlist(env: Env): string[] {
-  return env.ADMIN_GITHUB_LOGINS.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  return env.ADMIN_GITHUB_LOGINS.split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }
 
 function parseAdminRoles(env: Env): string[] {
-  return env.ADMIN_ORG_ADMIN_ROLES.split(",").map((entry) => entry.trim().toLowerCase()).filter((entry) => entry.length > 0);
+  return env.ADMIN_ORG_ADMIN_ROLES.split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
 }
 
 export interface AdminAuthorization {
@@ -181,14 +188,20 @@ export function authorizeAdmin(
   const allowlist = parseLoginAllowlist(env);
   if (allowlist.length > 0) {
     const allowed = allowlist.includes(user.login);
-    return { allowed, rolePolicy: "allowlist", reason: allowed ? "allowlisted administrator" : "not on the admin allowlist" };
+    return {
+      allowed,
+      rolePolicy: "allowlist",
+      reason: allowed ? "allowlisted administrator" : "not on the admin allowlist",
+    };
   }
   const roles = parseAdminRoles(env);
   const allowed = roles.includes(membership.role);
   return {
     allowed,
     rolePolicy: "org-role",
-    reason: allowed ? `organization role '${membership.role}' grants admin` : `organization role '${membership.role}' does not grant admin`,
+    reason: allowed
+      ? `organization role '${membership.role}' grants admin`
+      : `organization role '${membership.role}' does not grant admin`,
   };
 }
 
@@ -297,7 +310,12 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
 
   // -------------------------------------------------------------------------
 
-  async function audit(actor: string, action: AuditAction, resource: string, metadata?: Record<string, unknown>): Promise<void> {
+  async function audit(
+    actor: string,
+    action: AuditAction,
+    resource: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     await recordAuditLog(deps.prisma, { actor, action, resource, metadata }, deps.logger);
   }
 
@@ -452,18 +470,29 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     const decision = authorizeAdmin(env, user, membership);
 
     if (!decision.allowed) {
-      await audit(user.login, "admin.login_denied", "admin_session", { reason: decision.reason, rolePolicy: decision.rolePolicy });
+      await audit(user.login, "admin.login_denied", "admin_session", {
+        reason: decision.reason,
+        rolePolicy: decision.rolePolicy,
+      });
       sendJson(res, 403, { error: "admin access denied", reason: decision.reason });
       return;
     }
 
-    const newSession = createSession(user, decision.rolePolicy === "allowlist" ? "allowlist" : "org-role", { env, now });
+    const newSession = createSession(user, decision.rolePolicy === "allowlist" ? "allowlist" : "org-role", {
+      env,
+      now,
+    });
     await audit(user.login, "admin.login", "admin_session", { rolePolicy: newSession.rolePolicy });
     deps.logger.info({ login: user.login, rolePolicy: newSession.rolePolicy }, "Admin logged in");
     sendJson(
       res,
       200,
-      { authenticated: true, user: { login: user.login, id: user.id }, rolePolicy: newSession.rolePolicy, csrfToken: newSession.csrfToken },
+      {
+        authenticated: true,
+        user: { login: user.login, id: user.id },
+        rolePolicy: newSession.rolePolicy,
+        csrfToken: newSession.csrfToken,
+      },
       { "Set-Cookie": buildSetCookieHeader(newSession, env) },
     );
   }
@@ -558,7 +587,11 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     // §11.5: re-read from disk, validate before activation, keep the previous
     // configuration available (the loader's LKG protection covers the case of
     // a file that no longer validates: it reports fromLastKnownGood=true).
-    const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true, updateLastKnownGood: true });
+    const loaded = loadReviewConfig(configPath, {
+      env: processEnv,
+      allowLastKnownGoodFallback: true,
+      updateLastKnownGood: true,
+    });
     await audit(session.login, "config.reload", "configuration", {
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
@@ -595,7 +628,9 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       });
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        await audit(session.login, "config.rollback_failed", "configuration", { reason: "last-known-good snapshot failed validation" });
+        await audit(session.login, "config.rollback_failed", "configuration", {
+          reason: "last-known-good snapshot failed validation",
+        });
         sendJson(ctx.res, 409, { error: "last-known-good snapshot failed validation" });
         return;
       }
@@ -685,7 +720,10 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         return;
       }
     } catch (error) {
-      deps.logger.warn({ err: (error as Error).message }, "Configuration unavailable for review trigger; defaulting type");
+      deps.logger.warn(
+        { err: (error as Error).message },
+        "Configuration unavailable for review trigger; defaulting type",
+      );
       reviewType = parsed.data.reviewType ?? "standard";
     }
     try {
@@ -777,8 +815,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         if (!others.has(fingerprint)) uniqueCount += 1;
       }
       const completedAt = review.completedAt ?? null;
-      const durationMs =
-        review.startedAt && completedAt ? completedAt.getTime() - review.startedAt.getTime() : null;
+      const durationMs = review.startedAt && completedAt ? completedAt.getTime() - review.startedAt.getTime() : null;
       return {
         id: review.id,
         reviewType: review.reviewType,

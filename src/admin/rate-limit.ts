@@ -51,7 +51,10 @@ export function checkRateLimit(key: string, options: RateLimitOptions): RateLimi
 }
 
 /** Best-effort client IP extraction from proxy headers or the socket. */
-export function clientIpOf(req: { headers: Record<string, string | string[] | undefined>; socket: { remoteAddress?: string } }): string {
+export function clientIpOf(req: {
+  headers: Record<string, string | string[] | undefined>;
+  socket: { remoteAddress?: string };
+}): string {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.length > 0) {
     return forwarded.split(",")[0]!.trim();

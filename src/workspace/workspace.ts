@@ -3,9 +3,9 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import type { PrismaClient } from "@prisma/client";
 import type pino from "pino";
-import { runGit } from "./git.js";
 import { buildCloneUrl, type InstallationTokenProvider } from "./credentials.js";
 import { parseNameStatus, type ChangedFile } from "./files.js";
+import { runGit } from "./git.js";
 import { redactCredentials, sanitizeGitUrl } from "./redact.js";
 
 /**
@@ -59,7 +59,10 @@ export interface WorkspaceResult {
 }
 
 export class ReviewRetrievalError extends Error {
-  constructor(message: string, public readonly code: string) {
+  constructor(
+    message: string,
+    public readonly code: string,
+  ) {
     super(message);
     this.name = "ReviewRetrievalError";
   }
@@ -159,10 +162,10 @@ export class ReviewWorkspaceService {
     try {
       // 1. Shallow clone (§5.1 step 2).
       try {
-        await runGit(
-          ["clone", "--depth", String(policy.cloneDepth), "--no-checkout", cloneUrl, workspacePath],
-          { timeoutMs: policy.gitTimeoutMs, secret: token },
-        );
+        await runGit(["clone", "--depth", String(policy.cloneDepth), "--no-checkout", cloneUrl, workspacePath], {
+          timeoutMs: policy.gitTimeoutMs,
+          secret: token,
+        });
         log?.debug({ repository: input.repositoryFullName, depth: policy.cloneDepth }, "Shallow clone complete");
       } catch (error) {
         throw new CloneFailedError(
@@ -177,13 +180,17 @@ export class ReviewWorkspaceService {
       // 3. Fetch the PR head commit and check out the exact SHA.
       try {
         await runGit(
-          ["fetch", "--depth", String(policy.cloneDepth), "origin", `+refs/pull/${input.pullRequestNumber}/head:refs/review/head`],
+          [
+            "fetch",
+            "--depth",
+            String(policy.cloneDepth),
+            "origin",
+            `+refs/pull/${input.pullRequestNumber}/head:refs/review/head`,
+          ],
           { cwd: workspacePath, timeoutMs: policy.gitTimeoutMs, secret: token },
         );
       } catch (error) {
-        throw new CloneFailedError(
-          redactCredentials(`Fetching PR head failed: ${(error as Error).message}`, token),
-        );
+        throw new CloneFailedError(redactCredentials(`Fetching PR head failed: ${(error as Error).message}`, token));
       }
       try {
         await runGit(["checkout", "--detach", headSha], { cwd: workspacePath, timeoutMs: policy.gitTimeoutMs });
@@ -194,9 +201,7 @@ export class ReviewWorkspaceService {
       }
       const actualHead = (await runGit(["rev-parse", "HEAD"], { cwd: workspacePath })).trim().toLowerCase();
       if (actualHead !== headSha) {
-        throw new StaleCommitError(
-          `Checked-out HEAD ${actualHead} does not match requested head SHA ${headSha}`,
-        );
+        throw new StaleCommitError(`Checked-out HEAD ${actualHead} does not match requested head SHA ${headSha}`);
       }
 
       // 4. Base commit retrieval + merge-base (§5.1 steps 4/... resolution).
@@ -291,16 +296,16 @@ export class ReviewWorkspaceService {
         secret: token,
       });
     } catch (error) {
-      throw new CloneFailedError(redactCredentials(`ls-remote for stale check failed: ${(error as Error).message}`, token));
+      throw new CloneFailedError(
+        redactCredentials(`ls-remote for stale check failed: ${(error as Error).message}`, token),
+      );
     }
     const remoteSha = lsRemote.split("\t")[0]?.trim().toLowerCase() ?? "";
     if (!remoteSha) {
       throw new StaleCommitError(`PR ref refs/pull/${pullRequestNumber}/head no longer exists on the remote`);
     }
     if (remoteSha !== headSha) {
-      throw new StaleCommitError(
-        `PR head moved: remote ${remoteSha} !== requested ${headSha} (review job is stale)`,
-      );
+      throw new StaleCommitError(`PR head moved: remote ${remoteSha} !== requested ${headSha} (review job is stale)`);
     }
   }
 

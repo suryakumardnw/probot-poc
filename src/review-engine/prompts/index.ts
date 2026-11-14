@@ -12,7 +12,4 @@
  * engine run; the guideline content itself is always untrusted data.
  */
 export { COMMON_REVIEW_INSTRUCTIONS, CONVENTIONS_INSTRUCTIONS } from "./common.js";
-export {
-  HANDBOOK_MODE_INSTRUCTIONS,
-  HANDBOOK_REFERENCE_INSTRUCTIONS,
-} from "./handbook-review.js";
+export { HANDBOOK_MODE_INSTRUCTIONS, HANDBOOK_REFERENCE_INSTRUCTIONS } from "./handbook-review.js";

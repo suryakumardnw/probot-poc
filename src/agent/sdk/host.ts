@@ -37,10 +37,7 @@ export interface SdkHostDispatcher {
   handle(request: SdkHostRequest): Promise<SdkHostResponse>;
 }
 
-export function createSdkHostDispatcher(
-  loadSdk: SdkLoader,
-  onLog: (entry: SdkLogEntry) => void,
-): SdkHostDispatcher {
+export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLogEntry) => void): SdkHostDispatcher {
   let module: SdkModule | undefined;
   let host: SdkHost | undefined;
   let closed = false;
@@ -89,9 +86,7 @@ export function createSdkHostDispatcher(
           const response = await requireHost().message.list(
             request.params as SdkSessionRef & { order?: "asc" | "desc" },
           );
-          const messages: SdkMessage[] = Array.isArray(response)
-            ? response
-            : (response.data ?? []);
+          const messages: SdkMessage[] = Array.isArray(response) ? response : (response.data ?? []);
           return { id: request.id, ok: true, result: messages };
         }
         case "session.remove": {

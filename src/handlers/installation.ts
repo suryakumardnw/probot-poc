@@ -11,11 +11,11 @@ import { getPrisma } from "../lib/prisma.js";
 
 export function registerInstallationHandlers(app: Probot): void {
   app.on("installation.created", async (context) => {
-      const installationPayload = context.payload;
-      const { installation, repositories } = installationPayload;
-      const account = installation.account;
-      const organization =
-        account && "login" in account ? account.login : ((account as { name?: string | null } | null)?.name ?? "unknown");
+    const installationPayload = context.payload;
+    const { installation, repositories } = installationPayload;
+    const account = installation.account;
+    const organization =
+      account && "login" in account ? account.login : ((account as { name?: string | null } | null)?.name ?? "unknown");
     try {
       await getPrisma().$transaction(async (tx) => {
         const record = await tx.installation.upsert({

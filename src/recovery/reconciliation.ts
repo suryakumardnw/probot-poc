@@ -22,8 +22,8 @@
 import type { PrismaClient, Review, ReviewJob, ReviewState } from "@prisma/client";
 import type { Queue } from "bullmq";
 import type pino from "pino";
-import { TERMINAL_REVIEW_STATES } from "../ingestion/review-state.js";
 import type { ReviewJobPayload } from "../ingestion/queue.js";
+import { TERMINAL_REVIEW_STATES } from "../ingestion/review-state.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
 
 export type RecoveryPolicy = "requeue" | "fail";
@@ -89,10 +89,7 @@ function buildPayloadFromRows(review: Review, job: ReviewJob, repositoryFullName
  * durable transition row (`fromState -> queued`) so the history stays
  * auditable.
  */
-export async function resetReviewForRecovery(
-  prisma: PrismaClient,
-  reviewId: string,
-): Promise<void> {
+export async function resetReviewForRecovery(prisma: PrismaClient, reviewId: string): Promise<void> {
   const review = await prisma.review.findUnique({ where: { id: reviewId }, select: { state: true } });
   if (!review) throw new Error(`Review '${reviewId}' not found`);
   await prisma.$transaction([

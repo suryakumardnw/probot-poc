@@ -292,16 +292,11 @@ function guidelineRuleId(finding: StoredFinding): string {
 
 /** Drop the rule-id prefix so the reference can be rendered separately. */
 function guidelineReference(guideline: string): string {
-  return guideline
-    .trim()
-    .replace(/^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\s*(?:[–—-]|::|:)\s*/, "");
+  return guideline.trim().replace(/^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\s*(?:[–—-]|::|:)\s*/, "");
 }
 
 /** One-line guideline citation for the compact inline report. */
-function renderInlineGuideline(
-  finding: StoredFinding,
-  source?: GuidelineSource,
-): string | undefined {
+function renderInlineGuideline(finding: StoredFinding, source?: GuidelineSource): string | undefined {
   if (!finding.guideline) return undefined;
   const rule = explicitRuleId(finding.guideline);
   const reference = rule
@@ -338,10 +333,7 @@ function renderUncertain(findings: StoredFinding[]): string {
     if (finding.impact) {
       body.push("", `**Why it matters:** ${truncate(finding.impact, 500).trim()}`);
     }
-    body.push(
-      "",
-      `_\`${finding.filePath}:${finding.lineNumber}\` · ${categoryLabel(finding.category)}_`,
-    );
+    body.push("", `_\`${finding.filePath}:${finding.lineNumber}\` · ${categoryLabel(finding.category)}_`);
     return body.join("\n");
   });
   const noun = findings.length === 1 ? "observation" : "observations";
@@ -410,9 +402,7 @@ export function buildReviewBody(input: FindingsBodyInput): string {
   if (ordered.length > 0) {
     parts.push(`## Findings (${ordered.length})\n`);
     for (const [index, finding] of ordered.entries()) {
-      parts.push(
-        `${renderFinding(finding, index + 1)}\n\n${renderTechnicalDetails(finding, input.guidelineSource)}\n`,
-      );
+      parts.push(`${renderFinding(finding, index + 1)}\n\n${renderTechnicalDetails(finding, input.guidelineSource)}\n`);
     }
   } else if (input.config.publishCleanReview) {
     parts.push("## Findings (0)\n\nNo confirmed findings.\n");
@@ -424,9 +414,7 @@ export function buildReviewBody(input: FindingsBodyInput): string {
 
   const footer = [
     input.meta?.model ? humanizeModel(input.meta.model) : "",
-    input.meta?.reviewedAt
-      ? formatShortDate(input.meta.reviewedAt, input.meta.timezone ?? "UTC")
-      : "",
+    input.meta?.reviewedAt ? formatShortDate(input.meta.reviewedAt, input.meta.timezone ?? "UTC") : "",
     commit ? `\`${commit}\`` : "",
   ].filter(Boolean);
   if (footer.length > 0) parts.push(`---\n\n<sub>${footer.join(" · ")}</sub>\n`);
@@ -437,10 +425,7 @@ export function buildReviewBody(input: FindingsBodyInput): string {
 }
 
 /** Build the inline comment body for one finding (with dedup marker). */
-export function buildInlineCommentBody(
-  finding: StoredFinding,
-  guidelineSource?: GuidelineSource,
-): string {
+export function buildInlineCommentBody(finding: StoredFinding, guidelineSource?: GuidelineSource): string {
   const marker = fingerprintMarker(finding.fingerprint, {
     rule: guidelineRuleId(finding),
     severity: finding.severity,

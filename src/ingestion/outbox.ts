@@ -1,11 +1,11 @@
 import type { OutboxEvent, ReviewJob } from "@prisma/client";
 import type { Queue } from "bullmq";
 import type pino from "pino";
-import { getPrisma } from "../lib/prisma.js";
-import { getReviewQueue, type ReviewJobPayload } from "./queue.js";
-import { createLogger } from "../lib/logger.js";
 import { loadEnv } from "../config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
+import { createLogger } from "../lib/logger.js";
+import { getPrisma } from "../lib/prisma.js";
+import { getReviewQueue, type ReviewJobPayload } from "./queue.js";
 
 /**
  * Transactional outbox publisher (ARCHITECTURE.md §12.2).

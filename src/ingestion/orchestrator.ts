@@ -1,16 +1,12 @@
 import type { ReviewState, ReviewTrigger } from "@prisma/client";
 import type pino from "pino";
 import { loadEnv } from "../config/env.js";
+import { DEFAULT_CONFIG_PATH, loadReviewConfig, type ConfigurationSnapshot } from "../config/review-loader.js";
 import { createLogger } from "../lib/logger.js";
 import { getPrisma } from "../lib/prisma.js";
-import {
-  DEFAULT_CONFIG_PATH,
-  loadReviewConfig,
-  type ConfigurationSnapshot,
-} from "../config/review-loader.js";
-import { TERMINAL_REVIEW_STATES } from "./review-state.js";
-import { closeReviewQueue } from "./queue.js";
 import { publishOutboxEvent } from "./outbox.js";
+import { closeReviewQueue } from "./queue.js";
+import { TERMINAL_REVIEW_STATES } from "./review-state.js";
 
 /**
  * Durable review ingestion (ARCHITECTURE.md §4, §12, §13.1).
@@ -73,12 +69,7 @@ export type IngestReviewRequestInput = {
   deliveryEvent?: string;
 };
 
-export type IngestOutcome =
-  | "created"
-  | "duplicate"
-  | "skipped"
-  | "duplicate_delivery"
-  | "configuration_unavailable";
+export type IngestOutcome = "created" | "duplicate" | "skipped" | "duplicate_delivery" | "configuration_unavailable";
 
 export type IngestReviewRequestResult = {
   outcome: IngestOutcome;
@@ -98,7 +89,10 @@ export class ManualIngestionError extends Error {
 }
 
 /** Load the effective review configuration; throws when unavailable. */
-export function loadIngestionConfig(): { config: ReturnType<typeof loadReviewConfig>["config"]; snapshot: ConfigurationSnapshot } {
+export function loadIngestionConfig(): {
+  config: ReturnType<typeof loadReviewConfig>["config"];
+  snapshot: ConfigurationSnapshot;
+} {
   const loaded = loadReviewConfig(DEFAULT_CONFIG_PATH);
   return { config: loaded.config, snapshot: loaded.snapshot };
 }
@@ -144,7 +138,10 @@ export async function ingestReviewRequest(input: IngestReviewRequestInput): Prom
   try {
     snapshot = loadIngestionConfig().snapshot;
   } catch (error) {
-    logger.error({ err: error instanceof Error ? error.message : String(error) }, "Review configuration unavailable; ignoring review request");
+    logger.error(
+      { err: error instanceof Error ? error.message : String(error) },
+      "Review configuration unavailable; ignoring review request",
+    );
     return { outcome: "configuration_unavailable", reason: "review configuration is invalid or unavailable" };
   }
   const config = snapshot.configuration;
@@ -224,7 +221,7 @@ export async function ingestReviewRequest(input: IngestReviewRequestInput): Prom
     // 2. Review identity (§12.3): one review per (PR, head SHA, mode), unless
     //    the request is forced (manual `/review` re-review), which raises the
     //    attempt counter instead of collapsing into the existing review.
-      const existingReview = input.force
+    const existingReview = input.force
       ? null
       : await tx.review.findUnique({
           where: {
@@ -239,13 +236,13 @@ export async function ingestReviewRequest(input: IngestReviewRequestInput): Prom
           include: { job: true },
         });
     if (existingReview) {
-    return {
-      duplicate: true as const,
-      reviewId: existingReview.id,
-      jobId: existingReview.job?.id,
-      state: existingReview.state,
-      attempt: existingReview.attempt,
-    };
+      return {
+        duplicate: true as const,
+        reviewId: existingReview.id,
+        jobId: existingReview.job?.id,
+        state: existingReview.state,
+        attempt: existingReview.attempt,
+      };
     }
 
     // 3. Supersede outdated in-flight reviews of this PR (§4.4). Superseding
@@ -351,14 +348,25 @@ export async function ingestReviewRequest(input: IngestReviewRequestInput): Prom
       },
     });
 
-    return { duplicate: false as const, reviewId: review.id, jobId: job.id, outboxEventId: outboxEvent.id, state: "queued" as const, attempt };
+    return {
+      duplicate: false as const,
+      reviewId: review.id,
+      jobId: job.id,
+      outboxEventId: outboxEvent.id,
+      state: "queued" as const,
+      attempt,
+    };
   });
 
   // Record the webhook delivery only once durable state is committed.
   if (input.deliveryId) {
     await prisma.webhookDelivery
       .create({
-        data: { deliveryId: input.deliveryId, event: input.deliveryEvent ?? `pull_request.${input.trigger}`, reviewJobId: result.jobId ?? null },
+        data: {
+          deliveryId: input.deliveryId,
+          event: input.deliveryEvent ?? `pull_request.${input.trigger}`,
+          reviewJobId: result.jobId ?? null,
+        },
       })
       .catch(() => {
         // Concurrent duplicate delivery: the review identity check above
@@ -383,10 +391,14 @@ export async function ingestReviewRequest(input: IngestReviewRequestInput): Prom
     logger.info({ reviewId: result.reviewId }, "Review queued durably; enqueue deferred to outbox recovery");
   }
 
-  return { outcome: "created", reviewId: result.reviewId, jobId: result.jobId, state: result.state, attempt: result.attempt };
+  return {
+    outcome: "created",
+    reviewId: result.reviewId,
+    jobId: result.jobId,
+    state: result.state,
+    attempt: result.attempt,
+  };
 }
-
-
 
 // ---------------------------------------------------------------------------
 // Manual ingestion (no auth in this milestone; §15 notes hardening for later)

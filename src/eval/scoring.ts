@@ -9,8 +9,8 @@
  * precision only, never recall.
  */
 
-import type { CaseScore, BenchmarkScore, ExpectedFinding } from "./types.js";
 import type { Finding } from "../review-engine/types.js";
+import type { CaseScore, BenchmarkScore, ExpectedFinding } from "./types.js";
 
 export const DEFAULT_LINE_TOLERANCE = 5;
 
@@ -116,12 +116,8 @@ const WEIGHTS = { recall: 0.35, precision: 0.25, severity: 0.2, line: 0.2 } as c
  * highest (missing a real bug is worse than a cautious duplicate), then
  * precision, then severity and line anchoring accuracy.
  */
-export function aggregateScores(
-  scores: CaseScore[],
-  qualityThreshold: number,
-): BenchmarkScore {
-  const sum = (pick: (s: CaseScore) => number): number =>
-    scores.reduce((acc, s) => acc + pick(s), 0);
+export function aggregateScores(scores: CaseScore[], qualityThreshold: number): BenchmarkScore {
+  const sum = (pick: (s: CaseScore) => number): number => scores.reduce((acc, s) => acc + pick(s), 0);
 
   const counts = {
     totalCases: scores.length,

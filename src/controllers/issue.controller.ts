@@ -5,13 +5,11 @@
  */
 
 import type { Context } from "probot";
+import type { IssueData } from "../models/triage.js";
 import { triageIssue } from "../services/triage.service.js";
 import { renderTriageComment } from "../views/triage.view.js";
-import type { IssueData } from "../models/triage.js";
 
-export async function handleIssuesOpened(
-  context: Context<"issues.opened">,
-): Promise<void> {
+export async function handleIssuesOpened(context: Context<"issues.opened">): Promise<void> {
   const { issue, repository } = context.payload;
 
   // Skip PRs (issues webhook fires for PRs too) and bots.

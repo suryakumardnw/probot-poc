@@ -62,7 +62,10 @@ describe("production compose structure (ticket 13)", () => {
     for (const svc of LONG_RUNNING) {
       for (const v of compose.services[svc].volumes ?? []) {
         const source = typeof v === "string" ? v.split(":")[0] : v.source;
-        expect(source.startsWith("/") || source.startsWith("./") || source.startsWith("../"), `${svc} volume ${source} is not a bind mount`).toBe(false);
+        expect(
+          source.startsWith("/") || source.startsWith("./") || source.startsWith("../"),
+          `${svc} volume ${source} is not a bind mount`,
+        ).toBe(false);
       }
     }
   });
@@ -159,9 +162,7 @@ describe("production compose structure (ticket 13)", () => {
     // The app owns the network so it starts without the optional trace stack;
     // deploy/observability joins it as an external network.
     expect(compose.networks.observability.external).not.toBe(true);
-    expect(compose.networks.observability.name).toBe(
-      "${OBSERVABILITY_NETWORK:-ai-pr-reviewer_observability}",
-    );
+    expect(compose.networks.observability.name).toBe("${OBSERVABILITY_NETWORK:-ai-pr-reviewer_observability}");
   });
 
   it("hardens the public-facing container (read-only rootfs, tmpfs)", () => {

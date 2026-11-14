@@ -129,13 +129,16 @@ export async function fetchOrgMembership(
   login: string,
   accessToken: string,
 ): Promise<OrgMembership | null> {
-  const response = await githubFetchImpl(`${GITHUB_API}/orgs/${encodeURIComponent(org)}/memberships/${encodeURIComponent(login)}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
+  const response = await githubFetchImpl(
+    `${GITHUB_API}/orgs/${encodeURIComponent(org)}/memberships/${encodeURIComponent(login)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
     },
-  });
+  );
   if (response.status === 404) {
     return null; // Not a member of the organization.
   }

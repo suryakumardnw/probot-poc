@@ -21,10 +21,12 @@
  *  - GitHub API error handling: bounded retries with exponential backoff.
  */
 
-import type { PrismaClient } from "@prisma/client";
 import { Octokit } from "@octokit/core";
 import { restEndpointMethods } from "@octokit/plugin-rest-endpoint-methods";
 import { retry } from "@octokit/plugin-retry";
+import type { PrismaClient } from "@prisma/client";
+import type { StoredFinding } from "../findings/index.js";
+import { resolveInlinePosition, parseUnifiedDiff, type InlinePosition } from "./diff-positions.js";
 import {
   buildInlineCommentBody,
   buildReviewBody,
@@ -32,8 +34,6 @@ import {
   type GuidelineSource,
   type ReviewBodyMeta,
 } from "./summary.js";
-import { resolveInlinePosition, parseUnifiedDiff, type InlinePosition } from "./diff-positions.js";
-import type { StoredFinding } from "../findings/index.js";
 
 // ---------------------------------------------------------------------------
 // Octokit surface (minimal, injectable — tests supply a fake)
@@ -98,7 +98,9 @@ export class StaleHeadError extends Error {
     public readonly expectedSha: string,
     public readonly actualSha: string | null,
   ) {
-    super(`PR head moved before publication: expected ${expectedSha.slice(0, 12)}, current ${actualSha ? actualSha.slice(0, 12) : "unknown"}`);
+    super(
+      `PR head moved before publication: expected ${expectedSha.slice(0, 12)}, current ${actualSha ? actualSha.slice(0, 12) : "unknown"}`,
+    );
     this.name = "StaleHeadError";
   }
 }
@@ -166,14 +168,22 @@ export async function withRetry<T>(
       if (attempt < options.maxAttempts) {
         const delay = options.baseDelayMs * 2 ** (attempt - 1);
         logger?.warn(
-          { label, attempt, nextAttempt: attempt + 1, delayMs: delay, err: error instanceof Error ? error.message : String(error) },
+          {
+            label,
+            attempt,
+            nextAttempt: attempt + 1,
+            delayMs: delay,
+            err: error instanceof Error ? error.message : String(error),
+          },
           "GitHub API call failed; retrying",
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
-  throw new ApiError(`${label} failed after ${options.maxAttempts} attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+  throw new ApiError(
+    `${label} failed after ${options.maxAttempts} attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -187,11 +197,7 @@ export function appendSummaryMarker(body: string): string {
   return `${body}\n\n${SUMMARY_MARKER}`;
 }
 
-export type PublishOutcome =
-  | "published"
-  | "already_published"
-  | "clean_review_published"
-  | "nothing_to_publish";
+export type PublishOutcome = "published" | "already_published" | "clean_review_published" | "nothing_to_publish";
 
 export interface PublishReviewResult {
   outcome: PublishOutcome;
@@ -288,21 +294,20 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
 
   // 2. Reconcile: existing inline comments on the PR by fingerprint marker,
   //    plus publication rows already recorded for this review.
-  const existingComments = await listAll(
-    (page) =>
-      withRetry(
-        "pulls.listReviewComments",
-        () =>
-          octokit.rest.pulls.listReviewComments({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            per_page: 100,
-            page,
-          }),
-        retryOptions,
-        logger,
-      ).then((r) => r.data),
+  const existingComments = await listAll((page) =>
+    withRetry(
+      "pulls.listReviewComments",
+      () =>
+        octokit.rest.pulls.listReviewComments({
+          owner,
+          repo,
+          pull_number: pullNumber,
+          per_page: 100,
+          page,
+        }),
+      retryOptions,
+      logger,
+    ).then((r) => r.data),
   );
   const knownFingerprints = new Map<string, number>();
   for (const comment of existingComments) {
@@ -361,14 +366,13 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
     });
     existingSummaryId = summaryRow?.githubCommentId != null ? Number(summaryRow.githubCommentId) : null;
     if (existingSummaryId === null) {
-      const reviews = await listAll(
-        (page) =>
-          withRetry(
-            "pulls.listReviews",
-            () => octokit.rest.pulls.listReviews({ owner, repo, pull_number: pullNumber, per_page: 100, page }),
-            retryOptions,
-            logger,
-          ).then((r) => r.data),
+      const reviews = await listAll((page) =>
+        withRetry(
+          "pulls.listReviews",
+          () => octokit.rest.pulls.listReviews({ owner, repo, pull_number: pullNumber, per_page: 100, page }),
+          retryOptions,
+          logger,
+        ).then((r) => r.data),
       );
       const marked = reviews.find((r) => r.body?.includes(SUMMARY_MARKER));
       existingSummaryId = marked ? marked.id : null;

@@ -87,9 +87,7 @@ async function main(): Promise<void> {
         `call ${call.stage}: ${call.durationMs}ms in=${call.inputTokens ?? "?"} out=${call.outputTokens ?? "?"}`,
       );
     }
-    console.log(
-      `tokens: in=${meta.usage.totalInputTokens} out=${meta.usage.totalOutputTokens}; wall=${wallMs}ms`,
-    );
+    console.log(`tokens: in=${meta.usage.totalInputTokens} out=${meta.usage.totalOutputTokens}; wall=${wallMs}ms`);
     console.log(
       `retrieval: requested=${meta.retrieval.requested} fulfilled=${meta.retrieval.fulfilled} ` +
         `rejected=${meta.retrieval.rejected} bytes=${meta.retrieval.bytesDelivered}`,
@@ -115,7 +113,9 @@ async function main(): Promise<void> {
       console.log(`  - ${f.title} @ ${f.file}:${f.line} confidence=${Math.round(f.confidence * 100)}%`);
     }
     const sawCaller = result.findings.some((f) => f.file.endsWith("caller.ts"));
-    console.log(sawCaller ? "RESULT: PASS — caller.ts bug surfaced via tool protocol" : "RESULT: caller.ts bug NOT surfaced");
+    console.log(
+      sawCaller ? "RESULT: PASS — caller.ts bug surfaced via tool protocol" : "RESULT: caller.ts bug NOT surfaced",
+    );
   } finally {
     await fs.rm(workspacePath, { recursive: true, force: true });
   }

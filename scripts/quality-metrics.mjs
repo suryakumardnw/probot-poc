@@ -565,7 +565,7 @@ function main() {
       label: "Non-null assertions (`!`)",
       note: "Postfix `!` on an identifier, call, index, or `this`, excluding `!=` and `!==`.",
       scope: "both",
-      sites: collectScoped((source) => matchSites(source, /(?:[A-Za-z0-9_$\]\)]|>)!(?!=)/g), "both"),
+      sites: collectScoped((source) => matchSites(source, /(?:[A-Za-z0-9_$\])]|>)!(?!=)/g), "both"),
     },
     {
       id: "as_const",
@@ -660,8 +660,7 @@ function main() {
     );
     const rows = ["| Metric | Scope | Count | Files |", "|---|---|---:|---:|"];
     for (const metric of metrics) {
-      const scopes =
-        metric.scope === "both" ? ["src", "test"] : metric.scope === "src" ? ["src"] : ["test"];
+      const scopes = metric.scope === "both" ? ["src", "test"] : metric.scope === "src" ? ["src"] : ["test"];
       for (const scope of scopes) {
         const summary = summarize(metric.sites[scope], metric.unit ?? "sites");
         rows.push(`| ${metric.label} | ${scope} | ${summary.count} | ${summary.files} |`);

@@ -15,7 +15,12 @@
  */
 
 export { ExecutionService, type ExecutionServiceOptions } from "./service.js";
-export { DockerSandboxExecutor, DEFAULT_SANDBOX_IMAGE, SANDBOX_USER, type DockerExecutorOptions } from "./docker-executor.js";
+export {
+  DockerSandboxExecutor,
+  DEFAULT_SANDBOX_IMAGE,
+  SANDBOX_USER,
+  type DockerExecutorOptions,
+} from "./docker-executor.js";
 export { LocalSandboxExecutor, LOCAL_MAX_OUTPUT_BYTES, assertNoSecretsInAllowlistEnv } from "./local-executor.js";
 export { evaluateCommand, buildEffectivePolicy, type EvaluateOptions } from "./policy.js";
 export { buildExecutionEnv, EXECUTION_ENV_ALLOWLIST, FORBIDDEN_EXECUTION_ENV_VARS } from "./env.js";

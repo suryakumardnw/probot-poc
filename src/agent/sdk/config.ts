@@ -62,14 +62,7 @@ export function buildSdkPermissions(config: AgentRuntimeConfigSource): SdkPermis
   // 3. Secret paths are denied even if reads/grep/glob were allowed above.
   // grep reads file content and glob reveals path existence, so the denial
   // must apply to every read-only action that can observe workspace files.
-  const secretResources = [
-    ".env",
-    "*.env",
-    "*.env.*",
-    "*credential*",
-    "*credentials*",
-    ".git-credentials",
-  ];
+  const secretResources = [".env", "*.env", "*.env.*", "*credential*", "*credentials*", ".git-credentials"];
   for (const action of ["read", "grep", "glob"]) {
     for (const resource of secretResources) {
       rules.push({ action, resource, effect: "deny" });
@@ -149,21 +142,12 @@ export function validateSdkPermissions(
   }
 
   const has = (action: string, resource: string, effect: SdkPermissionEffect): boolean =>
-    (rules ?? []).some(
-      (rule) => rule.action === action && rule.resource === resource && rule.effect === effect,
-    );
+    (rules ?? []).some((rule) => rule.action === action && rule.resource === resource && rule.effect === effect);
 
   if (!has("*", "*", "deny")) problems.push("missing catch-all deny");
   if (!has("*", "*/*", "deny")) problems.push("missing path catch-all deny");
   if (!has("external_directory", "*", "deny")) problems.push("missing external_directory deny");
-  for (const resource of [
-    ".env",
-    "*.env",
-    "*.env.*",
-    "*credential*",
-    "*credentials*",
-    ".git-credentials",
-  ]) {
+  for (const resource of [".env", "*.env", "*.env.*", "*credential*", "*credentials*", ".git-credentials"]) {
     if (!has("read", resource, "deny")) problems.push(`missing secret read deny ${resource}`);
   }
   const hasReadAllow = has("read", "*", "allow");

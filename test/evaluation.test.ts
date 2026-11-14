@@ -1,18 +1,13 @@
-import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import fs from "node:fs/promises";
-import {
-  scoreCase,
-  aggregateScores,
-  percentile,
-  DEFAULT_LINE_TOLERANCE,
-} from "../src/eval/scoring.js";
-import { runBenchmarkSuite } from "../src/eval/runner.js";
-import { configurationHashFrom, persistEvaluationRun } from "../src/eval/persistence.js";
-import type { BenchmarkCase, BenchmarkSuite, CaseScore } from "../src/eval/types.js";
-import type { Finding, RunReviewOutput } from "../src/review-engine/types.js";
+import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { ReviewConfig } from "../src/config/review-schema.js";
 import { reviewConfigSchema } from "../src/config/review-schema.js";
+import { configurationHashFrom, persistEvaluationRun } from "../src/eval/persistence.js";
+import { runBenchmarkSuite } from "../src/eval/runner.js";
+import { scoreCase, aggregateScores, percentile, DEFAULT_LINE_TOLERANCE } from "../src/eval/scoring.js";
+import type { BenchmarkCase, BenchmarkSuite, CaseScore } from "../src/eval/types.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
+import type { Finding, RunReviewOutput } from "../src/review-engine/types.js";
 
 /**
  * Ticket 12 unit/integration tests: benchmark scoring math, benchmark runner
@@ -86,12 +81,7 @@ function suiteOf(cases: BenchmarkCase[]): BenchmarkSuite {
 
 describe("scoreCase", () => {
   test("matches by category + file within the line tolerance", () => {
-    const score = scoreCase(
-      "c",
-      { findings: [finding({ line: 14 })] },
-      [expected({ line: 10 })],
-      42,
-    );
+    const score = scoreCase("c", { findings: [finding({ line: 14 })] }, [expected({ line: 10 })], 42);
     expect(DEFAULT_LINE_TOLERANCE).toBe(5);
     expect(score.truePositives).toBe(1);
     expect(score.falsePositives).toBe(0);
@@ -206,8 +196,22 @@ describe("aggregateScores", () => {
   test("counts true/false positives and negatives across cases", () => {
     const score = aggregateScores(
       [
-        caseScoreFrom({ truePositives: 2, falsePositives: 1, falseNegatives: 0, recall: 1, precision: 2 / 3, passed: false }),
-        caseScoreFrom({ truePositives: 0, falsePositives: 0, falseNegatives: 2, recall: 0, precision: 1, passed: false }),
+        caseScoreFrom({
+          truePositives: 2,
+          falsePositives: 1,
+          falseNegatives: 0,
+          recall: 1,
+          precision: 2 / 3,
+          passed: false,
+        }),
+        caseScoreFrom({
+          truePositives: 0,
+          falsePositives: 0,
+          falseNegatives: 2,
+          recall: 0,
+          precision: 1,
+          passed: false,
+        }),
       ],
       0.85,
     );
@@ -223,7 +227,9 @@ describe("aggregateScores", () => {
 // Benchmark runner (§19.1)
 // ---------------------------------------------------------------------------
 
-function outputFor(result: Partial<{ findings: Finding[]; uncertainFindings: Finding[]; summary: string }>): RunReviewOutput {
+function outputFor(
+  result: Partial<{ findings: Finding[]; uncertainFindings: Finding[]; summary: string }>,
+): RunReviewOutput {
   return {
     result: {
       schemaVersion: 1,
@@ -275,15 +281,11 @@ describe("runBenchmarkSuite", () => {
     ]);
 
     const seenWorkspaces: string[] = [];
-    const run = await runBenchmarkSuite(
-      suite,
-      fakeDeps(),
-      async ({ case: benchCase, workspace }) => {
-        seenWorkspaces.push(workspace.workspacePath);
-        if (benchCase.expectClean) return outputFor({});
-        return outputFor({ findings: [finding({ line: 1, file: "src/a.ts" })] });
-      },
-    );
+    const run = await runBenchmarkSuite(suite, fakeDeps(), async ({ case: benchCase, workspace }) => {
+      seenWorkspaces.push(workspace.workspacePath);
+      if (benchCase.expectClean) return outputFor({});
+      return outputFor({ findings: [finding({ line: 1, file: "src/a.ts" })] });
+    });
 
     expect(run.cases).toHaveLength(2);
     expect(run.score.totalCases).toBe(2);
@@ -295,21 +297,20 @@ describe("runBenchmarkSuite", () => {
     expect(seenWorkspaces).toHaveLength(2);
     expect(new Set(seenWorkspaces).size).toBe(2);
     for (const dir of seenWorkspaces) {
-      expect(await fs.stat(dir).then(() => true, () => false)).toBe(false);
+      expect(
+        await fs.stat(dir).then(
+          () => true,
+          () => false,
+        ),
+      ).toBe(false);
     }
   });
 
   test("a crashing case is scored as a total miss, not thrown away", async () => {
-    const suite = suiteOf([
-      benchmarkCase({ id: "boom", expectedFindings: [expected()] }),
-    ]);
-    const run = await runBenchmarkSuite(
-      suite,
-      fakeDeps(),
-      async () => {
-        throw new Error("engine exploded");
-      },
-    );
+    const suite = suiteOf([benchmarkCase({ id: "boom", expectedFindings: [expected()] })]);
+    const run = await runBenchmarkSuite(suite, fakeDeps(), async () => {
+      throw new Error("engine exploded");
+    });
     expect(run.cases).toHaveLength(1);
     expect(run.cases[0].score.truePositives).toBe(0);
     expect(run.cases[0].score.falseNegatives).toBe(1);
@@ -353,10 +354,8 @@ describe("evaluation persistence", () => {
         expectedFindings: [expected({ line: 1, file: "src/a.ts" })],
       }),
     ]);
-    const run = await runBenchmarkSuite(
-      suite,
-      fakeDeps(0.85),
-      async () => outputFor({ findings: [finding({ line: 1, file: "src/a.ts" })] }),
+    const run = await runBenchmarkSuite(suite, fakeDeps(0.85), async () =>
+      outputFor({ findings: [finding({ line: 1, file: "src/a.ts" })] }),
     );
 
     const persisted = await persistEvaluationRun(
@@ -393,9 +392,7 @@ describe("evaluation persistence", () => {
   });
 
   test("gate-failing runs are persisted with passed=false", async () => {
-    const suite = suiteOf([
-      benchmarkCase({ id: "persist-miss", expectedFindings: [expected()] }),
-    ]);
+    const suite = suiteOf([benchmarkCase({ id: "persist-miss", expectedFindings: [expected()] })]);
     const run = await runBenchmarkSuite(suite, fakeDeps(0.85), async () => outputFor({}));
 
     const persisted = await persistEvaluationRun(

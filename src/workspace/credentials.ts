@@ -36,9 +36,7 @@ export class CredentialUnavailableError extends Error {
 /** Provider that refuses to mint tokens (no App credentials configured). */
 export class NullTokenProvider implements InstallationTokenProvider {
   async getInstallationToken(): Promise<InstallationToken> {
-    throw new CredentialUnavailableError(
-      "No GitHub App credentials configured; cannot mint installation tokens",
-    );
+    throw new CredentialUnavailableError("No GitHub App credentials configured; cannot mint installation tokens");
   }
 }
 
@@ -65,10 +63,7 @@ export class AppInstallationTokenProvider implements InstallationTokenProvider {
     });
   }
 
-  async getInstallationToken(
-    installationId: bigint | number,
-    _repositoryFullName: string,
-  ): Promise<InstallationToken> {
+  async getInstallationToken(installationId: bigint | number, _repositoryFullName: string): Promise<InstallationToken> {
     const key = installationId.toString();
     const cached = this.cache.get(key);
     if (cached && Date.now() < cached.expiresAtMs) {
@@ -91,11 +86,7 @@ export class AppInstallationTokenProvider implements InstallationTokenProvider {
  * embedded for transport only — callers must redact the result with
  * `sanitizeGitUrl`/`redactCredentials` before any logging or persistence.
  */
-export function buildCloneUrl(
-  repositoryFullName: string,
-  token: string,
-  githubBaseUrl = "https://github.com",
-): string {
+export function buildCloneUrl(repositoryFullName: string, token: string, githubBaseUrl = "https://github.com"): string {
   const base = githubBaseUrl.replace(/\/$/, "");
   if (!token) return `${base}/${repositoryFullName}.git`;
   return `https://x-access-token:${encodeURIComponent(token)}@${base.replace(/^https?:\/\//, "")}/${repositoryFullName}.git`;

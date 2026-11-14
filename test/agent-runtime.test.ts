@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ChildProcess } from "node:child_process";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildChildEnv,
   buildPermissionRules,
@@ -11,11 +11,7 @@ import {
   resolveModelId,
   type AgentRuntimeConfigSource,
 } from "../src/agent/opencode-config.js";
-import {
-  extractJson,
-  OpenCodeAgentRuntime,
-  type OpenCodeRuntimeOptions,
-} from "../src/agent/opencode-runtime.js";
+import { extractJson, OpenCodeAgentRuntime, type OpenCodeRuntimeOptions } from "../src/agent/opencode-runtime.js";
 import { AgentRuntimeError, type AgentSession } from "../src/agent/types.js";
 
 // ---------------------------------------------------------------------------
@@ -158,9 +154,7 @@ const stepFinishFor = (messageID: string) =>
 const textEventFor = (messageID: string, t: string) =>
   JSON.stringify({ type: "text", part: { type: "text", messageID, text: t } });
 
-async function startedSession(
-  runtime: OpenCodeAgentRuntime,
-): Promise<{ session: AgentSession; workspace: string }> {
+async function startedSession(runtime: OpenCodeAgentRuntime): Promise<{ session: AgentSession; workspace: string }> {
   const workspace = "/tmp/review-workspace-fixture";
   const session = await runtime.startSession({ reviewId: "rev_test", workspacePath: workspace });
   return { session, workspace };
@@ -221,13 +215,15 @@ describe("opencode config building", () => {
   });
 
   it("session config contains no secret material — key is an env reference", () => {
-    const json = JSON.stringify(buildSessionConfig({
-      sessionDir: "/tmp/s",
-      workspacePath: "/tmp/w",
-      config: baseConfig,
-      modelId: "workers-ai/@cf/zai-org/glm-4.7-flash",
-      maxOutputTokens: 4000,
-    }));
+    const json = JSON.stringify(
+      buildSessionConfig({
+        sessionDir: "/tmp/s",
+        workspacePath: "/tmp/w",
+        config: baseConfig,
+        modelId: "workers-ai/@cf/zai-org/glm-4.7-flash",
+        maxOutputTokens: 4000,
+      }),
+    );
     expect(json).not.toContain("sk-");
     expect(json).toContain("{env:MODEL_API_KEY}");
     expect(json).toContain("llm.example.test/compat");
@@ -491,9 +487,9 @@ describe("session lifecycle", () => {
     await expect(execute).rejects.toMatchObject({ code: "crash" });
 
     // After termination the session is dead: execute is rejected outright.
-    await expect(
-      runtime.execute(session, { instruction: "again", output: "text" }),
-    ).rejects.toMatchObject({ code: "config" });
+    await expect(runtime.execute(session, { instruction: "again", output: "text" })).rejects.toMatchObject({
+      code: "config",
+    });
   });
 });
 
@@ -584,11 +580,7 @@ describe("execute: successful tasks", () => {
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     const payload = { verdict: "approve", findings: [] };
     child.writeOut(
-      [
-        stepStart,
-        textEvent("```json\n" + JSON.stringify(payload) + "\n```"),
-        stepFinish,
-      ].join("\n") + "\n",
+      [stepStart, textEvent("```json\n" + JSON.stringify(payload) + "\n```"), stepFinish].join("\n") + "\n",
     );
     child.close(0);
 
@@ -744,7 +736,14 @@ describe("execute: failure normalization", () => {
     const { session } = await startedSession(runtime);
     const promise = runtime.execute(session, { instruction: "x", output: "text" });
     // The stub returns the child before spawn emits the async error.
-    setTimeout(() => (errorChild as unknown as EventEmitter).emit("error", Object.assign(new Error("spawn failed"), { code: "ENOENT" })), 5);
+    setTimeout(
+      () =>
+        (errorChild as unknown as EventEmitter).emit(
+          "error",
+          Object.assign(new Error("spawn failed"), { code: "ENOENT" }),
+        ),
+      5,
+    );
     await expect(promise).rejects.toMatchObject({ code: "spawn" });
   });
 
@@ -874,7 +873,10 @@ describe("execute: failure normalization", () => {
     const { session } = await startedSession(runtime);
     const resultPromise = runtime.execute(session, { instruction: "x", output: "text" });
     await new Promise((r) => setTimeout(r, 10));
-    child.stderr.emit("data", Buffer.from("fatal: key sk-live-abcdef123456 rejected; authorization: Bearer sk-live-abcdef123456"));
+    child.stderr.emit(
+      "data",
+      Buffer.from("fatal: key sk-live-abcdef123456 rejected; authorization: Bearer sk-live-abcdef123456"),
+    );
     child.close(1);
     const err = await resultPromise.catch((e: AgentRuntimeError) => e);
     expect(err.code).toBe("crash");
@@ -976,16 +978,12 @@ describe("execution observability", () => {
     child.close(0);
     await expect(resultPromise).rejects.toMatchObject({ code: "provider_unavailable" });
 
-    const errorLine = lines.find(
-      (l) => l.obj.event === "agent_child_output" && l.obj.event_type === "error",
-    );
+    const errorLine = lines.find((l) => l.obj.event === "agent_child_output" && l.obj.event_type === "error");
     expect(errorLine).toMatchObject({
       level: "warn",
       obj: { summary: expect.stringContaining("Provider auth failed") },
     });
-    const textLine = lines.find(
-      (l) => l.obj.event === "agent_child_output" && l.obj.event_type === "text",
-    );
+    const textLine = lines.find((l) => l.obj.event === "agent_child_output" && l.obj.event_type === "text");
     expect(textLine?.obj.chars).toBeGreaterThan(0);
     expect(JSON.stringify(lines)).not.toContain("must not be logged");
   });
@@ -998,10 +996,7 @@ describe("execution observability", () => {
     const resultPromise = runtime.execute(session, { instruction: "x", output: "text" });
     await vi.waitFor(() => expect(calls).toHaveLength(1));
 
-    child.stderr.emit(
-      "data",
-      Buffer.from("[opencode-plugin-otel] exporting spans to http://phoenix:6006\n"),
-    );
+    child.stderr.emit("data", Buffer.from("[opencode-plugin-otel] exporting spans to http://phoenix:6006\n"));
     child.close(0);
     await expect(resultPromise).rejects.toMatchObject({ code: "invalid_output" });
 
@@ -1036,9 +1031,7 @@ describe("execution observability", () => {
     child.close(1);
     await expect(resultPromise).rejects.toMatchObject({ code: "crash" });
 
-    const stderrLine = lines.find(
-      (l) => l.obj.event === "agent_child_output" && l.obj.stream === "stderr",
-    );
+    const stderrLine = lines.find((l) => l.obj.event === "agent_child_output" && l.obj.stream === "stderr");
     expect(stderrLine).toMatchObject({ level: "warn" });
     expect(JSON.stringify(stderrLine)).not.toContain("sk-stderr-secret");
     expect(JSON.stringify(stderrLine)).not.toContain("sk-lf-stderr-secret");
@@ -1076,9 +1069,7 @@ describe("execution observability", () => {
     const resultPromise = runtime.execute(session, { instruction: "x", output: "text" });
     await vi.waitFor(() => expect(calls).toHaveLength(1));
 
-    child.writeOut(
-      JSON.stringify({ type: "error", message: "Provider reviewer: model not found (404)" }) + "\n",
-    );
+    child.writeOut(JSON.stringify({ type: "error", message: "Provider reviewer: model not found (404)" }) + "\n");
     child.close(0);
     await expect(resultPromise).rejects.toMatchObject({ code: "provider_unavailable" });
 
@@ -1144,11 +1135,7 @@ describe("healthCheck", () => {
 // ---------------------------------------------------------------------------
 
 describe("workspace integrity guard", () => {
-  async function runExecute(
-    runtime: OpenCodeAgentRuntime,
-    session: AgentSession,
-    child: FakeChild,
-  ) {
+  async function runExecute(runtime: OpenCodeAgentRuntime, session: AgentSession, child: FakeChild) {
     const promise = runtime.execute(session, { instruction: "x", output: "text" });
     await new Promise((r) => setTimeout(r, 10));
     child.writeOut([stepStart, textEvent("ok"), stepFinish].join("\n") + "\n");
@@ -1167,7 +1154,7 @@ describe("workspace integrity guard", () => {
 
   it("passes when the workspace snapshot is unchanged", async () => {
     const child = new FakeChild();
-    let snapshot = " M src/a.ts\n";
+    const snapshot = " M src/a.ts\n";
     const { runtime } = makeRuntime(child, {
       gitStatusImpl: async () => snapshot,
     });

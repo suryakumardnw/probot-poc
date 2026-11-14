@@ -15,13 +15,13 @@ import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createAgentRuntime } from "../agent/index.js";
-import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
-import { runBenchmarkSuite } from "../eval/runner.js";
-import { configurationHashFrom, persistEvaluationRun } from "../eval/persistence.js";
-import type { BenchmarkSuite } from "../eval/types.js";
-import { getPrisma } from "../lib/prisma.js";
 import { loadEnv } from "../config/env.js";
+import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
+import { configurationHashFrom, persistEvaluationRun } from "../eval/persistence.js";
+import { runBenchmarkSuite } from "../eval/runner.js";
+import type { BenchmarkSuite } from "../eval/types.js";
 import { createLogger } from "../lib/logger.js";
+import { getPrisma } from "../lib/prisma.js";
 import { disconnectPrisma } from "../lib/prisma.js";
 
 const BENCHMARKS_DIR = path.join(process.cwd(), "benchmarks");
@@ -56,8 +56,7 @@ function printSuiteReport(suite: BenchmarkSuite, run: Awaited<ReturnType<typeof 
       `severity=${s.severityAccuracy.toFixed(3)} line=${s.lineAccuracy.toFixed(3)}`,
   );
   console.log(
-    `latency p50=${s.latencyP50Ms ?? "-"}ms p95=${s.latencyP95Ms ?? "-"}ms · ` +
-      `overall=${s.overall.toFixed(3)}`,
+    `latency p50=${s.latencyP50Ms ?? "-"}ms p95=${s.latencyP95Ms ?? "-"}ms · ` + `overall=${s.overall.toFixed(3)}`,
   );
   for (const c of run.cases) {
     const mark = c.score.passed ? "PASS" : "FAIL";

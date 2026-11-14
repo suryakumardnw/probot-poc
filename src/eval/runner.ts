@@ -9,10 +9,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { runReview } from "../review-engine/index.js";
-import type { RunReviewOutput } from "../review-engine/types.js";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
+import { runReview } from "../review-engine/index.js";
+import type { RunReviewOutput } from "../review-engine/types.js";
 import type { WorkspaceResult } from "../workspace/workspace.js";
 import { aggregateScores, scoreCase } from "./scoring.js";
 import type { BenchmarkCase, BenchmarkSuite, CaseScore, BenchmarkScore } from "./types.js";
@@ -72,12 +72,7 @@ export async function runBenchmarkCase(
   const started = Date.now();
   try {
     const output = await executor({ reviewId: `eval-${caseDef.id}`, workspace, case: caseDef }, deps);
-    const score = scoreCase(
-      caseDef.id,
-      output.result,
-      caseDef.expectedFindings,
-      Date.now() - started,
-    );
+    const score = scoreCase(caseDef.id, output.result, caseDef.expectedFindings, Date.now() - started);
     return { suiteId: suite.id, caseId: caseDef.id, output, score };
   } finally {
     await cleanup();
@@ -127,6 +122,9 @@ export async function runBenchmarkSuite(
       });
     }
   }
-  const score = aggregateScores(cases.map((c) => c.score), deps.qualityThreshold);
+  const score = aggregateScores(
+    cases.map((c) => c.score),
+    deps.qualityThreshold,
+  );
   return { suite, cases, score, durationMs: Date.now() - started };
 }

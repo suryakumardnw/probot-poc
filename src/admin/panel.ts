@@ -1,9 +1,8 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { existsSync } from "node:fs";
-import ejs from "ejs";
-const renderEjs = ejs.render;
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { parse as parseFormBody } from "node:querystring";
 import type { PrismaClient } from "@prisma/client";
+import ejs from "ejs";
 import type { Env } from "../config/env.js";
 import {
   DEFAULT_CONFIG_PATH,
@@ -20,13 +19,9 @@ import {
   validateRawConfig,
 } from "../config/review-loader.js";
 import type { ReviewConfig } from "../config/review-schema.js";
-import {
-  PANEL_FIELDS,
-  PANEL_SECTIONS,
-  SECTION_LABELS,
-  type PanelField,
-  type PanelSection,
-} from "./panel-fields.js";
+import { isAdminConfigured } from "./api.js";
+import { recordAuditLog, type AuditAction } from "./audit.js";
+import { PANEL_FIELDS, PANEL_SECTIONS, SECTION_LABELS, type PanelField, type PanelSection } from "./panel-fields.js";
 import {
   AUDIT_TEMPLATE,
   INTERSTITIAL_TEMPLATE,
@@ -36,7 +31,7 @@ import {
   PANEL_CSS,
   SECTION_TEMPLATE,
 } from "./panel-templates.js";
-import { isAdminConfigured } from "./api.js";
+import { checkRateLimit, clientIpOf } from "./rate-limit.js";
 import {
   buildSetCookieHeader,
   createSession,
@@ -45,8 +40,8 @@ import {
   verifyCsrfToken,
   type AdminSession,
 } from "./session.js";
-import { checkRateLimit, clientIpOf } from "./rate-limit.js";
-import { recordAuditLog, type AuditAction } from "./audit.js";
+
+const renderEjs = ejs.render;
 
 /**
  * Server-rendered admin HTML panel (ticket 14, §14.2).
@@ -132,7 +127,9 @@ function parseIssuePaths(message: string): Map<string, string> {
 // ---------------------------------------------------------------------------
 
 function parseLoginAllowlist(env: Env): string[] {
-  return env.ADMIN_GITHUB_LOGINS.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  return env.ADMIN_GITHUB_LOGINS.split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }
 
 /** A session is admin when it would still pass the current allowlist/role policy. */
@@ -205,7 +202,10 @@ function fieldInputHtml(field: PanelField, value: unknown, id: string): string {
       const options = field.options ?? [];
       const current = typeof value === "string" ? value : "";
       const opts = options
-        .map((option) => `<option value="${escapeHtml(option)}"${option === current ? " selected" : ""}>${escapeHtml(option)}</option>`)
+        .map(
+          (option) =>
+            `<option value="${escapeHtml(option)}"${option === current ? " selected" : ""}>${escapeHtml(option)}</option>`,
+        )
         .join("");
       return `<select id="${id}" name="${name}"${readonlyAttr ? " disabled" : ""}>${opts}</select>`;
     }
@@ -282,7 +282,10 @@ function buildCandidate(
           setPath(
             candidate,
             field.path,
-            raw.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0),
+            raw
+              .split(",")
+              .map((entry) => entry.trim())
+              .filter((entry) => entry.length > 0),
           );
           break;
         default:
@@ -311,7 +314,10 @@ function sensitiveChanges(
   previous: Record<string, unknown>,
   next: Record<string, unknown>,
 ): SensitiveChange[] {
-  const redactedPrevious = redactConfiguration(previous as unknown as ReviewConfig) as unknown as Record<string, unknown>;
+  const redactedPrevious = redactConfiguration(previous as unknown as ReviewConfig) as unknown as Record<
+    string,
+    unknown
+  >;
   const redactedNext = redactConfiguration(next as unknown as ReviewConfig) as unknown as Record<string, unknown>;
   const changes: SensitiveChange[] = [];
   for (const field of PANEL_FIELDS[section]) {
@@ -333,7 +339,9 @@ function sensitiveChanges(
 // Handler factory
 // ---------------------------------------------------------------------------
 
-export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
+export function createAdminPanel(
+  deps: AdminPanelDeps,
+): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
   const env = deps.env;
   const processEnv = {
     ...process.env,
@@ -341,7 +349,12 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
   } as unknown as NodeJS.ProcessEnv;
   const configPath = deps.configPath ?? DEFAULT_CONFIG_PATH;
 
-  async function audit(actor: string, action: AuditAction, resource: string, metadata?: Record<string, unknown>): Promise<void> {
+  async function audit(
+    actor: string,
+    action: AuditAction,
+    resource: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     await recordAuditLog(deps.prisma, { actor, action, resource, metadata }, deps.logger);
   }
 
@@ -369,7 +382,10 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
       title,
       css: PANEL_CSS,
       user: options.session?.login ?? null,
-      nav: nav.map((item) => ({ ...item, active: item.href === `/admin/${active}` || (active === "" && item.href === "/admin") })),
+      nav: nav.map((item) => ({
+        ...item,
+        active: item.href === `/admin/${active}` || (active === "" && item.href === "/admin"),
+      })),
       active,
       version: options.version ?? null,
       body,
@@ -377,7 +393,14 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
     sendHtml(res, status, html);
   }
 
-  function messagePage(res: ServerResponse, status: number, title: string, message: string, tone: "notice" | "error", session?: AdminSession | null): void {
+  function messagePage(
+    res: ServerResponse,
+    status: number,
+    title: string,
+    message: string,
+    tone: "notice" | "error",
+    session?: AdminSession | null,
+  ): void {
     const body = renderEjs(MESSAGE_TEMPLATE, { title, message, tone });
     page(res, status, title, body, { session });
   }
@@ -385,7 +408,11 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
   function currentVersion(): { schemaVersion: number; hash: string; fromLastKnownGood: boolean } | null {
     try {
       const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
-      return { schemaVersion: loaded.snapshot.schemaVersion, hash: loaded.snapshot.hash, fromLastKnownGood: loaded.fromLastKnownGood };
+      return {
+        schemaVersion: loaded.snapshot.schemaVersion,
+        hash: loaded.snapshot.hash,
+        fromLastKnownGood: loaded.fromLastKnownGood,
+      };
     } catch {
       return null; // overview stays renderable even with a broken config
     }
@@ -452,7 +479,13 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
     return true;
   };
 
-  async function dispatch(req: IncomingMessage, res: ServerResponse, url: URL, path: string, session: AdminSession): Promise<void> {
+  async function dispatch(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    path: string,
+    session: AdminSession,
+  ): Promise<void> {
     const version = currentVersion();
 
     // --- Container logs shortcut ------------------------------------------
@@ -488,7 +521,14 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
       }
       const csrf = lastValue(form.fields, "_csrf");
       if (!verifyCsrfToken(session, csrf)) {
-        messagePage(res, 403, "Request blocked", "Missing or invalid CSRF token. Go back, reload the form and try again.", "error", session);
+        messagePage(
+          res,
+          403,
+          "Request blocked",
+          "Missing or invalid CSRF token. Go back, reload the form and try again.",
+          "error",
+          session,
+        );
         return;
       }
 
@@ -575,7 +615,11 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
   // -------------------------------------------------------------------------
 
   async function handleReload(res: ServerResponse, session: AdminSession): Promise<void> {
-    const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true, updateLastKnownGood: true });
+    const loaded = loadReviewConfig(configPath, {
+      env: processEnv,
+      allowLastKnownGoodFallback: true,
+      updateLastKnownGood: true,
+    });
     await audit(session.login, "config.reload", "configuration", {
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
@@ -595,11 +639,16 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
     try {
       const restored = restoreLastKnownGood(configPath);
       await audit(session.login, "config.rollback", "configuration", { restoredHash: restored.snapshot.hash });
-      deps.logger.info({ login: session.login, hash: restored.snapshot.hash }, "Admin panel: configuration rolled back");
+      deps.logger.info(
+        { login: session.login, hash: restored.snapshot.hash },
+        "Admin panel: configuration rolled back",
+      );
       redirect(res, "/admin?notice=rolledback");
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        await audit(session.login, "config.rollback_failed", "configuration", { reason: "last-known-good snapshot failed validation" });
+        await audit(session.login, "config.rollback_failed", "configuration", {
+          reason: "last-known-good snapshot failed validation",
+        });
         redirect(res, "/admin?error=rollback-failed");
         return;
       }
@@ -621,7 +670,11 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
   ): Promise<void> {
     const action = lastValue(form, "action") === "validate" ? "validate" : "save";
     const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
-    const { candidate, fieldErrors, submitted } = buildCandidate(section, loaded.config as unknown as Record<string, unknown>, form);
+    const { candidate, fieldErrors, submitted } = buildCandidate(
+      section,
+      loaded.config as unknown as Record<string, unknown>,
+      form,
+    );
 
     if (!submitted && action === "save" && lastValue(form, "confirm") !== "confirmed") {
       redirect(res, `/admin/${section}?error=no-changes`);
@@ -651,7 +704,17 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
       if (action === "save") {
         await audit(session.login, "config.update_rejected", "configuration", { reason: "validation failed" });
       }
-      renderSection(res, section, loaded, fieldErrors, action === "save" ? "Validation failed — nothing was saved." : null, 400, session, version, url);
+      renderSection(
+        res,
+        section,
+        loaded,
+        fieldErrors,
+        action === "save" ? "Validation failed — nothing was saved." : null,
+        400,
+        session,
+        version,
+        url,
+      );
       return;
     }
 
@@ -680,9 +743,10 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
       return;
     }
 
-    const finalCandidate = confirmed && typeof lastValue(form, "candidate") === "string"
-      ? (JSON.parse(lastValue(form, "candidate")!) as unknown)
-      : candidate;
+    const finalCandidate =
+      confirmed && typeof lastValue(form, "candidate") === "string"
+        ? (JSON.parse(lastValue(form, "candidate")!) as unknown)
+        : candidate;
 
     try {
       const result = updateReviewConfig(configPath, finalCandidate, { env: processEnv });
@@ -693,7 +757,10 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
         source: "panel",
         section,
       });
-      deps.logger.info({ login: session.login, section, hash: result.next.snapshot.hash }, "Admin panel: configuration saved");
+      deps.logger.info(
+        { login: session.login, section, hash: result.next.snapshot.hash },
+        "Admin panel: configuration saved",
+      );
       redirect(res, `/admin/${section}?notice=saved`);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
@@ -703,7 +770,17 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
         for (const [issuePath, message] of errors) {
           if (!fieldErrors.has(issuePath)) fieldErrors.set(issuePath, message);
         }
-        renderSection(res, section, loaded, fieldErrors, "Validation failed — nothing was saved.", 400, session, version, url);
+        renderSection(
+          res,
+          section,
+          loaded,
+          fieldErrors,
+          "Validation failed — nothing was saved.",
+          400,
+          session,
+          version,
+          url,
+        );
         return;
       }
       throw error;
@@ -739,7 +816,12 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
   // Audit history
   // -------------------------------------------------------------------------
 
-  async function handleAuditHistory(res: ServerResponse, url: URL, session: AdminSession, version: ReturnType<typeof currentVersion>): Promise<void> {
+  async function handleAuditHistory(
+    res: ServerResponse,
+    url: URL,
+    session: AdminSession,
+    version: ReturnType<typeof currentVersion>,
+  ): Promise<void> {
     const pageParam = Number(url.searchParams.get("page") ?? "1");
     const currentPage = Number.isFinite(pageParam) ? Math.max(Math.trunc(pageParam), 1) : 1;
 
@@ -767,4 +849,3 @@ export function createAdminPanel(deps: AdminPanelDeps): (req: IncomingMessage, r
     page(res, 200, "Audit History", body, { active: "audit", session, version });
   }
 }
-

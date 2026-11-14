@@ -146,7 +146,11 @@ export async function persistReviewFindings(input: PersistReviewFindingsInput): 
   for (const entry of [...outcome.verified, ...outcome.uncertain]) {
     const existing = byFingerprint.get(entry.fingerprint);
     if (!existing || entry.finding.confidence > existing.finding.confidence) {
-      byFingerprint.set(entry.fingerprint, { finding: entry.finding, fingerprint: entry.fingerprint, verified: entry.verified });
+      byFingerprint.set(entry.fingerprint, {
+        finding: entry.finding,
+        fingerprint: entry.fingerprint,
+        verified: entry.verified,
+      });
     }
   }
 

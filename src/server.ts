@@ -1,22 +1,18 @@
 import "dotenv/config";
 import http from "node:http";
 import { createNodeMiddleware, createProbot, type Probot } from "probot";
-import appFn from "./index.js";
-import { loadEnv } from "./config/env.js";
-import { createLogger } from "./lib/logger.js";
-import { checkDependencies } from "./lib/health.js";
-import { registerGracefulShutdown } from "./lib/shutdown.js";
-import { getPrisma, disconnectPrisma } from "./lib/prisma.js";
-import { disconnectRedis, getRedis } from "./lib/redis.js";
-import {
-  getReviewStatus,
-  ingestManualReview,
-  ManualIngestionError,
-} from "./ingestion/orchestrator.js";
 import { z } from "zod";
 import { createAdminApi, isAdminConfigured } from "./admin/api.js";
 import { createAdminPanel } from "./admin/panel.js";
+import { loadEnv } from "./config/env.js";
+import { getReviewStatus, ingestManualReview, ManualIngestionError } from "./ingestion/orchestrator.js";
+import { checkDependencies } from "./lib/health.js";
+import { createLogger } from "./lib/logger.js";
+import { getPrisma, disconnectPrisma } from "./lib/prisma.js";
+import { disconnectRedis, getRedis } from "./lib/redis.js";
+import { registerGracefulShutdown } from "./lib/shutdown.js";
 import { metricsHandler } from "./observability/metrics-endpoint.js";
+import appFn from "./index.js";
 
 /**
  * Probot application entry point.
@@ -98,13 +94,9 @@ const adminPanel = createAdminPanel({
   prisma: getPrisma(env),
   logger,
 });
-const probotMiddlewarePromise = probot
-  ? createNodeMiddleware(appFn, { probot, webhooksPath: "/" })
-  : undefined;
+const probotMiddlewarePromise = probot ? createNodeMiddleware(appFn, { probot, webhooksPath: "/" }) : undefined;
 
-async function handleReadiness(
-  res: http.ServerResponse,
-): Promise<void> {
+async function handleReadiness(res: http.ServerResponse): Promise<void> {
   const report = await checkDependencies();
   const statusCode = report.status === "ok" ? 200 : 503;
   res.statusCode = statusCode;
@@ -130,10 +122,7 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
   res.end(JSON.stringify(body));
 }
 
-async function handleManualIngestion(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): Promise<void> {
+async function handleManualIngestion(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(chunk as Buffer);
@@ -185,7 +174,8 @@ async function handleReviewStatus(res: http.ServerResponse, reviewId: string): P
   }
 }
 
-const server = http.createServer((req, res) => {  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
   if (url.pathname === "/healthz") {
     res.statusCode = 200;
@@ -253,13 +243,15 @@ const server = http.createServer((req, res) => {  const url = new URL(req.url ??
   }
 
   if (probotMiddlewarePromise) {
-    void probotMiddlewarePromise.then((middleware) => {
-      middleware(req, res);
-    }).catch((error) => {
-      logger.error({ err: error }, "Probot middleware failed to initialize");
-      res.statusCode = 500;
-      res.end("Internal server error");
-    });
+    void probotMiddlewarePromise
+      .then((middleware) => {
+        middleware(req, res);
+      })
+      .catch((error) => {
+        logger.error({ err: error }, "Probot middleware failed to initialize");
+        res.statusCode = 500;
+        res.end("Internal server error");
+      });
     return;
   }
 

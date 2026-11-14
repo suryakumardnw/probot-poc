@@ -1,6 +1,20 @@
 import http from "node:http";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { reviewConfigSchema } from "../src/config/review-schema.js";
+import { AlertManager, loadAlertThresholds, type AlertSignal } from "../src/observability/alerts.js";
+import {
+  createReviewLogger,
+  withRuntimeIdentity,
+  startStage,
+  type ReviewCorrelation,
+} from "../src/observability/correlation.js";
+import {
+  metricsHandler,
+  startMetricsServer,
+  metricsServerPort,
+  METRICS_CONTENT_TYPE,
+} from "../src/observability/metrics-endpoint.js";
 import {
   MetricsRegistry,
   getMetricsRegistry,
@@ -9,30 +23,12 @@ import {
   recordReviewFindings,
 } from "../src/observability/metrics.js";
 import {
-  createReviewLogger,
-  withRuntimeIdentity,
-  startStage,
-  type ReviewCorrelation,
-} from "../src/observability/correlation.js";
-import { startSpan, endSpan, reviewSpanAttributes, withSpanSync } from "../src/observability/tracing.js";
-import {
-  AlertManager,
-  loadAlertThresholds,
-  type AlertSignal,
-} from "../src/observability/alerts.js";
-import {
   classifyFailure,
   retryPolicyFor,
   DEFAULT_RETRY_POLICY_CONFIG,
   retryPolicyConfigFromReviewConfig,
 } from "../src/observability/retry.js";
-import {
-  metricsHandler,
-  startMetricsServer,
-  metricsServerPort,
-  METRICS_CONTENT_TYPE,
-} from "../src/observability/metrics-endpoint.js";
-import { reviewConfigSchema } from "../src/config/review-schema.js";
+import { startSpan, endSpan, reviewSpanAttributes, withSpanSync } from "../src/observability/tracing.js";
 
 /**
  * Ticket 12 unit tests: metrics registry, correlation logging, tracing,
@@ -45,11 +41,14 @@ function silentLogger() {
 
 function bufferedLogger() {
   const lines: Array<Record<string, unknown>> = [];
-  const logger = pino({ level: "info" }, {
-    write(chunk: string) {
-      lines.push(JSON.parse(chunk) as Record<string, unknown>);
+  const logger = pino(
+    { level: "info" },
+    {
+      write(chunk: string) {
+        lines.push(JSON.parse(chunk) as Record<string, unknown>);
+      },
     },
-  });
+  );
   return { logger, lines };
 }
 

@@ -107,21 +107,15 @@ class Histogram {
 }
 
 export class MetricsRegistry {
-  readonly reviewsStarted = new Counter(
-    "ai_pr_reviewer_reviews_started_total",
-    "Total reviews started",
-    [],
-  );
+  readonly reviewsStarted = new Counter("ai_pr_reviewer_reviews_started_total", "Total reviews started", []);
   readonly reviewsCompleted = new Counter(
     "ai_pr_reviewer_reviews_completed_total",
     "Total reviews completed successfully",
     ["outcome"],
   );
-  readonly reviewsFailed = new Counter(
-    "ai_pr_reviewer_reviews_failed_total",
-    "Total reviews failed",
-    ["failure_class"],
-  );
+  readonly reviewsFailed = new Counter("ai_pr_reviewer_reviews_failed_total", "Total reviews failed", [
+    "failure_class",
+  ]);
   readonly reviewDuration = new Histogram(
     "ai_pr_reviewer_review_duration_seconds",
     "End-to-end review duration in seconds",
@@ -137,16 +131,12 @@ export class MetricsRegistry {
     "Current BullMQ review-jobs queue depth (waiting + active + delayed)",
     [],
   );
-  readonly findingsTotal = new Counter(
-    "ai_pr_reviewer_findings_total",
-    "Total verified findings produced",
-    ["category"],
-  );
-  readonly findingsBySeverity = new Counter(
-    "ai_pr_reviewer_findings_by_severity",
-    "Findings by severity",
-    ["severity"],
-  );
+  readonly findingsTotal = new Counter("ai_pr_reviewer_findings_total", "Total verified findings produced", [
+    "category",
+  ]);
+  readonly findingsBySeverity = new Counter("ai_pr_reviewer_findings_by_severity", "Findings by severity", [
+    "severity",
+  ]);
   readonly uncertainFindings = new Counter(
     "ai_pr_reviewer_uncertain_findings_total",
     "Total uncertain findings produced",
@@ -162,16 +152,8 @@ export class MetricsRegistry {
     "Model provider / agent runtime errors",
     ["error_code"],
   );
-  readonly inputTokens = new Counter(
-    "ai_pr_reviewer_input_tokens_total",
-    "Total model input tokens consumed",
-    [],
-  );
-  readonly outputTokens = new Counter(
-    "ai_pr_reviewer_output_tokens_total",
-    "Total model output tokens produced",
-    [],
-  );
+  readonly inputTokens = new Counter("ai_pr_reviewer_input_tokens_total", "Total model input tokens consumed", []);
+  readonly outputTokens = new Counter("ai_pr_reviewer_output_tokens_total", "Total model output tokens produced", []);
   readonly workspaceDiskUsage = new Gauge(
     "ai_pr_reviewer_workspace_disk_usage_bytes",
     "Workspace root disk usage in bytes",
@@ -182,11 +164,9 @@ export class MetricsRegistry {
     "Worker process RSS memory in bytes",
     [],
   );
-  readonly alertsActive = new Gauge(
-    "ai_pr_reviewer_alerts_active",
-    "Active alert count by alert name (§16.4)",
-    ["alert"],
-  );
+  readonly alertsActive = new Gauge("ai_pr_reviewer_alerts_active", "Active alert count by alert name (§16.4)", [
+    "alert",
+  ]);
 
   /** Render every metric in Prometheus text exposition format (§16.2). */
   render(): string {
@@ -275,9 +255,7 @@ export function recordReviewFindings(result: {
 }): void {
   const m = getMetricsRegistry();
   for (const finding of result.findings) {
-    const severity = (SEVERITIES as readonly string[]).includes(finding.severity)
-      ? finding.severity
-      : "unknown";
+    const severity = (SEVERITIES as readonly string[]).includes(finding.severity) ? finding.severity : "unknown";
     m.findingsBySeverity.inc(1, { severity });
     m.findingsTotal.inc(1, { category: finding.category || "unknown" });
   }

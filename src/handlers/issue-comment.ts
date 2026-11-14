@@ -1,6 +1,6 @@
 import type { Probot } from "probot";
-import { ingestReviewRequest, REVIEW_TYPES, type ReviewTypeValue } from "../ingestion/orchestrator.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
+import { ingestReviewRequest, REVIEW_TYPES, type ReviewTypeValue } from "../ingestion/orchestrator.js";
 import { getPrisma } from "../lib/prisma.js";
 
 /**
@@ -121,7 +121,8 @@ export function registerIssueCommentHandlers(app: Probot): void {
         return;
       }
     }
-    const reviewType: ReviewTypeValue = (requestedType as ReviewTypeValue | undefined) ?? config.github.defaultReviewType;
+    const reviewType: ReviewTypeValue =
+      (requestedType as ReviewTypeValue | undefined) ?? config.github.defaultReviewType;
 
     // Resolve base/head SHAs: durable row first (fresh from open/synchronize),
     // then the GitHub API as a fallback for PRs this app has never seen. The
@@ -159,12 +160,18 @@ export function registerIssueCommentHandlers(app: Probot): void {
         draft = prResponse.data.draft ?? false;
       } catch (error) {
         if (!headSha) {
-          context.log.error({ err: error, pr: issue.number }, "Could not resolve pull request head SHA; /review ignored");
+          context.log.error(
+            { err: error, pr: issue.number },
+            "Could not resolve pull request head SHA; /review ignored",
+          );
           return;
         }
         // Head is known; continue without a base SHA rather than dropping the
         // command. The worker falls back to the repository default branch.
-        context.log.warn({ err: error, pr: issue.number }, "Could not resolve pull request base SHA; using default branch fallback");
+        context.log.warn(
+          { err: error, pr: issue.number },
+          "Could not resolve pull request base SHA; using default branch fallback",
+        );
       }
     }
     if (!headSha) return;
@@ -189,7 +196,14 @@ export function registerIssueCommentHandlers(app: Probot): void {
         deliveryEvent: "issue_comment.created",
       });
       context.log.info(
-        { outcome: result.outcome, reviewId: result.reviewId, attempt: result.attempt, reviewType, pr: issue.number, repo: repository.full_name },
+        {
+          outcome: result.outcome,
+          reviewId: result.reviewId,
+          attempt: result.attempt,
+          reviewType,
+          pr: issue.number,
+          repo: repository.full_name,
+        },
         "Manual /review comment ingestion",
       );
 

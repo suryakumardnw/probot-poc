@@ -95,34 +95,36 @@ const categoriesSchema = z
  * GitHub; the others run, persist findings and still reach a terminal state
  * (publishSkipped records that publication was intentionally skipped).
  */
-const reviewTypesSchema = z.object({
-  standard: z
-    .object({
-      enabled: z.boolean().default(true),
-      publish: z.boolean().default(true),
-    })
-    .prefault({}),
-  skill: z
-    .object({
-      enabled: z.boolean().default(true),
-      publish: z.boolean().default(false),
-    })
-    .prefault({}),
-  handbook: z
-    .object({
-      enabled: z.boolean().default(true),
-      publish: z.boolean().default(false),
-      /** Handbook repository as "owner/repo". Empty = not configured. */
-      repository: z.string().max(200).default(""),
-      /** Branch/ref to read the handbook from. */
-      branch: z.string().min(1).max(200).default("main"),
-      /** Optional subdirectory or single file inside the handbook repo (legacy). */
-      path: z.string().max(500).default(""),
-      /** Character budget for the injected handbook excerpt (legacy; knowledge.handbook.maxChars is canonical). */
-      maxChars: z.number().int().min(500).max(100_000).default(20_000),
-    })
-    .prefault({}),
-}).prefault({});
+const reviewTypesSchema = z
+  .object({
+    standard: z
+      .object({
+        enabled: z.boolean().default(true),
+        publish: z.boolean().default(true),
+      })
+      .prefault({}),
+    skill: z
+      .object({
+        enabled: z.boolean().default(true),
+        publish: z.boolean().default(false),
+      })
+      .prefault({}),
+    handbook: z
+      .object({
+        enabled: z.boolean().default(true),
+        publish: z.boolean().default(false),
+        /** Handbook repository as "owner/repo". Empty = not configured. */
+        repository: z.string().max(200).default(""),
+        /** Branch/ref to read the handbook from. */
+        branch: z.string().min(1).max(200).default("main"),
+        /** Optional subdirectory or single file inside the handbook repo (legacy). */
+        path: z.string().max(500).default(""),
+        /** Character budget for the injected handbook excerpt (legacy; knowledge.handbook.maxChars is canonical). */
+        maxChars: z.number().int().min(500).max(100_000).default(20_000),
+      })
+      .prefault({}),
+  })
+  .prefault({});
 
 const reviewSchema = z.object({
   enabled: z.boolean().default(true),
@@ -262,9 +264,18 @@ const executionSchema = z.object({
     .prefault({}),
   resources: z
     .object({
-      cpuLimit: z.string().regex(/^\d+(\.\d+)?$/, "must be a CPU count such as \"2\"").default("2"),
-      memoryLimit: z.string().regex(/^\d+(Gi|Mi|G|M)$/, "must be a quantity such as \"2Gi\"").default("2Gi"),
-      diskLimit: z.string().regex(/^\d+(Gi|Mi|G|M)$/, "must be a quantity such as \"5Gi\"").default("5Gi"),
+      cpuLimit: z
+        .string()
+        .regex(/^\d+(\.\d+)?$/, 'must be a CPU count such as "2"')
+        .default("2"),
+      memoryLimit: z
+        .string()
+        .regex(/^\d+(Gi|Mi|G|M)$/, 'must be a quantity such as "2Gi"')
+        .default("2Gi"),
+      diskLimit: z
+        .string()
+        .regex(/^\d+(Gi|Mi|G|M)$/, 'must be a quantity such as "5Gi"')
+        .default("5Gi"),
       executionTimeoutMs: z.number().int().min(1_000).max(3_600_000).default(900_000),
     })
     .prefault({}),
@@ -332,66 +343,71 @@ const persistenceSchema = z.object({
  * to its current commit SHA at boot so the cache/snapshot identity is still
  * SHA-keyed.
  */
-const knowledgeSchema = z.object({
-  /** Persistent cache directory. Empty = resolved at boot (env/default). */
-  cacheDir: z.string().max(500).default(""),
-  /** Per-source fetch deadline (covers all retry attempts). */
-  fetchTimeoutMs: nonNegativeInt.max(120_000).default(30_000),
-  skill: z
-    .object({
-      /** Source repository as "owner/repo". */
-      repo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'must be "owner/repo"').default("vercel-labs/open-agents"),
-      /** Pinned commit SHA (or tag resolved to a SHA at boot). */
-      ref: z.string().min(1).max(200).default("cf865e94de7729751c747171785b6ce57e7b178c"),
-      /** Directory inside the repo holding the skill markdown. */
-      skillDir: z.string().max(500).default(".agents/skills/code-review"),
-      /** Total byte budget for the fetched skill content. */
-      maxBytes: nonNegativeInt.max(10_000_000).default(200_000),
-      /**
-       * Token budget for the injected skill playbook (§4.1, ≈4 chars/token).
-       * Separate from, and usually much smaller than, the handbook budget.
-       */
-      maxTokens: z.number().int().min(250).max(20_000).default(1_500),
-    })
-    .prefault({}),
-  handbook: z
-    .object({
-      /** Source repository as "owner/repo". Empty disables handbook reviews. */
-      repo: z.string().max(200).default("nativewit/engineering-handbook"),
-      /** Ref to read from; branch names are resolved to a SHA at boot. */
-      ref: z.string().min(1).max(200).default("main"),
-      /**
-       * Per-technology refs: when a PR's changed files are detected as one of
-       * the listed technologies (e.g. `.ts` → typescript/nodejs), that ref's
-       * handbook content is fetched at boot and injected instead of `ref`.
-       * Useful for language guidelines that live on a separate branch.
-       */
-      technologyRefs: z
-        .array(
-          z.object({
-            /** Detected technology keywords (case-insensitive). */
-            technologies: z.array(z.string().min(1).max(50)).min(1),
-            /** Ref to read for those technologies; branches resolve to a SHA at boot. */
-            ref: z.string().min(1).max(200),
-          }),
-        )
-        .max(20)
-        .default([]),
-      /** Subdirectory (repo root recursively when empty). */
-      path: z.string().max(500).default(""),
-      /** Total byte budget for the fetched handbook content. */
-      maxBytes: nonNegativeInt.max(50_000_000).default(2_000_000),
-      /**
-       * Token budget for the injected handbook guidelines (§4.1, retrieval
-       * layer; ≈4 chars/token). The per-stage instruction overhead is fixed
-       * and separate. `maxChars` below remains a byte-level backstop.
-       */
-      maxTokens: z.number().int().min(500).max(20_000).default(3_000),
-      /** Character budget backstop for the injected handbook excerpt. */
-      maxChars: z.number().int().min(500).max(100_000).default(20_000),
-    })
-    .prefault({}),
-}).prefault({});
+const knowledgeSchema = z
+  .object({
+    /** Persistent cache directory. Empty = resolved at boot (env/default). */
+    cacheDir: z.string().max(500).default(""),
+    /** Per-source fetch deadline (covers all retry attempts). */
+    fetchTimeoutMs: nonNegativeInt.max(120_000).default(30_000),
+    skill: z
+      .object({
+        /** Source repository as "owner/repo". */
+        repo: z
+          .string()
+          .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'must be "owner/repo"')
+          .default("vercel-labs/open-agents"),
+        /** Pinned commit SHA (or tag resolved to a SHA at boot). */
+        ref: z.string().min(1).max(200).default("cf865e94de7729751c747171785b6ce57e7b178c"),
+        /** Directory inside the repo holding the skill markdown. */
+        skillDir: z.string().max(500).default(".agents/skills/code-review"),
+        /** Total byte budget for the fetched skill content. */
+        maxBytes: nonNegativeInt.max(10_000_000).default(200_000),
+        /**
+         * Token budget for the injected skill playbook (§4.1, ≈4 chars/token).
+         * Separate from, and usually much smaller than, the handbook budget.
+         */
+        maxTokens: z.number().int().min(250).max(20_000).default(1_500),
+      })
+      .prefault({}),
+    handbook: z
+      .object({
+        /** Source repository as "owner/repo". Empty disables handbook reviews. */
+        repo: z.string().max(200).default("nativewit/engineering-handbook"),
+        /** Ref to read from; branch names are resolved to a SHA at boot. */
+        ref: z.string().min(1).max(200).default("main"),
+        /**
+         * Per-technology refs: when a PR's changed files are detected as one of
+         * the listed technologies (e.g. `.ts` → typescript/nodejs), that ref's
+         * handbook content is fetched at boot and injected instead of `ref`.
+         * Useful for language guidelines that live on a separate branch.
+         */
+        technologyRefs: z
+          .array(
+            z.object({
+              /** Detected technology keywords (case-insensitive). */
+              technologies: z.array(z.string().min(1).max(50)).min(1),
+              /** Ref to read for those technologies; branches resolve to a SHA at boot. */
+              ref: z.string().min(1).max(200),
+            }),
+          )
+          .max(20)
+          .default([]),
+        /** Subdirectory (repo root recursively when empty). */
+        path: z.string().max(500).default(""),
+        /** Total byte budget for the fetched handbook content. */
+        maxBytes: nonNegativeInt.max(50_000_000).default(2_000_000),
+        /**
+         * Token budget for the injected handbook guidelines (§4.1, retrieval
+         * layer; ≈4 chars/token). The per-stage instruction overhead is fixed
+         * and separate. `maxChars` below remains a byte-level backstop.
+         */
+        maxTokens: z.number().int().min(500).max(20_000).default(3_000),
+        /** Character budget backstop for the injected handbook excerpt. */
+        maxChars: z.number().int().min(500).max(100_000).default(20_000),
+      })
+      .prefault({}),
+  })
+  .prefault({});
 
 const repositoryOverridesSchema = z.object({
   enabled: z.boolean().default(true),
@@ -412,50 +428,43 @@ const configurationSchema = z.object({
   rollbackEnabled: z.boolean().default(true),
 });
 
-const observabilitySchema = z.object({
-  logs: z
-    .object({
-      level: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
-      format: z.enum(["json", "pretty"]).default("json"),
-    })
-    .prefault({}),
-  metrics: z.object({ enabled: z.boolean().default(true) }).prefault({}),
-  tracing: z.object({ enabled: z.boolean().default(true) }).prefault({}),
-  // Agent-level tracing is delegated to an OpenCode plugin package. This
-  // application only enables the plugin and supplies correlation/credentials
-  // through the isolated child environment — no custom trace schema/DB.
-  agentTracing: z
-    .object({
-      enabled: z.boolean().default(false),
-      plugin: z
-        .string()
-        .min(1)
-        .max(200)
-        .default("@devtheops/opencode-plugin-otel@2.1.0"),
-      // Free-form, scalar plugin options (endpoint, protocol, headers policy,
-      // etc.). Credentials belong in the child environment, never here.
-      options: z
-        .record(
-          z.string().min(1).max(100),
-          z.union([
-            z.string().max(2_000),
-            z.number(),
-            z.boolean(),
-            z.array(z.string().min(1).max(200)).max(50),
-          ]),
-        )
-        .default({}),
-    })
-    .prefault({}),
-  alerts: z
-    .object({
-      reviewFailure: z.boolean().default(true),
-      queueBacklog: z.boolean().default(true),
-      providerUnavailable: z.boolean().default(true),
-      resourceLimitExceeded: z.boolean().default(true),
-    })
-    .prefault({}),
-}).strict();
+const observabilitySchema = z
+  .object({
+    logs: z
+      .object({
+        level: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+        format: z.enum(["json", "pretty"]).default("json"),
+      })
+      .prefault({}),
+    metrics: z.object({ enabled: z.boolean().default(true) }).prefault({}),
+    tracing: z.object({ enabled: z.boolean().default(true) }).prefault({}),
+    // Agent-level tracing is delegated to an OpenCode plugin package. This
+    // application only enables the plugin and supplies correlation/credentials
+    // through the isolated child environment — no custom trace schema/DB.
+    agentTracing: z
+      .object({
+        enabled: z.boolean().default(false),
+        plugin: z.string().min(1).max(200).default("@devtheops/opencode-plugin-otel@2.1.0"),
+        // Free-form, scalar plugin options (endpoint, protocol, headers policy,
+        // etc.). Credentials belong in the child environment, never here.
+        options: z
+          .record(
+            z.string().min(1).max(100),
+            z.union([z.string().max(2_000), z.number(), z.boolean(), z.array(z.string().min(1).max(200)).max(50)]),
+          )
+          .default({}),
+      })
+      .prefault({}),
+    alerts: z
+      .object({
+        reviewFailure: z.boolean().default(true),
+        queueBacklog: z.boolean().default(true),
+        providerUnavailable: z.boolean().default(true),
+        resourceLimitExceeded: z.boolean().default(true),
+      })
+      .prefault({}),
+  })
+  .strict();
 
 const evaluationSchema = z.object({
   enabled: z.boolean().default(true),
@@ -470,9 +479,12 @@ export const reviewConfigSchema = z
   .object({
     schemaVersion: z.union([
       z.literal(1),
-      z.number().int().refine((v) => (SUPPORTED_SCHEMA_VERSIONS as readonly number[]).includes(v), {
-        message: `unsupported schemaVersion; supported versions: ${SUPPORTED_SCHEMA_VERSIONS.join(", ")}`,
-      }),
+      z
+        .number()
+        .int()
+        .refine((v) => (SUPPORTED_SCHEMA_VERSIONS as readonly number[]).includes(v), {
+          message: `unsupported schemaVersion; supported versions: ${SUPPORTED_SCHEMA_VERSIONS.join(", ")}`,
+        }),
     ]),
     application: applicationSchema.prefault({}),
     github: githubSchema,

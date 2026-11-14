@@ -88,11 +88,11 @@ export async function fetchRepoTree(
   sha: string,
   timeoutMs: number,
 ): Promise<GitHubTreeEntry[]> {
-  const response = await fetcher(
-    `${DEFAULT_GITHUB_API}/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`,
-    { timeoutMs },
-  );
-  if (response.status !== 200) throw new Error(`fetching tree of ${owner}/${repo}@${sha} failed with HTTP ${response.status}`);
+  const response = await fetcher(`${DEFAULT_GITHUB_API}/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`, {
+    timeoutMs,
+  });
+  if (response.status !== 200)
+    throw new Error(`fetching tree of ${owner}/${repo}@${sha} failed with HTTP ${response.status}`);
   const body = JSON.parse(response.text) as { tree?: GitHubTreeEntry[] };
   if (!Array.isArray(body.tree)) throw new Error("unexpected tree response");
   return body.tree;

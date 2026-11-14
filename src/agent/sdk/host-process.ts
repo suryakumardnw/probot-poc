@@ -48,9 +48,7 @@ function writeLogEntry(error: NodeJS.WritableStream, entry: SdkLogEntry): void {
       : entry.message != null
         ? { message: String(entry.message) }
         : {}),
-    ...(entry.cause != null
-      ? { cause: entry.cause instanceof Error ? entry.cause.message : String(entry.cause) }
-      : {}),
+    ...(entry.cause != null ? { cause: entry.cause instanceof Error ? entry.cause.message : String(entry.cause) } : {}),
   };
   error.write(`${JSON.stringify(event)}\n`);
 }
@@ -109,9 +107,7 @@ export async function runHostProcess(options: RunHostProcessOptions): Promise<vo
     const finish = (): void => {
       if (settled) return;
       settled = true;
-      chain
-        .then(() => dispatcher.handle({ id: 0, method: "close" }))
-        .then(() => resolve(), reject);
+      chain.then(() => dispatcher.handle({ id: 0, method: "close" })).then(() => resolve(), reject);
     };
 
     input.once("end", () => {
@@ -128,9 +124,7 @@ export async function runHostProcess(options: RunHostProcessOptions): Promise<vo
 }
 
 /** Parse a request line; never throws. */
-function parseRequest(
-  line: string,
-): { ok: true; value: SdkHostRequest } | { ok: false; error: string } {
+function parseRequest(line: string): { ok: true; value: SdkHostRequest } | { ok: false; error: string } {
   try {
     const value = JSON.parse(line) as SdkHostRequest;
     if (typeof value !== "object" || value === null || typeof value.id !== "number") {

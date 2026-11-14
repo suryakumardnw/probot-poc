@@ -16,21 +16,22 @@
  *  - GitHub API failure after bounded retries → `completed_with_warnings`
  *    (the review data is retained; publication can be retried later).
  */
-import type pino from "pino";
 import type { PrismaClient } from "@prisma/client";
-import type { AgentRuntime } from "../agent/types.js";
+import type pino from "pino";
 import { resolveModelId } from "../agent/index.js";
+import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
-import { redactCredentials } from "../workspace/redact.js";
-import { transitionReviewState } from "../ingestion/review-state.js";
+import { persistReviewFindings } from "../findings/index.js";
 import type { ReviewJobPayload } from "../ingestion/queue.js";
-import type { WorkspaceResult } from "../workspace/workspace.js";
-import type { InstallationTokenProvider } from "../workspace/credentials.js";
+import { transitionReviewState } from "../ingestion/review-state.js";
+import { getKnowledgeSnapshot, materializeReviewKnowledge, persistKnowledgeMetrics } from "../knowledge/index.js";
+import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 import { createReviewEngineHook } from "../review-engine/hook.js";
 import { resolveReviewInjection } from "../review-engine/injection.js";
 import type { PromptInjection, RunReviewOutput } from "../review-engine/types.js";
-import { getKnowledgeSnapshot, materializeReviewKnowledge, persistKnowledgeMetrics } from "../knowledge/index.js";
-import { persistReviewFindings } from "../findings/index.js";
+import type { InstallationTokenProvider } from "../workspace/credentials.js";
+import { redactCredentials } from "../workspace/redact.js";
+import type { WorkspaceResult } from "../workspace/workspace.js";
 import {
   StaleHeadError,
   createGitHubOctokit,
@@ -38,7 +39,6 @@ import {
   recordPublicationFailure,
   type PublisherOctokit,
 } from "./publisher.js";
-import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 
 export interface ReviewPipelineDeps {
   runtime: AgentRuntime;
@@ -62,11 +62,7 @@ export type ReviewPipelineHook = (ctx: {
  * Best-effort aggregate token usage persistence (§16.1). Returns whether the
  * write succeeded so the telemetry record can state it.
  */
-async function persistReviewUsage(
-  prisma: PrismaClient,
-  reviewId: string,
-  output: RunReviewOutput,
-): Promise<boolean> {
+async function persistReviewUsage(prisma: PrismaClient, reviewId: string, output: RunReviewOutput): Promise<boolean> {
   return prisma.review
     .update({
       where: { id: reviewId },
@@ -442,7 +438,10 @@ export function createReviewPipelineHook(deps: ReviewPipelineDeps): ReviewPipeli
           promptInjection.metrics,
         ).catch((error) => {
           deps.logger.warn(
-            { reviewId: ctx.payload.reviewId, err: redactCredentials(error instanceof Error ? error.message : String(error)) },
+            {
+              reviewId: ctx.payload.reviewId,
+              err: redactCredentials(error instanceof Error ? error.message : String(error)),
+            },
             "Failed to persist knowledge injection metrics (non-fatal)",
           );
         });

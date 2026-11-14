@@ -1,26 +1,16 @@
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type pino from "pino";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
-import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
-import type { Finding, FindingEvidence, ReviewResult } from "../src/review-engine/index.js";
-import type { ReviewRunMetadata } from "../src/review-engine/types.js";
-import type { ReviewJobPayload } from "../src/ingestion/queue.js";
-import type { WorkspaceResult } from "../src/workspace/workspace.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { AgentRuntime } from "../src/agent/types.js";
+import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
 import type { StoredFinding } from "../src/findings/index.js";
-import {
-  parseUnifiedDiff,
-  resolveInlinePosition,
-} from "../src/publishing/diff-positions.js";
-import {
-  buildInlineCommentBody,
-  buildReviewBody,
-  extractFingerprint,
-  fingerprintMarker,
-} from "../src/publishing/summary.js";
+import { persistReviewFindings, getFindingsForReview } from "../src/findings/index.js";
+import type { ReviewJobPayload } from "../src/ingestion/queue.js";
+import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
+import { parseUnifiedDiff, resolveInlinePosition } from "../src/publishing/diff-positions.js";
+import { finalizeReview, type ReviewPipelineDeps } from "../src/publishing/pipeline.js";
 import {
   DEFAULT_RETRY,
   StaleHeadError,
@@ -31,7 +21,15 @@ import {
   type PublisherOctokit,
   type ReviewCommentParams,
 } from "../src/publishing/publisher.js";
-import { finalizeReview, type ReviewPipelineDeps } from "../src/publishing/pipeline.js";
+import {
+  buildInlineCommentBody,
+  buildReviewBody,
+  extractFingerprint,
+  fingerprintMarker,
+} from "../src/publishing/summary.js";
+import type { Finding, FindingEvidence, ReviewResult } from "../src/review-engine/index.js";
+import type { ReviewRunMetadata } from "../src/review-engine/types.js";
+import type { WorkspaceResult } from "../src/workspace/workspace.js";
 
 /**
  * Ticket 09 tests: diff position resolution, review body generation,
@@ -47,8 +45,6 @@ vi.mock("../src/findings/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/findings/index.js")>();
   return { ...actual, persistReviewFindings: vi.fn(actual.persistReviewFindings) };
 });
-
-import { persistReviewFindings, getFindingsForReview } from "../src/findings/index.js";
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
@@ -289,11 +285,7 @@ function makeFakeOctokit(state: FakeState): PublisherOctokit {
         },
         listReviewComments: async () => ({ data: state.existingComments }),
         listReviews: async () => ({ data: state.existingReviews }),
-        createReview: async (params: {
-          event: string;
-          body: string;
-          comments?: ReviewCommentParams[];
-        }) => {
+        createReview: async (params: { event: string; body: string; comments?: ReviewCommentParams[] }) => {
           state.createReviewCalls.push({
             event: params.event,
             body: params.body,
@@ -427,7 +419,10 @@ function makeDeps(state: FakeState, overrides: Partial<ReviewPipelineDeps> = {})
     logger: fakeLogger,
     prisma,
     tokenProvider: {
-      getInstallationToken: async () => ({ token: "fake-installation-token", expiresAt: new Date(Date.now() + 60_000) }),
+      getInstallationToken: async () => ({
+        token: "fake-installation-token",
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
     },
     octokitFactory: () => makeFakeOctokit(state),
     publishRetry: { maxAttempts: 1, baseDelayMs: 0 },
@@ -568,16 +563,34 @@ describe("review body generation", () => {
   test("uncertain findings only appear when configured, never as inline content", () => {
     const verified: StoredFinding[] = [
       {
-        id: "v1", fingerprint: "fp-v", category: "maintainability", severity: "medium",
-        confidence: 0.9, title: "V", filePath: "a.js", lineNumber: 1,
-        description: "a verified problem", verified: true, status: "new", reopened: false,
+        id: "v1",
+        fingerprint: "fp-v",
+        category: "maintainability",
+        severity: "medium",
+        confidence: 0.9,
+        title: "V",
+        filePath: "a.js",
+        lineNumber: 1,
+        description: "a verified problem",
+        verified: true,
+        status: "new",
+        reopened: false,
       },
     ];
     const uncertain: StoredFinding[] = [
       {
-        id: "u1", fingerprint: "fp-u", category: "maintainability", severity: "low",
-        confidence: 0.5, title: "U", filePath: "a.js", lineNumber: 2,
-        description: "a maybe problem", verified: false, status: "uncertain", reopened: false,
+        id: "u1",
+        fingerprint: "fp-u",
+        category: "maintainability",
+        severity: "low",
+        confidence: 0.5,
+        title: "U",
+        filePath: "a.js",
+        lineNumber: 2,
+        description: "a maybe problem",
+        verified: false,
+        status: "uncertain",
+        reopened: false,
       },
     ];
     const withUncertain = buildReviewBody({
@@ -607,9 +620,9 @@ describe("review body generation", () => {
       config: { publishUncertainInSummary: true, publishCleanReview: true },
     };
     expect(buildReviewBody(input)).toContain("No confirmed findings");
-    expect(
-      buildReviewBody({ ...input, config: { ...input.config, publishCleanReview: false } }),
-    ).not.toContain("No confirmed findings");
+    expect(buildReviewBody({ ...input, config: { ...input.config, publishCleanReview: false } })).not.toContain(
+      "No confirmed findings",
+    );
   });
 
   test("renders a flat numbered list of findings, most severe first", () => {
@@ -872,7 +885,9 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(state.createReviewCalls[0].comments).toHaveLength(0);
     expect(state.createReviewCalls[0].body).toContain("Additional observation (1, unverified)");
     // Uncertain findings are not recorded as published inline comments.
-    const inlineRows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId, commentType: "inline" } });
+    const inlineRows = await prisma.reviewComment.findMany({
+      where: { reviewId: seed.reviewId, commentType: "inline" },
+    });
     expect(inlineRows).toHaveLength(0);
   });
 
@@ -925,7 +940,11 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(first.inlineCreated).toBe(1);
 
     // A brand-new finding on the same file: summary is deduped, inline is new.
-    const b = await insertStoredFinding(seed.reviewId, seed.repositoryId, { title: "Second", fingerprint: "fp1:brand-new-issue", lineNumber: 5 });
+    const b = await insertStoredFinding(seed.reviewId, seed.repositoryId, {
+      title: "Second",
+      fingerprint: "fp1:brand-new-issue",
+      lineNumber: 5,
+    });
     const second = await publishReview({ ...makePublishInput(seed.reviewId, state, [a, b]) });
     expect(second.outcome).toBe("published");
     expect(second.inlineCreated).toBe(1);
@@ -933,7 +952,9 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(state.createReviewCalls).toHaveLength(2);
     expect(state.createReviewCalls[1].comments[0].body).toContain("Second");
     // Two published inline rows now exist, each with its own comment id.
-    const inlineRows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId, commentType: "inline" } });
+    const inlineRows = await prisma.reviewComment.findMany({
+      where: { reviewId: seed.reviewId, commentType: "inline" },
+    });
     expect(inlineRows).toHaveLength(2);
     const ids = inlineRows.map((r) => Number(r.githubCommentId));
     expect(new Set(ids).size).toBe(2);
@@ -959,7 +980,9 @@ describe("publishReview (fake octokit + Postgres)", () => {
     const seed = await seedReview("pub5b");
     const state = makeState(seed.headSha);
     state.currentSha = null;
-    await expect(publishReview({ ...makePublishInput(seed.reviewId, state, [], seed.headSha) })).rejects.toBeInstanceOf(StaleHeadError);
+    await expect(publishReview({ ...makePublishInput(seed.reviewId, state, [], seed.headSha) })).rejects.toBeInstanceOf(
+      StaleHeadError,
+    );
   });
 
   test("createReview failures are retried; success after transient errors publishes", async () => {
@@ -1023,9 +1046,7 @@ describe("publishReview (fake octokit + Postgres)", () => {
     // The failed attempt DID hit the API twice (retried).
     expect(state.createReviewCalls).toHaveLength(2);
     // Nothing was published, so nothing is marked published.
-    expect(
-      await prisma.reviewComment.count({ where: { reviewId: seed.reviewId, status: "published" } }),
-    ).toBe(0);
+    expect(await prisma.reviewComment.count({ where: { reviewId: seed.reviewId, status: "published" } })).toBe(0);
 
     await recordPublicationFailure(prisma, seed.reviewId);
     const failed = await prisma.reviewComment.findFirst({ where: { reviewId: seed.reviewId, status: "failed" } });
@@ -1154,9 +1175,7 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
     });
     const meta = makeMeta();
     meta.usage = {
-      modelCalls: [
-        { stage: "initial-analysis", inputTokens: 700, outputTokens: 100, durationMs: 500 },
-      ],
+      modelCalls: [{ stage: "initial-analysis", inputTokens: 700, outputTokens: 100, durationMs: 500 }],
       totalInputTokens: 700,
       totalOutputTokens: 100,
       durationMs: 500,

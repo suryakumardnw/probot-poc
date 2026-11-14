@@ -22,6 +22,7 @@ import {
  * NUL bytes in arguments, and confines path-like arguments to the workspace.
  */
 
+// eslint-disable-next-line no-control-regex -- control characters are the subject of this check
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 /** Commands that always constitute test execution (deny unless allowed). */
@@ -109,7 +110,7 @@ function validateArg(arg: string, workspacePath: string): ExecutionReason | null
   if (segments.includes("..")) return "path_escape";
   // Strip a leading "./" and resolve within the workspace for a final check.
   const rel = arg.replace(/^\.\//, "");
-  if (rel.length > 0 && (rel.startsWith("/") || rel.includes(":") && arg.includes("\\"))) {
+  if (rel.length > 0 && (rel.startsWith("/") || (rel.includes(":") && arg.includes("\\")))) {
     return "path_escape";
   }
   void workspacePath;
@@ -137,17 +138,10 @@ export function evaluateCommand(
 
   const command = request.command.trim();
   if (!command || command.includes("/") || command.includes("\\") || CONTROL_CHARS.test(command)) {
-    throw new ExecutionPolicyError(
-      "Command must be a bare executable name",
-      "invalid_arg",
-      `command: ${command}`,
-    );
+    throw new ExecutionPolicyError("Command must be a bare executable name", "invalid_arg", `command: ${command}`);
   }
   if (request.command !== command) {
-    throw new ExecutionPolicyError(
-      "Command name must not contain leading/trailing whitespace",
-      "invalid_arg",
-    );
+    throw new ExecutionPolicyError("Command name must not contain leading/trailing whitespace", "invalid_arg");
   }
 
   // §10.2: read-only mode inspects without executing anything.
@@ -157,10 +151,7 @@ export function evaluateCommand(
 
   // Workspace is mandatory — commands never run against arbitrary host cwd.
   if (!request.workspacePath || !request.workspacePath.startsWith("/")) {
-    throw new ExecutionPolicyError(
-      "A workspace path is required for command execution",
-      "workspace_required",
-    );
+    throw new ExecutionPolicyError("A workspace path is required for command execution", "workspace_required");
   }
 
   // Argument validation (defense-in-depth on top of argv-only execution).
@@ -177,10 +168,8 @@ export function evaluateCommand(
   }
 
   const classification = classificationFor(command, request.args);
-  const testsAllowed =
-    execution.mode === "sandbox" ? execution.commands.allowTests : false;
-  const buildsAllowed =
-    execution.mode === "sandbox" ? execution.commands.allowBuilds : false;
+  const testsAllowed = execution.mode === "sandbox" ? execution.commands.allowTests : false;
+  const buildsAllowed = execution.mode === "sandbox" ? execution.commands.allowBuilds : false;
 
   if (classification === "test" && !testsAllowed) {
     return deny("tests_disabled", "Test execution is disabled (execution.commands.allowTests)");
@@ -196,10 +185,7 @@ export function evaluateCommand(
 }
 
 /** Resolve the effective limits/env posture for an execution attempt. */
-export function buildEffectivePolicy(
-  execution: ReviewExecutionConfig,
-  options: EvaluateOptions = {},
-): EffectivePolicy {
+export function buildEffectivePolicy(execution: ReviewExecutionConfig, options: EvaluateOptions = {}): EffectivePolicy {
   const ceiling = options.timeoutCeilingMs ?? execution.resources.executionTimeoutMs;
   const workspaceReadOnly = execution.mode !== "sandbox";
   return {

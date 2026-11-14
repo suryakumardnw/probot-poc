@@ -17,10 +17,10 @@
  */
 
 import "dotenv/config";
+import { loadEnv } from "../config/env.js";
+import { createLogger } from "../lib/logger.js";
 import { createOpenAICompatibleProvider } from "../models/openai-compatible.js";
 import { ModelProviderError, ProviderConfigError } from "../models/provider.js";
-import { createLogger } from "../lib/logger.js";
-import { loadEnv } from "../config/env.js";
 
 interface SmokeTarget {
   provider: "configured" | "groq";
@@ -79,7 +79,9 @@ async function main(): Promise<void> {
 
   try {
     const health = await provider.healthCheck();
-    console.log(JSON.stringify({ smoke: "health", healthy: health.healthy, detail: health.detail, latencyMs: health.latencyMs }));
+    console.log(
+      JSON.stringify({ smoke: "health", healthy: health.healthy, detail: health.detail, latencyMs: health.latencyMs }),
+    );
 
     const response = await provider.chat({
       messages: [

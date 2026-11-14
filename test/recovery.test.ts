@@ -1,11 +1,11 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import pino from "pino";
 import type { Queue } from "bullmq";
+import pino from "pino";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import type { ReviewJobPayload } from "../src/ingestion/queue.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
+import { getMetricsRegistry } from "../src/observability/metrics.js";
 import { reconcileIncompleteReviews, resetReviewForRecovery } from "../src/recovery/reconciliation.js";
 import { REDIS_PERSISTENCE_COMMANDLINE } from "../src/recovery/redis-persistence.js";
-import { getMetricsRegistry, setMetricsRegistry } from "../src/observability/metrics.js";
-import type { ReviewJobPayload } from "../src/ingestion/queue.js";
 
 /**
  * Ticket 12 integration tests: startup reconciliation and recovery.
@@ -72,9 +72,13 @@ afterAll(async () => {
 });
 
 /** Create a review + durable job, then simulate a crashed in-flight worker. */
-async function createStuckReview(overrides: { state?: "queued" | "analyzing" | "publishing"; attempts?: number } = {}): Promise<{ reviewId: string; jobId: string }> {
+async function createStuckReview(
+  overrides: { state?: "queued" | "analyzing" | "publishing"; attempts?: number } = {},
+): Promise<{ reviewId: string; jobId: string }> {
   // Unique per call: (pull_request_id, head_sha, review_mode) is unique.
-  const headSha = `cccc7712cccc7712cccc7712${Date.now().toString(36).padStart(12, "0")}${Math.floor(Math.random() * 1e6).toString(36).padStart(4, "0")}`;
+  const headSha = `cccc7712cccc7712cccc7712${Date.now().toString(36).padStart(12, "0")}${Math.floor(Math.random() * 1e6)
+    .toString(36)
+    .padStart(4, "0")}`;
   const review = await prisma.review.create({
     data: {
       pullRequestId,
@@ -329,12 +333,6 @@ describe("resetReviewForRecovery", () => {
 
 describe("redis persistence guidance", () => {
   test("documents an AOF-enabling redis-server command line", () => {
-    expect(REDIS_PERSISTENCE_COMMANDLINE).toEqual([
-      "redis-server",
-      "--appendonly",
-      "yes",
-      "--appendfsync",
-      "everysec",
-    ]);
+    expect(REDIS_PERSISTENCE_COMMANDLINE).toEqual(["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]);
   });
 });

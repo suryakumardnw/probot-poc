@@ -28,7 +28,10 @@ export interface PersistedEvaluation {
 
 /** Deterministic config hash for the identity columns (no content stored). */
 export function configurationHashFrom(config: unknown): string {
-  return createHash("sha256").update(JSON.stringify(config ?? null)).digest("hex").slice(0, 16);
+  return createHash("sha256")
+    .update(JSON.stringify(config ?? null))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 export async function persistEvaluationRun(

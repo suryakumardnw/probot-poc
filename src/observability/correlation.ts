@@ -57,10 +57,7 @@ export interface StageTracker {
  * look like a silent hang, then `review_stage_completed` /
  * `review_stage_failed` when the stage ends.
  */
-export function startStage(
-  logger: ReviewLogger,
-  stage: string,
-): StageTracker {
+export function startStage(logger: ReviewLogger, stage: string): StageTracker {
   const started = Date.now();
   logger.info({ event: "review_stage_started", stage }, `Review stage started: ${stage}`);
   return {

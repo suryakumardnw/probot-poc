@@ -16,8 +16,10 @@ import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
 import fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type pino from "pino";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
+import { sha256Hex } from "../src/knowledge/fetch.js";
 import {
   ensureKnowledgeSources,
   knowledgeSpecsFromConfig,
@@ -25,14 +27,11 @@ import {
   persistKnowledgeMetrics,
   resetKnowledgeSnapshotForTests,
   setKnowledgeSnapshot,
-  getKnowledgeSnapshot,
   KnowledgeSnapshotError,
 } from "../src/knowledge/index.js";
-import { resolveReviewInjection, selectHandbookSections } from "../src/review-engine/injection.js";
-import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
-import { sha256Hex } from "../src/knowledge/fetch.js";
 import type { KnowledgeFetcher } from "../src/knowledge/types.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
+import { resolveReviewInjection, selectHandbookSections } from "../src/review-engine/injection.js";
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
@@ -72,7 +71,10 @@ function makeConfig(
 }
 
 /** Minimal fake GitHub API surface driven by an in-memory file map. */
-function makeFetcher(files: Record<string, string>, refs: Record<string, string> = {}): KnowledgeFetcher & { calls: string[] } {
+function makeFetcher(
+  files: Record<string, string>,
+  refs: Record<string, string> = {},
+): KnowledgeFetcher & { calls: string[] } {
   const calls: string[] = [];
   const fetcher = (async (url: string) => {
     calls.push(url);
@@ -102,7 +104,10 @@ function makeFetcher(files: Record<string, string>, refs: Record<string, string>
         const filePath = parts.slice(4).map(decodeURIComponent).join("/");
         const content = files[`${sha}/${filePath}`];
         if (content === undefined) return { status: 404, text: JSON.stringify({ message: "Not Found" }) };
-        return { status: 200, text: JSON.stringify({ encoding: "base64", content: Buffer.from(content, "utf8").toString("base64") }) };
+        return {
+          status: 200,
+          text: JSON.stringify({ encoding: "base64", content: Buffer.from(content, "utf8").toString("base64") }),
+        };
       }
     }
     return { status: 404, text: "{}" };
@@ -132,19 +137,29 @@ describe("ensureKnowledgeSources", () => {
   test("cache miss → fetch → manifest written with per-file hashes", async () => {
     const cacheDir = makeCacheDir();
     const skillContent = "# skill\n\nPlaybook body.";
-    const fetcher = makeFetcher({
-      [`${SKILL_REF}/skills/code-review/SKILL.md`]: skillContent,
-      [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards\n\nBe excellent.",
-      [`${HANDBOOK_SHA}/package.json`]: "{}", // config-like manifest: stripped
-    }, { main: HANDBOOK_SHA });
-    const snapshot = await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, { cacheDir, fetcher });
+    const fetcher = makeFetcher(
+      {
+        [`${SKILL_REF}/skills/code-review/SKILL.md`]: skillContent,
+        [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards\n\nBe excellent.",
+        [`${HANDBOOK_SHA}/package.json`]: "{}", // config-like manifest: stripped
+      },
+      { main: HANDBOOK_SHA },
+    );
+    const snapshot = await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, {
+      cacheDir,
+      fetcher,
+    });
 
     expect(snapshot.skill.status).toBe("fresh");
     expect(snapshot.skill.ref).toBe(SKILL_REF);
-    expect(snapshot.skill.files).toEqual([{ path: "skills/code-review/SKILL.md", sha256: sha256Hex(skillContent), bytes: Buffer.byteLength(skillContent) }]);
+    expect(snapshot.skill.files).toEqual([
+      { path: "skills/code-review/SKILL.md", sha256: sha256Hex(skillContent), bytes: Buffer.byteLength(skillContent) },
+    ]);
     expect(snapshot.handbook.status).toBe("fresh");
     expect(snapshot.handbook.files.map((f) => f.path)).toEqual(["docs/standards.md"]);
-    expect(snapshot.skill.contentHash).toBe(sha256Hex(snapshot.skill.files.map((f) => `${f.sha256}  ${f.path}\n`).join("")));
+    expect(snapshot.skill.contentHash).toBe(
+      sha256Hex(snapshot.skill.files.map((f) => `${f.sha256}  ${f.path}\n`).join("")),
+    );
 
     const manifest = JSON.parse(readFileSync(join(snapshot.skill.dir!, "manifest.json"), "utf8"));
     expect(manifest.status).toBe("fresh");
@@ -155,13 +170,22 @@ describe("ensureKnowledgeSources", () => {
 
   test("cache hit → no network (fetcher not called)", async () => {
     const cacheDir = makeCacheDir();
-    const first = makeFetcher({ [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill", [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards" });
-    const snapshot1 = await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, { cacheDir, fetcher: first });
+    const first = makeFetcher({
+      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill",
+      [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards",
+    });
+    const snapshot1 = await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, {
+      cacheDir,
+      fetcher: first,
+    });
     expect(first.calls.length).toBeGreaterThan(0);
     expect(snapshot1.skill.ref).toBe(SKILL_REF);
 
     const second = makeFetcher({});
-    const snapshot2 = await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, { cacheDir, fetcher: second });
+    const snapshot2 = await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, {
+      cacheDir,
+      fetcher: second,
+    });
     expect(second.calls).toHaveLength(0);
     expect(snapshot2.skill.status).toBe("fresh");
     expect(snapshot2.skill.contentHash).toBe(snapshot1.skill.contentHash);
@@ -210,7 +234,9 @@ describe("ensureKnowledgeSources", () => {
     expect(captured!.handbook!.ref).toBe(HANDBOOK_SHA);
     expect(captured!.handbookVariants![0]!.source.ref).toBe(tsSha);
     expect(
-      existsSync(join(workspacePath, "knowledge", "handbook-variants", tsSha, "docs/guidelines/typescript/01_architecture.md")),
+      existsSync(
+        join(workspacePath, "knowledge", "handbook-variants", tsSha, "docs/guidelines/typescript/01_architecture.md"),
+      ),
     ).toBe(true);
 
     // `.ts` is detected as typescript/nodejs → the variant copy is injected.
@@ -292,7 +318,10 @@ describe("ensureKnowledgeSources", () => {
 
   test("ref change → refetch under the new ref (and env override feeds the ref)", async () => {
     const cacheDir = makeCacheDir();
-    const first = makeFetcher({ [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# v1", [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards" });
+    const first = makeFetcher({
+      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# v1",
+      [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards",
+    });
     await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, { cacheDir, fetcher: first });
 
     // Env override is part of the per-source spec.
@@ -300,7 +329,10 @@ describe("ensureKnowledgeSources", () => {
     expect(specs.skill.refOverride).toBe(SKILL_REF_B);
 
     const configB = makeConfig(SKILL_REF_B, HANDBOOK_SHA);
-    const second = makeFetcher({ [`${SKILL_REF_B}/skills/code-review/SKILL.md`]: "# v2", [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards" });
+    const second = makeFetcher({
+      [`${SKILL_REF_B}/skills/code-review/SKILL.md`]: "# v2",
+      [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards",
+    });
     const snapshot2 = await ensureKnowledgeSources(configB, fakeLogger, { cacheDir, fetcher: second });
     expect(snapshot2.skill.ref).toBe(SKILL_REF_B);
     expect(snapshot2.skill.files[0]!.sha256).toBe(sha256Hex("# v2"));
@@ -316,10 +348,13 @@ describe("ensureKnowledgeSources", () => {
 
   test("oversized content → rejected → unavailable (no fallback content)", async () => {
     const cacheDir = makeCacheDir();
-    const fetcher = makeFetcher({
-      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "x".repeat(300_000), // > skill maxBytes
-      [`${HANDBOOK_SHA}/docs/big.md`]: "y".repeat(3_000_000), // > handbook maxBytes
-    }, { main: HANDBOOK_SHA });
+    const fetcher = makeFetcher(
+      {
+        [`${SKILL_REF}/skills/code-review/SKILL.md`]: "x".repeat(300_000), // > skill maxBytes
+        [`${HANDBOOK_SHA}/docs/big.md`]: "y".repeat(3_000_000), // > handbook maxBytes
+      },
+      { main: HANDBOOK_SHA },
+    );
     const snapshot = await ensureKnowledgeSources(makeConfig(), fakeLogger, { cacheDir, fetcher });
     expect(snapshot.skill.status).toBe("unavailable");
     expect(snapshot.skill.dir).toBeNull();
@@ -360,7 +395,10 @@ describe("ensureKnowledgeSources", () => {
 
   test("concurrent ensure calls resolve once (shared initialization)", async () => {
     const cacheDir = makeCacheDir();
-    const fetcher1 = makeFetcher({ [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# concurrent", [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards" });
+    const fetcher1 = makeFetcher({
+      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# concurrent",
+      [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards",
+    });
     const fetcher2 = makeFetcher({ [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# concurrent" });
     const [a, b] = await Promise.all([
       ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, { cacheDir, fetcher: fetcher1 }),
@@ -397,10 +435,14 @@ describe("per-review knowledge snapshot (§4)", () => {
   });
 
   test("materialize copies sources into the workspace and persists the snapshot", async () => {
-    const cacheDir = makeCacheDir();    const fetcher = makeFetcher({
-      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill\n\nPlaybook body.",
-      [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards\n\nBe excellent to each other.",
-    }, { main: HANDBOOK_SHA });
+    const cacheDir = makeCacheDir();
+    const fetcher = makeFetcher(
+      {
+        [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill\n\nPlaybook body.",
+        [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards\n\nBe excellent to each other.",
+      },
+      { main: HANDBOOK_SHA },
+    );
     const snapshot = await ensureKnowledgeSources(makeConfig(), fakeLogger, { cacheDir, fetcher });
     setKnowledgeSnapshot(snapshot);
 
@@ -443,11 +485,19 @@ describe("per-review knowledge snapshot (§4)", () => {
     });
     expect(result.knowledgeDir).toBe(join(workspacePath, "knowledge"));
 
-    const copied = await fsp.readFile(join(workspacePath, "knowledge", "skill", "skills", "code-review", "SKILL.md"), "utf8");
+    const copied = await fsp.readFile(
+      join(workspacePath, "knowledge", "skill", "skills", "code-review", "SKILL.md"),
+      "utf8",
+    );
     expect(copied).toBe("# skill\n\nPlaybook body.");
 
-    const stored = await prisma.review.findUniqueOrThrow({ where: { id: reviewId }, select: { knowledgeSnapshot: true } });
-    const persisted = stored.knowledgeSnapshot as { skill?: { ref: string; contentHash: string; files: Array<{ path: string; sha256: string }> } };
+    const stored = await prisma.review.findUniqueOrThrow({
+      where: { id: reviewId },
+      select: { knowledgeSnapshot: true },
+    });
+    const persisted = stored.knowledgeSnapshot as {
+      skill?: { ref: string; contentHash: string; files: Array<{ path: string; sha256: string }> };
+    };
     expect(persisted.skill!.ref).toBe(SKILL_REF);
     expect(persisted.skill!.contentHash).toBe(snapshot.skill.contentHash);
     expect(persisted.skill!.files[0]!.sha256).toBe(sha256Hex("# skill\n\nPlaybook body."));
@@ -491,10 +541,13 @@ describe("per-review knowledge snapshot (§4)", () => {
   test("handbook injection applies keyword section selection from the own copy", async () => {
     const handbookText = "# Testing\n\nAlways test your changes.\n\n# Deployment\n\nDeploy carefully.";
     const cacheDir = makeCacheDir();
-    const fetcher = makeFetcher({
-      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill",
-      [`${HANDBOOK_SHA}/docs/standards.md`]: handbookText,
-    }, { main: HANDBOOK_SHA });
+    const fetcher = makeFetcher(
+      {
+        [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill",
+        [`${HANDBOOK_SHA}/docs/standards.md`]: handbookText,
+      },
+      { main: HANDBOOK_SHA },
+    );
     const snapshot = await ensureKnowledgeSources(makeConfig(), fakeLogger, { cacheDir, fetcher });
 
     expect(selectHandbookSections(handbookText, ["src/index.test.ts"], 5000)).toContain("Always test your changes.");
@@ -555,10 +608,13 @@ describe("per-review knowledge snapshot (§4)", () => {
   test("handbook injection carries selection metrics; persistKnowledgeMetrics stores them additively", async () => {
     const handbookText = "# Testing\n\nAlways test your changes.\n\n# Deployment\n\nDeploy carefully.";
     const cacheDir = makeCacheDir();
-    const fetcher = makeFetcher({
-      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill",
-      [`${HANDBOOK_SHA}/docs/standards.md`]: handbookText,
-    }, { main: HANDBOOK_SHA });
+    const fetcher = makeFetcher(
+      {
+        [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# skill",
+        [`${HANDBOOK_SHA}/docs/standards.md`]: handbookText,
+      },
+      { main: HANDBOOK_SHA },
+    );
     const snapshot = await ensureKnowledgeSources(makeConfig(), fakeLogger, { cacheDir, fetcher });
 
     const workspacePath = mkdtempSync(join(tmpdir(), "ws-handbook-metrics-"));
@@ -619,8 +675,14 @@ describe("per-review knowledge snapshot (§4)", () => {
     expect(injection!.laterStagesText).toContain("Always test your changes.");
 
     await persistKnowledgeMetrics(prisma, review.id, "handbook", injection!.metrics!);
-    const stored = await prisma.review.findUniqueOrThrow({ where: { id: review.id }, select: { knowledgeSnapshot: true } });
-    const persisted = stored.knowledgeSnapshot as { handbook?: { ref: string }; metrics?: { source: string; injectedTokens: number; truncated: boolean } };
+    const stored = await prisma.review.findUniqueOrThrow({
+      where: { id: review.id },
+      select: { knowledgeSnapshot: true },
+    });
+    const persisted = stored.knowledgeSnapshot as {
+      handbook?: { ref: string };
+      metrics?: { source: string; injectedTokens: number; truncated: boolean };
+    };
     expect(persisted.metrics!.source).toBe("handbook");
     expect(persisted.metrics!.injectedTokens).toBe(injection!.metrics!.injectedTokens);
     expect(persisted.metrics!.truncated).toBe(false);

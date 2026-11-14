@@ -67,7 +67,10 @@ const AGENT_ERROR_CODE_CLASS: Readonly<Record<string, FailureClass>> = {
 
 /** Patterns used to classify errors that arrive without an error code. */
 const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, FailureClass]> = [
-  [/bad ?credentials|401|unauthorized|forbidden|rate limit|secondary rate|403|502|503|504|ECONNRESET|ETIMEDOUT|ENOTFOUND/i, "github_api_transient"],
+  [
+    /bad ?credentials|401|unauthorized|forbidden|rate limit|secondary rate|403|502|503|504|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+    "github_api_transient",
+  ],
   [/redis|ECONNREFUSED.*6379|bull/i, "redis_unavailable"],
   [/postgres|postgresql|prisma|database|5432|p1001|p2002/i, "postgres_unavailable"],
   [/clone|checkout|git (failed|error)|shallow/i, "clone_failure"],
@@ -91,7 +94,12 @@ export function classifyFailure(input: { errorCode?: string | null; message?: st
     return "github_api_transient";
   }
   if (code.includes("redis") || code.includes("queue")) return "redis_unavailable";
-  if (code.includes("postgres") || code.includes("database") || code.includes("db") || code.includes("findings_persist")) {
+  if (
+    code.includes("postgres") ||
+    code.includes("database") ||
+    code.includes("db") ||
+    code.includes("findings_persist")
+  ) {
     return "postgres_unavailable";
   }
   if (code.includes("invalid_model_output") || code.includes("schema") || code.includes("validation")) {

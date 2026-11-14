@@ -1,8 +1,8 @@
-import { Probot } from "probot";
+import type { Probot } from "probot";
 import { handleIssuesOpened } from "./controllers/issue.controller.js";
-import { registerPullRequestHandlers } from "./handlers/pull-request.js";
-import { registerIssueCommentHandlers } from "./handlers/issue-comment.js";
 import { registerInstallationHandlers } from "./handlers/installation.js";
+import { registerIssueCommentHandlers } from "./handlers/issue-comment.js";
+import { registerPullRequestHandlers } from "./handlers/pull-request.js";
 
 export default (app: Probot) => {
   // AI triage: comment possible solutions/opinions on new issues.

@@ -1,18 +1,18 @@
 import fs from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { createAdminApi } from "../src/admin/api.js";
+import { setGithubFetch, resetGithubFetch, type GithubFetch } from "../src/admin/github-client.js";
+import { PANEL_FIELDS, PANEL_SECTIONS, SECTION_LABELS } from "../src/admin/panel-fields.js";
+import { createAdminPanel } from "../src/admin/panel.js";
+import { clearRateLimitBuckets } from "../src/admin/rate-limit.js";
+import { clearSessions, createSession, sessionCookieValue } from "../src/admin/session.js";
+import { loadEnv, type Env } from "../src/config/env.js";
+import { DEFAULT_CONFIG_PATH, LAST_KNOWN_GOOD_SUFFIX } from "../src/config/review-loader.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { disconnectRedis } from "../src/lib/redis.js";
-import { loadEnv, type Env } from "../src/config/env.js";
-import { createAdminApi } from "../src/admin/api.js";
-import { createAdminPanel } from "../src/admin/panel.js";
-import { setGithubFetch, resetGithubFetch, type GithubFetch } from "../src/admin/github-client.js";
-import { clearSessions, createSession, sessionCookieValue } from "../src/admin/session.js";
-import { clearRateLimitBuckets } from "../src/admin/rate-limit.js";
-import { DEFAULT_CONFIG_PATH, LAST_KNOWN_GOOD_SUFFIX } from "../src/config/review-loader.js";
-import { PANEL_FIELDS, PANEL_SECTIONS, SECTION_LABELS } from "../src/admin/panel-fields.js";
 
 /**
  * Ticket 14 integration tests: server-rendered admin HTML panel.
@@ -458,7 +458,10 @@ describe("admin panel (ticket 14)", () => {
     const restored = JSON.parse(fs.readFileSync(configPath(), "utf8")) as { application: { timezone: string } };
     expect(restored.application.timezone).toBe("Asia/Tokyo");
 
-    const audits = await prisma.auditLog.findMany({ where: { action: { in: ["config.rollback", "config.rollback_failed"] } }, orderBy: { createdAt: "asc" } });
+    const audits = await prisma.auditLog.findMany({
+      where: { action: { in: ["config.rollback", "config.rollback_failed"] } },
+      orderBy: { createdAt: "asc" },
+    });
     expect(audits.map((row) => row.action)).toEqual(["config.rollback_failed", "config.rollback"]);
   });
 

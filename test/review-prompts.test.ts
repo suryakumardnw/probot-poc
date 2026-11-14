@@ -16,11 +16,15 @@
  *    impact.
  * No network and no database: pure unit coverage.
  */
-import { describe, expect, test } from "vitest";
-import type pino from "pino";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type pino from "pino";
+import { describe, expect, test } from "vitest";
+import { reviewConfigSchema } from "../src/config/review-schema.js";
+import type { KnowledgeSnapshot } from "../src/knowledge/types.js";
+import { composeInjectionStage1, composeInjectionLaterStages } from "../src/review-engine/engine.js";
+import { resolveReviewInjection } from "../src/review-engine/injection.js";
 import {
   COMMON_REVIEW_INSTRUCTIONS,
   HANDBOOK_MODE_INSTRUCTIONS,
@@ -32,10 +36,6 @@ import {
   rankHandbookFiles,
   selectHandbookUnderBudget,
 } from "../src/review-engine/retrieval.js";
-import { composeInjectionStage1, composeInjectionLaterStages } from "../src/review-engine/engine.js";
-import { resolveReviewInjection } from "../src/review-engine/injection.js";
-import { reviewConfigSchema } from "../src/config/review-schema.js";
-import type { KnowledgeSnapshot } from "../src/knowledge/types.js";
 import type { PromptInjection } from "../src/review-engine/types.js";
 
 const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as pino.Logger;
@@ -86,9 +86,10 @@ describe("rankHandbookFiles", () => {
   });
 
   test("keyword overlap with changed paths boosts otherwise-unknown files", () => {
-    const ranked = rankHandbookFiles([{ path: "testing/widgets.md", content: "# Widgets" }], [
-      "test/widgets_test.dart",
-    ]);
+    const ranked = rankHandbookFiles(
+      [{ path: "testing/widgets.md", content: "# Widgets" }],
+      ["test/widgets_test.dart"],
+    );
     expect(ranked[0]!.score).toBeGreaterThan(0);
   });
 
@@ -163,9 +164,7 @@ describe("selectHandbookUnderBudget", () => {
       { workspacePrefix: "knowledge/handbook-variants/ts-ref" },
     );
     expect(selection.text).toContain("## handbook file: flutter/style.md");
-    expect(selection.text).toContain(
-      "workspace copy: knowledge/handbook-variants/ts-ref/flutter/style.md",
-    );
+    expect(selection.text).toContain("workspace copy: knowledge/handbook-variants/ts-ref/flutter/style.md");
   });
 
   test("never injects the same file or identical content twice", () => {
@@ -186,7 +185,8 @@ describe("selectHandbookUnderBudget", () => {
       { path: "general/reviewing.md", content: "# Reviewing\n\nB." },
     ];
     const run = () =>
-      selectHandbookUnderBudget(rankHandbookFiles(files, dartChanged), dartChanged, { maxTokens: 1000, maxChars: 5000 }).text;
+      selectHandbookUnderBudget(rankHandbookFiles(files, dartChanged), dartChanged, { maxTokens: 1000, maxChars: 5000 })
+        .text;
     expect(run()).toBe(run());
   });
 
@@ -312,9 +312,7 @@ describe("handbook injection across stages", () => {
       });
 
       expect(injection?.laterStagesText).toContain("Always test your changes.");
-      expect(injection?.laterStagesText).toContain(
-        "workspace copy: knowledge/handbook/docs/standards.md",
-      );
+      expect(injection?.laterStagesText).toContain("workspace copy: knowledge/handbook/docs/standards.md");
       expect(injection?.guidelineSource).toEqual({
         repo: "nativewit/engineering-handbook",
         ref: "handbook-ref",

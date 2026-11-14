@@ -132,7 +132,8 @@ export class ModelProviderError extends Error {
     this.name = "ModelProviderError";
     this.code = code;
     this.statusCode = options.statusCode;
-    this.retryable = options.retryable ?? (code === "rate_limit" || code === "network" || code === "provider_unavailable");
+    this.retryable =
+      options.retryable ?? (code === "rate_limit" || code === "network" || code === "provider_unavailable");
     this.providerDetail = options.providerDetail;
   }
 }

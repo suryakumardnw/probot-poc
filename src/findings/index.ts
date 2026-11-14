@@ -4,11 +4,7 @@
  * publishing layer (ticket 09).
  */
 
-export {
-  computeFindingFingerprint,
-  normalizeTextSignature,
-  normalizeCodeIdentity,
-} from "./fingerprint.js";
+export { computeFindingFingerprint, normalizeTextSignature, normalizeCodeIdentity } from "./fingerprint.js";
 export {
   FindingValidationError,
   validateFindings,

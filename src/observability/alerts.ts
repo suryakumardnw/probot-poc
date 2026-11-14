@@ -85,10 +85,7 @@ export function loadAlertThresholds(): AlertThresholds {
       "ALERT_MAX_CONSECUTIVE_FAILURES",
       DEFAULT_ALERT_THRESHOLDS.consecutiveReviewFailures,
     ),
-    providerErrorThreshold: numEnv(
-      "ALERT_PROVIDER_ERROR_THRESHOLD",
-      DEFAULT_ALERT_THRESHOLDS.providerErrorThreshold,
-    ),
+    providerErrorThreshold: numEnv("ALERT_PROVIDER_ERROR_THRESHOLD", DEFAULT_ALERT_THRESHOLDS.providerErrorThreshold),
     memoryLimitBytes: numEnv("ALERT_MEMORY_LIMIT_BYTES", DEFAULT_ALERT_THRESHOLDS.memoryLimitBytes),
     diskLimitBytes: numEnv("ALERT_DISK_LIMIT_BYTES", DEFAULT_ALERT_THRESHOLDS.diskLimitBytes),
     diskUsageFraction: numEnv("ALERT_DISK_USAGE_FRACTION", DEFAULT_ALERT_THRESHOLDS.diskUsageFraction),
@@ -173,13 +170,7 @@ export class AlertManager {
       this.thresholds.providerErrorThreshold,
       `${signals.recentGithubAuthErrors} recent GitHub auth failures`,
     );
-    check(
-      "database_connectivity",
-      !signals.postgresOk,
-      signals.postgresOk ? 1 : 0,
-      1,
-      "PostgreSQL is unreachable",
-    );
+    check("database_connectivity", !signals.postgresOk, signals.postgresOk ? 1 : 0, 1, "PostgreSQL is unreachable");
     check("redis_connectivity", !signals.redisOk, signals.redisOk ? 1 : 0, 1, "Redis is unreachable");
 
     const memoryBreach = signals.memoryUsageBytes > this.thresholds.memoryLimitBytes;
@@ -191,8 +182,7 @@ export class AlertManager {
       `Worker RSS ${signals.memoryUsageBytes} exceeds ${this.thresholds.memoryLimitBytes}`,
     );
     const diskBreach =
-      signals.workspaceDiskUsageBytes >=
-      this.thresholds.diskLimitBytes * this.thresholds.diskUsageFraction;
+      signals.workspaceDiskUsageBytes >= this.thresholds.diskLimitBytes * this.thresholds.diskUsageFraction;
     check(
       "disk_approaching_limit",
       diskBreach,

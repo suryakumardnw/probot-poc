@@ -24,8 +24,9 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import type pino from "pino";
 import type { PrismaClient } from "@prisma/client";
+import type pino from "pino";
+import { sha256Hex } from "./fetch.js";
 import {
   knowledgeRefSlug,
   type KnowledgeSnapshot,
@@ -33,7 +34,6 @@ import {
   type PersistedKnowledgeSnapshot,
   type PersistedKnowledgeSource,
 } from "./types.js";
-import { sha256Hex } from "./fetch.js";
 
 export type KnowledgeKind = "skill" | "handbook";
 
@@ -85,7 +85,8 @@ async function copySource(source: KnowledgeSourceSnapshot, targetRoot: string): 
 
 function sameSource(a: PersistedKnowledgeSource | undefined, b: KnowledgeSourceSnapshot | undefined): boolean {
   if (!a || !b) return false;
-  if (a.status === "unavailable" || b.status === "unavailable") return a.status === b.status && a.contentHash === (b.contentHash ?? "");
+  if (a.status === "unavailable" || b.status === "unavailable")
+    return a.status === b.status && a.contentHash === (b.contentHash ?? "");
   return a.ref === b.ref && a.contentHash === b.contentHash;
 }
 
@@ -195,7 +196,9 @@ export async function materializeReviewKnowledge(
       const source = input.snapshot[kind];
       if (source.status !== "unavailable") persisted[kind] = persistedFromSource(source);
     }
-    const variants = (input.snapshot.handbookVariants ?? []).filter((variant) => variant.source.status !== "unavailable");
+    const variants = (input.snapshot.handbookVariants ?? []).filter(
+      (variant) => variant.source.status !== "unavailable",
+    );
     if (kinds.includes("handbook") && variants.length > 0) {
       persisted.handbookVariants = variants.map((variant) => ({
         technologies: variant.technologies,

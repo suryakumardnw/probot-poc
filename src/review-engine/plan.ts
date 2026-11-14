@@ -22,17 +22,18 @@ const TIER_BUDGETS = {
  * Build the review plan. Stage skipping is always justified in the plan so
  * the decision is auditable (completion evidence for ticket 07).
  */
-export function createReviewPlan(
-  complexity: ComplexityScore,
-  config: ReviewConfig,
-): ReviewPlan {
+export function createReviewPlan(complexity: ComplexityScore, config: ReviewConfig): ReviewPlan {
   const tier = complexity.tier;
   const tierBudgets = TIER_BUDGETS[tier];
 
   // Absolute caps from agent.context always win over tier scaling (§11.3).
   const budgets: ReviewPlanBudgets = {
     maxModelCalls: Math.min(tierBudgets.maxModelCalls, Math.max(1, config.agent.context.maxRetrievalCalls)),
-    maxFileRetrievals: Math.min(tierBudgets.maxFileRetrievals, config.agent.context.maxFiles, config.agent.context.maxRetrievalCalls),
+    maxFileRetrievals: Math.min(
+      tierBudgets.maxFileRetrievals,
+      config.agent.context.maxFiles,
+      config.agent.context.maxRetrievalCalls,
+    ),
     maxInputTokens: Math.max(1_000, Math.floor(config.agent.context.maxInputTokens * tierBudgets.tokenShare)),
     maxOutputTokens: Math.min(config.agent.context.maxOutputTokens, config.provider.maxOutputTokens),
     timeoutMs: clamp(
@@ -47,7 +48,11 @@ export function createReviewPlan(
     .reduce((sum, f) => sum + f.subscore, 0);
 
   const stages: PlannedStage[] = [
-    { id: "initial-analysis", enabled: true, justification: "always runs: the diff must be understood before any plan" },
+    {
+      id: "initial-analysis",
+      enabled: true,
+      justification: "always runs: the diff must be understood before any plan",
+    },
     {
       id: "context-investigation",
       enabled: tier !== "low" || risky > 0,
@@ -65,7 +70,11 @@ export function createReviewPlan(
           ? `runs: tier '${tier}' — findings are rechecked against retrieved source before publication`
           : "skipped: low-complexity change; findings are reported directly with derived confidence",
     },
-    { id: "reporting-prep", enabled: true, justification: "always runs: the structured review result must be produced" },
+    {
+      id: "reporting-prep",
+      enabled: true,
+      justification: "always runs: the structured review result must be produced",
+    },
   ];
 
   return { complexity, tier, stages, budgets };

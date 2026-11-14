@@ -2,8 +2,8 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSdkHostDispatcher, type SdkHostDispatcher } from "../src/agent/sdk/host.js";
 import { runHostProcess } from "../src/agent/sdk/host-process.js";
+import { createSdkHostDispatcher, type SdkHostDispatcher } from "../src/agent/sdk/host.js";
 import type {
   SdkCreateSessionInput,
   SdkHost,
@@ -162,9 +162,7 @@ describe("SDK host dispatcher", () => {
       method: "session.prompt",
       params: { sessionID: "sdksess_1", text: "review this diff" },
     });
-    expect(harness.state.prompts).toEqual([
-      { sessionID: "sdksess_1", text: "review this diff" },
-    ]);
+    expect(harness.state.prompts).toEqual([{ sessionID: "sdksess_1", text: "review this diff" }]);
 
     await dispatcher.handle({ id: 3, method: "session.get", params: { sessionID: "sdksess_1" } });
     expect(harness.state.gets).toEqual([{ sessionID: "sdksess_1" }]);
@@ -234,7 +232,10 @@ describe("SDK host dispatcher", () => {
       ...harness.sdkModule,
       OpenCode: {} as unknown as SdkModule["OpenCode"],
     };
-    const dispatcher = createSdkHostDispatcher(vi.fn(async () => broken), vi.fn());
+    const dispatcher = createSdkHostDispatcher(
+      vi.fn(async () => broken),
+      vi.fn(),
+    );
 
     const response = await dispatcher.handle({ id: 1, method: "health" });
     expect(response).toMatchObject({

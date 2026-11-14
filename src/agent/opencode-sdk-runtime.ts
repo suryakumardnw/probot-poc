@@ -23,6 +23,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { AgentRuntimeConfigSource } from "./opencode-config.js";
+import { buildChildEnv } from "./opencode-config.js";
+import { buildPrompt, extractJson, type AgentRuntimeLogger } from "./opencode-runtime.js";
+import { createStdioSdkHostClient, probeSdkHost, type SdkHostClient, type SdkHostClientOptions } from "./sdk/client.js";
+import { buildSdkInlineConfig, SDK_MODEL_KEY, SDK_PROVIDER_ID } from "./sdk/config.js";
+import type { SdkMessage, SdkSessionRow } from "./sdk/types.js";
 import {
   AgentRuntimeError,
   type AgentResult,
@@ -32,24 +38,6 @@ import {
   type AgentTask,
   type RuntimeHealth,
 } from "./types.js";
-import type { AgentRuntimeConfigSource } from "./opencode-config.js";
-import { buildChildEnv } from "./opencode-config.js";
-import {
-  buildPrompt,
-  extractJson,
-  type AgentRuntimeLogger,
-} from "./opencode-runtime.js";
-import { buildSdkInlineConfig, SDK_MODEL_KEY, SDK_PROVIDER_ID } from "./sdk/config.js";
-import {
-  createStdioSdkHostClient,
-  probeSdkHost,
-  type SdkHostClient,
-  type SdkHostClientOptions,
-} from "./sdk/client.js";
-import type {
-  SdkMessage,
-  SdkSessionRow,
-} from "./sdk/types.js";
 
 const MAX_DETAIL_LENGTH = 4_000;
 const MAX_LOG_LINE_CHARS = 500;
@@ -120,19 +108,14 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
 
   constructor(config: AgentRuntimeConfigSource, options: SdkRuntimeOptions = {}) {
     if (config.agent.runtime.type !== "opencode-sdk") {
-      throw new AgentRuntimeError(
-        "config",
-        `unsupported agent runtime type "${config.agent.runtime.type}"`,
-      );
+      throw new AgentRuntimeError("config", `unsupported agent runtime type "${config.agent.runtime.type}"`);
     }
     this.config = config;
     this.logger = options.logger;
     this.createHostClient = options.createHostClient ?? createStdioSdkHostClient;
     this.probeSdkHost = options.probeSdkHost ?? probeSdkHost;
     this.nodeMajorVersion = options.nodeMajorVersion ?? (() => Number(process.versions.node.split(".")[0]));
-    this.hostProcessPath =
-      options.hostProcessPath ??
-      fileURLToPath(new URL("./sdk/host-process.js", import.meta.url));
+    this.hostProcessPath = options.hostProcessPath ?? fileURLToPath(new URL("./sdk/host-process.js", import.meta.url));
     this.spawnImpl = options.spawnImpl ?? spawn;
     this.gitStatusImpl = options.gitStatusImpl ?? defaultGitStatus;
     this.rmImpl = options.rmImpl ?? rm;
@@ -206,23 +189,23 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     const totalTimeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        timedOut = true;
-        this.logTimeout(session);
-        this.killClient(state);
-        void this.closeClient(state);
-        reject(this.timeoutError(session));
-      }, Math.max(0, session.timeoutMs));
+      timer = setTimeout(
+        () => {
+          timedOut = true;
+          this.logTimeout(session);
+          this.killClient(state);
+          void this.closeClient(state);
+          reject(this.timeoutError(session));
+        },
+        Math.max(0, session.timeoutMs),
+      );
       timer.unref?.();
     });
     // A late loser must never surface as an unhandled rejection.
     totalTimeout.catch(() => {});
 
     try {
-      const result = await Promise.race([
-        this.runExecute(state, task, startedAt, deadline),
-        totalTimeout,
-      ]);
+      const result = await Promise.race([this.runExecute(state, task, startedAt, deadline), totalTimeout]);
       this.logger?.info("agent sdk execute completed", {
         event: "agent_sdk_execute_completed",
         sessionId: session.id,
@@ -380,11 +363,10 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
 
     const finalRow = await this.waitForIdle(state, client, sdkSessionId, promptStarted, deadline);
     if (finalRow.outcome === "failed") {
-      throw new AgentRuntimeError(
-        "provider_unavailable",
-        "opencode sdk session finished with outcome=failed",
-        { sessionId: session.id, detail: this.safeDetail(finalRow) },
-      );
+      throw new AgentRuntimeError("provider_unavailable", "opencode sdk session finished with outcome=failed", {
+        sessionId: session.id,
+        detail: this.safeDetail(finalRow),
+      });
     }
 
     this.throwIfExpired(session, deadline);
@@ -447,11 +429,10 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
             detail: truncate(this.scrub(parseFailure), MAX_DETAIL_LENGTH),
           });
         }
-        throw new AgentRuntimeError(
-          "invalid_output",
-          "agent output did not contain a JSON object",
-          { sessionId: session.id, detail: truncate(this.scrub(candidates[0] ?? text), MAX_DETAIL_LENGTH) },
-        );
+        throw new AgentRuntimeError("invalid_output", "agent output did not contain a JSON object", {
+          sessionId: session.id,
+          detail: truncate(this.scrub(candidates[0] ?? text), MAX_DETAIL_LENGTH),
+        });
       }
       result.text = chosen.text.trim();
       result.json = chosen.value;
@@ -592,11 +573,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
         this.killClient(state);
         void this.closeClient(state);
         this.logTimeout(session);
-        throw new AgentRuntimeError(
-          "timeout",
-          `opencode sdk execute timed out after ${session.timeoutMs}ms`,
-          { sessionId: session.id },
-        );
+        throw new AgentRuntimeError("timeout", `opencode sdk execute timed out after ${session.timeoutMs}ms`, {
+          sessionId: session.id,
+        });
       }
       await this.sleepImpl(this.pollIntervalMs);
     }
@@ -613,11 +592,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
   }
 
   private timeoutError(session: AgentSession): AgentRuntimeError {
-    return new AgentRuntimeError(
-      "timeout",
-      `opencode sdk execute timed out after ${session.timeoutMs}ms`,
-      { sessionId: session.id },
-    );
+    return new AgentRuntimeError("timeout", `opencode sdk execute timed out after ${session.timeoutMs}ms`, {
+      sessionId: session.id,
+    });
   }
 
   private logTimeout(session: AgentSession): void {
@@ -664,10 +641,7 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
     return { text: textMessages.join("\n\n").trim(), textMessages, usage };
   }
 
-  private async assertWorkspaceUnchanged(
-    state: SessionState,
-    baseline: string | undefined,
-  ): Promise<void> {
+  private async assertWorkspaceUnchanged(state: SessionState, baseline: string | undefined): Promise<void> {
     if (baseline === undefined) return; // git unavailable — guard skipped
     const after = await this.gitStatusImpl(state.session.workspacePath);
     if (after === undefined || after === baseline) return;
@@ -766,10 +740,7 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
  * Build the SDK runtime explicitly. The adapter fails closed: it is only
  * selected when the runtime type is "opencode-sdk"; there is no CLI fallback.
  */
-export function createSdkAgentRuntime(
-  config: AgentRuntimeConfigSource,
-  options: SdkRuntimeOptions = {},
-): AgentRuntime {
+export function createSdkAgentRuntime(config: AgentRuntimeConfigSource, options: SdkRuntimeOptions = {}): AgentRuntime {
   return new OpenCodeSdkAgentRuntime(config, options);
 }
 
@@ -801,10 +772,7 @@ function numberOrUndefined(...values: unknown[]): number | undefined {
 function normalizeUsage(value: unknown): NormalizedUsage | undefined {
   if (!value || typeof value !== "object") return undefined;
   const obj = value as Record<string, unknown>;
-  const inner =
-    obj.usage && typeof obj.usage === "object"
-      ? (obj.usage as Record<string, unknown>)
-      : obj;
+  const inner = obj.usage && typeof obj.usage === "object" ? (obj.usage as Record<string, unknown>) : obj;
   const inputTokens = numberOrUndefined(inner.input, inner.inputTokens);
   const outputTokens = numberOrUndefined(inner.output, inner.outputTokens);
   const reasoningTokens = numberOrUndefined(inner.reasoning, inner.reasoningTokens);

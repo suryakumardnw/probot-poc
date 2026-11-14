@@ -4,20 +4,14 @@
   "title": "AI PR Reviewer configuration (review.json)",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schemaVersion",
-    "provider",
-    "github"
-  ],
+  "required": ["schemaVersion", "provider", "github"],
   "properties": {
     "$schema": {
       "type": "string"
     },
     "schemaVersion": {
       "type": "integer",
-      "enum": [
-        1
-      ],
+      "enum": [1],
       "description": "Supported configuration schema versions. Unsupported versions are rejected."
     },
     "application": {
@@ -30,12 +24,7 @@
           "maxLength": 64
         },
         "environment": {
-          "enum": [
-            "development",
-            "test",
-            "staging",
-            "production"
-          ]
+          "enum": ["development", "test", "staging", "production"]
         },
         "timezone": {
           "type": "string",
@@ -47,9 +36,7 @@
     "github": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "organization"
-      ],
+      "required": ["organization"],
       "properties": {
         "organization": {
           "type": "string",
@@ -57,21 +44,13 @@
           "maxLength": 128
         },
         "installationScope": {
-          "enum": [
-            "organization",
-            "repository"
-          ]
+          "enum": ["organization", "repository"]
         },
         "events": {
           "type": "array",
           "minItems": 1,
           "items": {
-            "enum": [
-              "opened",
-              "synchronize",
-              "ready_for_review",
-              "issue_comment"
-            ]
+            "enum": ["opened", "synchronize", "ready_for_review", "issue_comment"]
           }
         },
         "manualCommand": {
@@ -80,11 +59,7 @@
           "maxLength": 32
         },
         "defaultReviewType": {
-          "enum": [
-            "standard",
-            "skill",
-            "handbook"
-          ]
+          "enum": ["standard", "skill", "handbook"]
         },
         "draftPullRequests": {
           "type": "object",
@@ -142,10 +117,7 @@
           "additionalProperties": false,
           "properties": {
             "mode": {
-              "enum": [
-                "adaptive",
-                "fixed"
-              ]
+              "enum": ["adaptive", "fixed"]
             },
             "maxStages": {
               "type": "integer",
@@ -258,13 +230,7 @@
           "type": "array",
           "minItems": 1,
           "items": {
-            "enum": [
-              "critical",
-              "high",
-              "medium",
-              "low",
-              "informational"
-            ]
+            "enum": ["critical", "high", "medium", "low", "informational"]
           }
         },
         "confidence": {
@@ -343,19 +309,10 @@
           "additionalProperties": false,
           "properties": {
             "type": {
-              "enum": [
-                "opencode-cli",
-                "opencode-sdk",
-                "opencode-server",
-                "custom"
-              ]
+              "enum": ["opencode-cli", "opencode-sdk", "opencode-server", "custom"]
             },
             "sessionStrategy": {
-              "enum": [
-                "per-review",
-                "per-stage",
-                "shared"
-              ]
+              "enum": ["per-review", "per-stage", "shared"]
             },
             "timeoutMs": {
               "type": "integer",
@@ -407,10 +364,7 @@
               }
             },
             "permissionPolicy": {
-              "enum": [
-                "allowlist",
-                "none"
-              ]
+              "enum": ["allowlist", "none"]
             }
           }
         }
@@ -419,16 +373,10 @@
     "provider": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "baseURL",
-        "apiKeyEnv",
-        "model"
-      ],
+      "required": ["baseURL", "apiKeyEnv", "model"],
       "properties": {
         "type": {
-          "enum": [
-            "openai-compatible"
-          ]
+          "enum": ["openai-compatible"]
         },
         "baseURL": {
           "type": "string",
@@ -461,10 +409,7 @@
           "maximum": 600000
         },
         "failurePolicy": {
-          "enum": [
-            "fail-immediately",
-            "retry-once"
-          ]
+          "enum": ["fail-immediately", "retry-once"]
         }
       }
     },
@@ -473,11 +418,7 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "enum": [
-            "read-only",
-            "static-analysis",
-            "sandbox"
-          ]
+          "enum": ["read-only", "static-analysis", "sandbox"]
         },
         "commands": {
           "type": "object",
@@ -511,11 +452,7 @@
               "type": "boolean"
             },
             "networkMode": {
-              "enum": [
-                "none",
-                "allowlist",
-                "open"
-              ]
+              "enum": ["none", "allowlist", "open"]
             },
             "allowedDomains": {
               "type": "array",
@@ -565,10 +502,7 @@
           "additionalProperties": false,
           "properties": {
             "strategy": {
-              "enum": [
-                "shallow",
-                "full"
-              ]
+              "enum": ["shallow", "full"]
             },
             "depth": {
               "type": "integer",
@@ -673,10 +607,7 @@
               "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "technologies",
-                  "ref"
-                ],
+                "required": ["technologies", "ref"],
                 "properties": {
                   "technologies": {
                     "type": "array",
@@ -729,10 +660,7 @@
           "maximum": 8
         },
         "newCommitPolicy": {
-          "enum": [
-            "supersede",
-            "append"
-          ]
+          "enum": ["supersede", "append"]
         },
         "retry": {
           "type": "object",
@@ -751,10 +679,7 @@
                   "maximum": 10
                 },
                 "backoff": {
-                  "enum": [
-                    "fixed",
-                    "exponential"
-                  ]
+                  "enum": ["fixed", "exponential"]
                 }
               }
             },
@@ -802,10 +727,7 @@
       "additionalProperties": false,
       "properties": {
         "reloadStrategy": {
-          "enum": [
-            "manual",
-            "restart"
-          ]
+          "enum": ["manual", "restart"]
         },
         "repositoryOverrides": {
           "type": "object",
@@ -850,20 +772,10 @@
           "additionalProperties": false,
           "properties": {
             "level": {
-              "enum": [
-                "fatal",
-                "error",
-                "warn",
-                "info",
-                "debug",
-                "trace"
-              ]
+              "enum": ["fatal", "error", "warn", "info", "debug", "trace"]
             },
             "format": {
-              "enum": [
-                "json",
-                "pretty"
-              ]
+              "enum": ["json", "pretty"]
             }
           }
         },

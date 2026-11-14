@@ -36,8 +36,4 @@ export {
   type PublishReviewInput,
   type RetryOptions,
 } from "./publisher.js";
-export {
-  createReviewPipelineHook,
-  type ReviewPipelineDeps,
-  type ReviewPipelineHook,
-} from "./pipeline.js";
+export { createReviewPipelineHook, type ReviewPipelineDeps, type ReviewPipelineHook } from "./pipeline.js";

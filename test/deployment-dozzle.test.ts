@@ -32,11 +32,7 @@ const MAIN_COMPOSE_PATH = path.resolve(__dirname, "../deploy/docker-compose.yml"
 
 describe("dozzle compose structure (operations stack)", () => {
   it("contains only the dozzle service, its auth init and the optional tunnel", () => {
-    expect(Object.keys(compose.services).sort()).toEqual([
-      "dozzle",
-      "dozzle-init",
-      "dozzle-tunnel",
-    ]);
+    expect(Object.keys(compose.services).sort()).toEqual(["dozzle", "dozzle-init", "dozzle-tunnel"]);
     expect(compose.services.dozzle.image).toBe("amir20/dozzle:v11.4.1");
     expect(compose.services["dozzle-init"].image).toBe("amir20/dozzle:v11.4.1-alpine");
   });
@@ -44,12 +40,7 @@ describe("dozzle compose structure (operations stack)", () => {
   it("publishes Dozzle through an outbound-only Cloudflare quick tunnel (CGNAT)", () => {
     const tunnel = compose.services["dozzle-tunnel"];
     expect(tunnel.image).toBe("cloudflare/cloudflared:2026.10.7");
-    expect(tunnel.command).toEqual([
-      "tunnel",
-      "--no-autoupdate",
-      "--url",
-      "http://dozzle:8080",
-    ]);
+    expect(tunnel.command).toEqual(["tunnel", "--no-autoupdate", "--url", "http://dozzle:8080"]);
     expect(tunnel.networks).toEqual(["edge"]);
     expect(tunnel.depends_on.dozzle.condition).toBe("service_healthy");
     // A tunnel needs no inbound port and must never bind one on the host.
@@ -89,9 +80,7 @@ describe("dozzle compose structure (operations stack)", () => {
     expect(command[5]).toContain("DOZZLE_FORCE_USERS");
     expect(init.volumes).toContain("dozzle-data:/data");
     expect(init.environment).toBeUndefined();
-    expect(compose.services.dozzle.depends_on["dozzle-init"].condition).toBe(
-      "service_completed_successfully",
-    );
+    expect(compose.services.dozzle.depends_on["dozzle-init"].condition).toBe("service_completed_successfully");
   });
 
   it("deploys auth from Compose env only (no host files, no manual steps)", () => {

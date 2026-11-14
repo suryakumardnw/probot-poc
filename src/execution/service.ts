@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { DockerSandboxExecutor } from "./docker-executor.js";
-import { LocalSandboxExecutor } from "./local-executor.js";
 import { createDiskQuotaWatcher } from "./limits.js";
+import { LocalSandboxExecutor } from "./local-executor.js";
 import { evaluateCommand } from "./policy.js";
 import {
   ExecutionPolicyError,
@@ -25,6 +25,7 @@ import {
 /** Make an argument safe for Postgres jsonb (it cannot store NUL at all) —
  * replace control bytes with visible placeholders for the audit record. */
 function escapeControlBytes(arg: string): string {
+  // eslint-disable-next-line no-control-regex -- control characters are the subject of this replacement
   return arg.replace(/[\u0000-\u001f\u007f]/g, (c) => `[U+${c.charCodeAt(0).toString(16).padStart(4, "0")}]`);
 }
 
@@ -50,9 +51,7 @@ export class ExecutionService {
     this.timeoutCeilingMs = options.timeoutCeilingMs;
     this.executor =
       options.executor ??
-      (options.execution.sandbox.enabled
-        ? new DockerSandboxExecutor()
-        : new LocalSandboxExecutor());
+      (options.execution.sandbox.enabled ? new DockerSandboxExecutor() : new LocalSandboxExecutor());
   }
 
   /** The configured executor (for lifecycle management by callers). */
@@ -104,10 +103,7 @@ export class ExecutionService {
    * host-side so a container filling the host disk is detected and the
    * result is marked `disk_quota_exceeded` (§10.4).
    */
-  private async executeWithHostDiskQuota(
-    request: CommandRequest,
-    policy: EffectivePolicy,
-  ): Promise<ExecutionResult> {
+  private async executeWithHostDiskQuota(request: CommandRequest, policy: EffectivePolicy): Promise<ExecutionResult> {
     const watcher = createDiskQuotaWatcher([request.workspacePath], policy.diskQuotaBytes, 500);
     try {
       const result = await this.executor.execute(request, policy);
@@ -189,7 +185,8 @@ export class ExecutionService {
     }
   }
 
-  private emptyPolicy(): EffectivePolicy {    return {
+  private emptyPolicy(): EffectivePolicy {
+    return {
       mode: this.execution.mode,
       networkMode: this.execution.sandbox.networkMode,
       timeoutMs: this.execution.resources.executionTimeoutMs,

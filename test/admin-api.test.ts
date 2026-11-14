@@ -1,16 +1,16 @@
 import fs from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
-import { disconnectRedis } from "../src/lib/redis.js";
-import { loadEnv, type Env } from "../src/config/env.js";
 import { createAdminApi, isAdminConfigured, authorizeAdmin } from "../src/admin/api.js";
 import { setGithubFetch, resetGithubFetch, type GithubFetch } from "../src/admin/github-client.js";
-import { clearSessions } from "../src/admin/session.js";
 import { clearRateLimitBuckets } from "../src/admin/rate-limit.js";
+import { clearSessions } from "../src/admin/session.js";
+import { loadEnv, type Env } from "../src/config/env.js";
 import { DEFAULT_CONFIG_PATH } from "../src/config/review-loader.js";
+import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
+import { disconnectRedis } from "../src/lib/redis.js";
 
 /**
  * Ticket 10 integration tests: admin authentication + configuration API.
@@ -141,7 +141,11 @@ const githubMock: GithubFetch = (async (input: unknown) => {
   const jsonResponse = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   if (url === "https://github.com/login/oauth/access_token") {
-    if (tokenExchangeShouldFail) return jsonResponse(200, { error: "bad_verification_code", error_description: "The code passed is incorrect or expired." });
+    if (tokenExchangeShouldFail)
+      return jsonResponse(200, {
+        error: "bad_verification_code",
+        error_description: "The code passed is incorrect or expired.",
+      });
     return jsonResponse(200, { access_token: "gho_test_token" });
   }
   if (url === "https://api.github.com/user") {
@@ -255,7 +259,12 @@ describe("admin api (ticket 10)", () => {
     githubUsers = { login: "octoadmin", membership: { role: "admin", state: "active" } };
     const result = await login(handler);
     expect(result.statusCode).toBe(200);
-    const body = JSON.parse(result.body) as { authenticated: boolean; user: { login: string }; rolePolicy: string; csrfToken: string };
+    const body = JSON.parse(result.body) as {
+      authenticated: boolean;
+      user: { login: string };
+      rolePolicy: string;
+      csrfToken: string;
+    };
     expect(body.authenticated).toBe(true);
     expect(body.user.login).toBe("octoadmin");
     expect(body.rolePolicy).toBe("org-role");
@@ -361,7 +370,9 @@ describe("admin api (ticket 10)", () => {
   test("forged session cookie (bad HMAC signature) is rejected", async () => {
     const id = "forged-session-id";
     const forged = `${id}.totally-invalid-signature`;
-    const result = await callAdmin(handler, "GET", "/api/admin/session", { headers: { cookie: `admin_session=${forged}` } });
+    const result = await callAdmin(handler, "GET", "/api/admin/session", {
+      headers: { cookie: `admin_session=${forged}` },
+    });
     expect(result.statusCode).toBe(401);
   });
 
@@ -370,7 +381,9 @@ describe("admin api (ticket 10)", () => {
     const login1 = await login(handler);
     const session = csrfCookiePair(login1);
 
-    const noHeader = await callAdmin(handler, "POST", "/api/admin/config/reload", { headers: { cookie: session.cookie } });
+    const noHeader = await callAdmin(handler, "POST", "/api/admin/config/reload", {
+      headers: { cookie: session.cookie },
+    });
     expect(noHeader.statusCode).toBe(403);
 
     const wrongHeader = await callAdmin(handler, "PUT", "/api/admin/config", {
@@ -444,7 +457,10 @@ describe("admin api (ticket 10)", () => {
     const before = fs.readFileSync(path.join(configDir, "review.json"), "utf8");
     const valid = JSON.parse(before) as unknown;
 
-    const ok = await callAdmin(handler, "POST", "/api/admin/config/validate", { headers: authedHeaders(session), body: valid });
+    const ok = await callAdmin(handler, "POST", "/api/admin/config/validate", {
+      headers: authedHeaders(session),
+      body: valid,
+    });
     expect(ok.statusCode).toBe(200);
     expect(JSON.parse(ok.body).valid).toBe(true);
 
@@ -455,14 +471,20 @@ describe("admin api (ticket 10)", () => {
     expect(bad.statusCode).toBe(200);
     expect(JSON.parse(bad.body).valid).toBe(false);
 
-    const dry = await callAdmin(handler, "POST", "/api/admin/config/dry-run", { headers: authedHeaders(session), body: valid });
+    const dry = await callAdmin(handler, "POST", "/api/admin/config/dry-run", {
+      headers: authedHeaders(session),
+      body: valid,
+    });
     expect(dry.statusCode).toBe(200);
     expect(JSON.parse(dry.body).applied).toBe(false);
 
     // Embedded secret rejected by validate (path only, value never echoed).
     const secretBody = structuredClone(valid) as Record<string, unknown>;
     (secretBody as { sneaky: unknown }).sneaky = { token: "super-secret-value" };
-    const secret = await callAdmin(handler, "POST", "/api/admin/config/validate", { headers: authedHeaders(session), body: secretBody });
+    const secret = await callAdmin(handler, "POST", "/api/admin/config/validate", {
+      headers: authedHeaders(session),
+      body: secretBody,
+    });
     expect(JSON.parse(secret.body).valid).toBe(false);
     expect(secret.body).not.toContain("super-secret-value");
 
@@ -559,17 +581,23 @@ describe("admin api (ticket 10)", () => {
     });
 
     try {
-      const list = await callAdmin(handler, "GET", "/api/admin/reviews?limit=10", { headers: { cookie: session.cookie } });
+      const list = await callAdmin(handler, "GET", "/api/admin/reviews?limit=10", {
+        headers: { cookie: session.cookie },
+      });
       expect(list.statusCode).toBe(200);
       const body = JSON.parse(list.body) as { total: number; reviews: Array<{ id: string; repository: string }> };
       expect(body.total).toBeGreaterThanOrEqual(1);
       expect(body.reviews.some((r) => r.id === review.id && r.repository === "octo-org/admin-test")).toBe(true);
 
-      const detail = await callAdmin(handler, "GET", `/api/admin/reviews/${review.id}`, { headers: { cookie: session.cookie } });
+      const detail = await callAdmin(handler, "GET", `/api/admin/reviews/${review.id}`, {
+        headers: { cookie: session.cookie },
+      });
       expect(detail.statusCode).toBe(200);
       expect(JSON.parse(detail.body)).toBeTruthy();
 
-      const missing = await callAdmin(handler, "GET", "/api/admin/reviews/nonexistent000000000000", { headers: { cookie: session.cookie } });
+      const missing = await callAdmin(handler, "GET", "/api/admin/reviews/nonexistent000000000000", {
+        headers: { cookie: session.cookie },
+      });
       expect(missing.statusCode).toBe(404);
     } finally {
       await prisma.review.delete({ where: { id: review.id } });
@@ -601,7 +629,11 @@ describe("admin api (ticket 10)", () => {
     await prisma.outboxEvent.deleteMany();
     await prisma.reviewStateTransition.deleteMany();
     await prisma.reviewJob.deleteMany();
-    await prisma.review.deleteMany({ where: { OR: [{ pullRequestNumber: 21 }, { pullRequest: { repository: { fullName: "octo-org/trigger-test" } } }] } });
+    await prisma.review.deleteMany({
+      where: {
+        OR: [{ pullRequestNumber: 21 }, { pullRequest: { repository: { fullName: "octo-org/trigger-test" } } }],
+      },
+    });
     await prisma.pullRequest.deleteMany({ where: { repository: { fullName: "octo-org/trigger-test" } } });
     await prisma.repository.deleteMany({ where: { fullName: "octo-org/trigger-test" } });
     await prisma.installation.deleteMany({ where: { githubInstallationId: 820001n } });
@@ -816,7 +848,9 @@ describe("admin api (ticket 10)", () => {
       expect(skillRow.publishSkipped).toBe(true);
 
       // Missing query parameters → 400; unknown repository → 404.
-      const badQuery = await callAdmin(handler, "GET", "/api/admin/reviews/compare", { headers: { cookie: session.cookie } });
+      const badQuery = await callAdmin(handler, "GET", "/api/admin/reviews/compare", {
+        headers: { cookie: session.cookie },
+      });
       expect(badQuery.statusCode).toBe(400);
       const unknown = await callAdmin(handler, "GET", "/api/admin/reviews/compare?repository=octo-org/nope&pr=1", {
         headers: { cookie: session.cookie },

@@ -13,27 +13,17 @@
  * - Registering a runtime type that is already registered throws.
  */
 
-import { AgentRuntimeError, type AgentRuntime } from "./types.js";
 import type { AgentRuntimeConfigSource } from "./opencode-config.js";
-import {
-  OpenCodeAgentRuntime,
-  type OpenCodeRuntimeOptions,
-} from "./opencode-runtime.js";
-import {
-  OpenCodeSdkAgentRuntime,
-  type SdkRuntimeOptions,
-} from "./opencode-sdk-runtime.js";
+import { OpenCodeAgentRuntime, type OpenCodeRuntimeOptions } from "./opencode-runtime.js";
+import { OpenCodeSdkAgentRuntime, type SdkRuntimeOptions } from "./opencode-sdk-runtime.js";
+import { AgentRuntimeError, type AgentRuntime } from "./types.js";
 
 export type AgentRuntimeFactoryOptions = OpenCodeRuntimeOptions & SdkRuntimeOptions;
 
 export interface AgentRuntimePlugin {
   readonly id: string;
   readonly runtimeTypes: readonly string[];
-  create(
-    runtimeType: string,
-    config: AgentRuntimeConfigSource,
-    options: AgentRuntimeFactoryOptions,
-  ): AgentRuntime;
+  create(runtimeType: string, config: AgentRuntimeConfigSource, options: AgentRuntimeFactoryOptions): AgentRuntime;
 }
 
 const registry = new Map<string, AgentRuntimePlugin>();
@@ -42,9 +32,7 @@ export function registerAgentRuntimePlugin(plugin: AgentRuntimePlugin): void {
   if (!plugin.id) throw new Error("agent runtime plugin id is required");
   for (const runtimeType of plugin.runtimeTypes) {
     if (registry.has(runtimeType)) {
-      throw new Error(
-        `agent runtime plugin already registered for type "${runtimeType}"`,
-      );
+      throw new Error(`agent runtime plugin already registered for type "${runtimeType}"`);
     }
   }
   for (const runtimeType of plugin.runtimeTypes) {
@@ -76,10 +64,7 @@ export const openCodeRuntimePlugin: AgentRuntimePlugin = {
       case "opencode-sdk":
         return new OpenCodeSdkAgentRuntime(config, options);
       default:
-        throw new AgentRuntimeError(
-          "config",
-          `opencode plugin does not implement runtime type "${runtimeType}"`,
-        );
+        throw new AgentRuntimeError("config", `opencode plugin does not implement runtime type "${runtimeType}"`);
     }
   },
 };
@@ -93,10 +78,7 @@ export function createAgentRuntime(
   const runtimeType = config.agent.runtime.type;
   const plugin = registry.get(runtimeType);
   if (!plugin) {
-    throw new AgentRuntimeError(
-      "config",
-      `no agent runtime plugin registered for type "${runtimeType}"`,
-    );
+    throw new AgentRuntimeError("config", `no agent runtime plugin registered for type "${runtimeType}"`);
   }
   return plugin.create(runtimeType, config, options);
 }
