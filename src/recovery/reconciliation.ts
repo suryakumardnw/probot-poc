@@ -22,9 +22,11 @@
 import type { PrismaClient, Review, ReviewJob, ReviewState } from "@prisma/client";
 import type { Queue } from "bullmq";
 import type pino from "pino";
-import type { ReviewJobPayload } from "../ingestion/queue.js";
+import { ERROR_CODES } from "../contracts/errors.js";
+import { outboxPayloadSchema, reviewJobPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
 import { TERMINAL_REVIEW_STATES } from "../ingestion/review-state.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
+import { AppError, ValidationError } from "../shared/errors/index.js";
 
 export type RecoveryPolicy = "requeue" | "fail";
 
@@ -64,9 +66,15 @@ export interface ReconciliationSummary {
 const DEFAULT_STALE_THRESHOLD_MS = 15 * 60_000;
 const DEFAULT_MAX_JOB_ATTEMPTS = 3;
 
-/** Build the queue payload for a review from the durable rows. */
+/**
+ * Build the queue payload for a review from the durable rows.
+ *
+ * The rows are the source of truth for recovery. They are parsed through the
+ * same contract as a published payload, so a row value outside the contract
+ * fails loudly instead of being enqueued as an invalid job.
+ */
 function buildPayloadFromRows(review: Review, job: ReviewJob, repositoryFullName?: string): ReviewJobPayload {
-  return {
+  const parsed = reviewJobPayloadSchema.safeParse({
     reviewId: review.id,
     jobKey: job.jobKey,
     githubInstallationId: review.githubInstallationId.toString(),
@@ -79,7 +87,17 @@ function buildPayloadFromRows(review: Review, job: ReviewJob, repositoryFullName
     reviewType: review.reviewType,
     trigger: review.trigger,
     configurationHash: review.configurationHash,
-  };
+  });
+  if (!parsed.success) {
+    throw new ValidationError("Durable review rows do not match the review job contract", {
+      code: ERROR_CODES.REVIEW_JOB_PAYLOAD_INVALID,
+      details: parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+    });
+  }
+  return parsed.data;
 }
 
 /**
@@ -103,6 +121,36 @@ export async function resetReviewForRecovery(prisma: PrismaClient, reviewId: str
       data: { reviewId, fromState: review.state as ReviewState, toState: "queued" },
     }),
   ]);
+}
+
+/**
+ * Terminal recovery failure: reset the review to `queued` (so the transition
+ * history remains auditable), mark it failed with the given stable code, and
+ * fail the durable job row.
+ */
+async function failReviewForRecovery(
+  prisma: PrismaClient,
+  reviewId: string,
+  jobId: string,
+  reason: string,
+  errorCode: string,
+): Promise<void> {
+  await resetReviewForRecovery(prisma, reviewId);
+  await prisma.review.update({
+    where: { id: reviewId },
+    data: {
+      state: "failed",
+      errorCode,
+      errorMessage: reason.slice(0, 500),
+    },
+  });
+  await prisma.reviewStateTransition.create({
+    data: { reviewId, fromState: "queued", toState: "failed" },
+  });
+  await prisma.reviewJob.update({
+    where: { id: jobId },
+    data: { status: "failed", lastError: reason.slice(0, 500) },
+  });
 }
 
 /**
@@ -198,22 +246,7 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         "Failing stale incomplete review during reconciliation",
       );
       try {
-        await resetReviewForRecovery(prisma, review.id);
-        await prisma.review.update({
-          where: { id: review.id },
-          data: {
-            state: "failed",
-            errorCode: "recovery_exhausted",
-            errorMessage: reason.slice(0, 500),
-          },
-        });
-        await prisma.reviewStateTransition.create({
-          data: { reviewId: review.id, fromState: "queued", toState: "failed" },
-        });
-        await prisma.reviewJob.update({
-          where: { id: job.id },
-          data: { status: "failed", lastError: reason.slice(0, 500) },
-        });
+        await failReviewForRecovery(prisma, review.id, job.id, reason, "recovery_exhausted");
         getMetricsRegistry().reviewsFailed.inc(1, { failure_class: "recovery_exhausted" });
         summary.failed += 1;
       } catch (error) {
@@ -232,16 +265,27 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         where: { reviewJobId: job.id },
         orderBy: { createdAt: "desc" },
       });
-      const stored = outboxEvent?.payload as Partial<ReviewJobPayload> | undefined;
+      const stored = outboxEvent ? outboxPayloadSchema.safeParse(outboxEvent.payload) : undefined;
+      if (stored && !stored.success) {
+        logger.warn(
+          {
+            reviewId: review.id,
+            jobId: job.id,
+            code: ERROR_CODES.OUTBOX_PAYLOAD_INVALID,
+            issues: stored.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
+          },
+          "Stored outbox payload is invalid; rebuilding the queue payload from durable rows",
+        );
+      }
       const fallback = buildPayloadFromRows(review, job, fullNames.get(review.githubRepositoryId.toString()));
-      const payload: ReviewJobPayload = stored
+      const payload: ReviewJobPayload = stored?.success
         ? {
             ...fallback,
-            repositoryFullName: stored.repositoryFullName ?? fallback.repositoryFullName,
-            reviewMode: stored.reviewMode ?? review.reviewMode,
-            trigger: stored.trigger ?? review.trigger,
-            baseSha: stored.baseSha ?? review.baseSha,
-            configurationHash: stored.configurationHash ?? review.configurationHash,
+            repositoryFullName: stored.data.repositoryFullName,
+            reviewMode: stored.data.reviewMode,
+            trigger: stored.data.trigger,
+            baseSha: stored.data.baseSha ?? fallback.baseSha,
+            configurationHash: stored.data.configurationHash ?? fallback.configurationHash,
           }
         : fallback;
 
@@ -278,6 +322,27 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
       );
       summary.requeued += 1;
     } catch (error) {
+      if (error instanceof AppError && error.code === ERROR_CODES.REVIEW_JOB_PAYLOAD_INVALID) {
+        // Durable rows outside the contract cannot produce a valid queue job.
+        // Fail permanently instead of retrying the same invalid payload on
+        // every reconciliation pass.
+        const reason = `${error.code}: ${error.message}`;
+        try {
+          await failReviewForRecovery(prisma, review.id, job.id, reason, error.code);
+          getMetricsRegistry().reviewsFailed.inc(1, { failure_class: "review_payload_invalid" });
+          summary.failed += 1;
+          logger.error(
+            { reviewId: review.id, jobId: job.id, code: error.code },
+            "Failing review with invalid durable payload",
+          );
+        } catch (failure) {
+          logger.error(
+            { reviewId: review.id, err: failure instanceof Error ? failure.message : String(failure) },
+            "Reconciliation failed to fail invalid review",
+          );
+        }
+        continue;
+      }
       logger.error(
         { reviewId: review.id, err: error instanceof Error ? error.message : String(error) },
         "Reconciliation could not re-enqueue stale review",

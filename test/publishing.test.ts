@@ -371,8 +371,8 @@ function makePayload(reviewId: string, headSha: string): ReviewJobPayload {
     repositoryFullName: REPO_FULL_NAME,
     pullRequestNumber: PR_NUMBER,
     headSha,
-    reviewMode: "full",
-    trigger: "synchronize",
+    reviewMode: "adaptive",
+    trigger: "synchronized",
   };
 }
 

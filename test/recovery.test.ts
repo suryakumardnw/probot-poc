@@ -1,6 +1,7 @@
 import type { Queue } from "bullmq";
 import pino from "pino";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { reviewJobPayloadSchema } from "../src/contracts/queue.js";
 import type { ReviewJobPayload } from "../src/ingestion/queue.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { getMetricsRegistry } from "../src/observability/metrics.js";
@@ -89,6 +90,7 @@ async function createStuckReview(
       baseSha: "dddd7712dddd7712dddd7712dddd7712dddd7712",
       state: overrides.state ?? "analyzing",
       trigger: "manual",
+      reviewMode: "adaptive",
     },
   });
   const job = await prisma.reviewJob.create({
@@ -172,6 +174,73 @@ describe("reconciliation", () => {
     });
     expect(second.requeued).toBe(0);
     expect(added).toHaveLength(1);
+  });
+
+  test("rebuilds a valid queue payload from durable rows when the stored outbox payload is invalid", async () => {
+    const { reviewId, jobId } = await createStuckReview();
+    await prisma.outboxEvent.create({
+      data: {
+        reviewJobId: jobId,
+        type: "review.requested",
+        payload: {
+          reviewId,
+          reviewMode: "legacy-mode",
+          pullRequestNumber: "not-a-number",
+        },
+      },
+    });
+    const { queue, added } = fakeQueue();
+
+    const summary = await reconcileIncompleteReviews({
+      prisma,
+      logger,
+      queue,
+      staleThresholdMs: 15 * 60_000,
+    });
+
+    expect(summary.requeued).toBe(1);
+    expect(added).toHaveLength(1);
+    const payload = added[0]?.payload;
+    if (!payload) {
+      throw new Error("reconciliation did not enqueue a payload");
+    }
+    // The stored payload is rejected, so every field comes from the durable
+    // rows: no invalid value and no invented default survives the fallback.
+    expect(payload).toMatchObject({
+      reviewId,
+      reviewMode: "adaptive",
+      trigger: "manual",
+      repositoryFullName: "recovery-fixture-org/widget",
+      pullRequestNumber: 7712,
+    });
+    expect(reviewJobPayloadSchema.safeParse(payload).success).toBe(true);
+  });
+
+  test("fails permanently when durable rows violate the queue contract", async () => {
+    const { reviewId, jobId } = await createStuckReview();
+    // Legacy rows may predate the tightened reviewMode enum
+    // (the column default was "standard"); they cannot produce a valid job.
+    await prisma.review.update({ where: { id: reviewId }, data: { reviewMode: "standard" } });
+    const { queue, added } = fakeQueue();
+
+    const summary = await reconcileIncompleteReviews({
+      prisma,
+      logger,
+      queue,
+      staleThresholdMs: 15 * 60_000,
+    });
+
+    expect(summary.requeued).toBe(0);
+    expect(summary.failed).toBe(1);
+    expect(added).toHaveLength(0);
+
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: reviewId } });
+    expect(review.state).toBe("failed");
+    expect(review.errorCode).toBe("REVIEW_JOB_PAYLOAD_INVALID");
+
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
+    expect(job.status).toBe("failed");
+    expect(job.lastError).toContain("REVIEW_JOB_PAYLOAD_INVALID");
   });
 
   test("removes a retained completed job before re-enqueueing (no silent jobId dedupe)", async () => {

@@ -131,6 +131,43 @@ describe("outbox publication (§12.2)", () => {
     expect(await queue.getJob(chain.jobId!)).toBeUndefined();
   });
 
+  test("a malformed payload is discarded with a stable code and never enqueued", async () => {
+    const chain = await seedReviewChain({
+      prefix: "outbox-malformed",
+      job: { status: "pending_outbox" },
+      outbox: { status: "pending" },
+    });
+    if (!chain.outboxEventId || !chain.jobId) {
+      throw new Error("seeded review chain is missing its outbox event or job id");
+    }
+    await prisma.outboxEvent.update({
+      where: { id: chain.outboxEventId },
+      data: {
+        payload: {
+          reviewId: chain.reviewId,
+          reviewMode: "uncontracted-mode",
+          pullRequestNumber: "not-a-number",
+        },
+      },
+    });
+
+    await expect(publishOutboxEvent(chain.outboxEventId, queue)).resolves.toBe("discarded");
+
+    // Permanent data error: the event is terminal (no retry loop) and records
+    // the stable code. Reconciliation can still rebuild the review payload
+    // from the durable rows.
+    const event = await prisma.outboxEvent.findUniqueOrThrow({ where: { id: chain.outboxEventId } });
+    expect(event.status).toBe("discarded");
+    expect(event.attempts).toBe(0);
+    expect(event.lastError).toContain("OUTBOX_PAYLOAD_INVALID");
+
+    // The publish happens before the enqueued state flip, so neither Redis nor
+    // the durable job row moved.
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+    expect(job.status).toBe("pending_outbox");
+    await expect(queue.getJob(chain.jobId)).resolves.toBeUndefined();
+  });
+
   test("recovery drains pending events, discarding superseded work", async () => {
     const publishable = await seedReviewChain({
       prefix: "outbox-drain-a",

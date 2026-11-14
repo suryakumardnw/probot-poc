@@ -1,13 +1,16 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { once } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import type pino from "pino";
+import pino from "pino";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { closeReviewQueue, getReviewQueue, type ReviewJobPayload } from "../../src/ingestion/queue.js";
+import { NullTokenProvider } from "../../src/workspace/credentials.js";
 import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
-import type { ReviewWorkspaceService, WorkspaceResult } from "../../src/workspace/workspace.js";
+import { ReviewWorkspaceService, type WorkspaceResult } from "../../src/workspace/workspace.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogger } from "./support.js";
 
 /**
@@ -241,6 +244,77 @@ describe("real BullMQ worker drain", () => {
       await stopPromise?.catch(() => {});
       await stopReviewWorker(worker).catch(() => {});
       await queueJob.remove().catch(() => {});
+    }
+  }, 30_000);
+});
+
+describe("real BullMQ worker permanent payload failure", () => {
+  test("a malformed queue payload fails once with a stable code and does not retry", async () => {
+    const chain = await seedReviewChain({
+      prefix: "malformed-payload",
+      state: "queued",
+      job: { status: "enqueued" },
+    });
+    if (!chain.jobId) {
+      throw new Error("seeded review chain is missing its job id");
+    }
+    const jobId = chain.jobId;
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-malformed-"));
+    const service = new ReviewWorkspaceService({
+      policy: {
+        cloneDepth: 1,
+        retentionHours: 1,
+        cleanupAfterReview: true,
+        maxFilesPerReview: 10,
+        gitTimeoutMs: 1_000,
+      },
+      rootDir,
+      tokenProvider: new NullTokenProvider(),
+    });
+    const worker = startReviewWorker(process.env.REDIS_URL ?? "redis://localhost:6379", {
+      prisma,
+      service,
+      logger: pino({ level: "silent" }),
+      concurrency: 1,
+    });
+    const queue = getReviewQueue();
+    await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
+
+    const failed = new Promise<{ attemptsMade: number | undefined; message: string }>((resolve) => {
+      worker.once("failed", (job, error) => {
+        resolve({ attemptsMade: job?.attemptsMade, message: error.message });
+      });
+    });
+    const queueJob = await queue.add(
+      "review",
+      { reviewId: chain.reviewId, reviewMode: "adaptive" },
+      { jobId, attempts: 3, backoff: { type: "exponential", delay: 10 } },
+    );
+
+    try {
+      const failure = await failed;
+      expect(failure.message).toContain("REVIEW_JOB_PAYLOAD_INVALID");
+      // One attempt only: a malformed payload must not consume the retry budget.
+      expect(failure.attemptsMade).toBe(1);
+      expect(await queueJob.getState()).toBe("failed");
+
+      const jobRow = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
+      expect(jobRow.status).toBe("failed");
+      expect(jobRow.lastError).toContain("REVIEW_JOB_PAYLOAD_INVALID");
+
+      const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+      expect(review.state).toBe("failed");
+      expect(review.errorCode).toBe("REVIEW_JOB_PAYLOAD_INVALID");
+
+      const transition = await prisma.reviewStateTransition.findFirst({
+        where: { reviewId: chain.reviewId },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(transition?.toState).toBe("failed");
+    } finally {
+      await queueJob.remove().catch(() => {});
+      await stopReviewWorker(worker).catch(() => {});
+      fs.rmSync(rootDir, { recursive: true, force: true });
     }
   }, 30_000);
 });

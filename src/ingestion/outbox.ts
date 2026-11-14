@@ -1,11 +1,14 @@
-import type { OutboxEvent, ReviewJob } from "@prisma/client";
+import type { OutboxEvent } from "@prisma/client";
 import type { Queue } from "bullmq";
 import type pino from "pino";
 import { loadEnv } from "../config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
+import { ERROR_CODES } from "../contracts/errors.js";
+import { outboxPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
 import { createLogger } from "../lib/logger.js";
 import { getPrisma } from "../lib/prisma.js";
-import { getReviewQueue, type ReviewJobPayload } from "./queue.js";
+import { AppError, ValidationError } from "../shared/errors/index.js";
+import { getReviewQueue } from "./queue.js";
 
 /**
  * Transactional outbox publisher (ARCHITECTURE.md §12.2).
@@ -23,22 +26,30 @@ export type PublishResult = "published" | "discarded" | "skipped" | "failed";
 
 const logger: pino.Logger = createLogger(loadEnv());
 
-function buildPayload(event: OutboxEvent, job: ReviewJob): ReviewJobPayload {
-  const payload = event.payload as Partial<ReviewJobPayload>;
-  return {
-    reviewId: payload.reviewId ?? job.reviewId,
-    jobKey: job.jobKey,
-    githubInstallationId: payload.githubInstallationId ?? "",
-    githubRepositoryId: payload.githubRepositoryId ?? "",
-    repositoryFullName: payload.repositoryFullName ?? "",
-    pullRequestNumber: payload.pullRequestNumber ?? 0,
-    headSha: payload.headSha ?? "",
-    baseSha: payload.baseSha ?? null,
-    reviewMode: payload.reviewMode ?? "adaptive",
-    reviewType: payload.reviewType ?? "standard",
-    trigger: payload.trigger ?? "opened",
-    configurationHash: payload.configurationHash ?? null,
-  };
+/**
+ * Parse the stored outbox payload into the queue contract.
+ *
+ * The outbox row is the durable request snapshot: no field is defaulted from
+ * the job row and no missing value is invented. An invalid snapshot is a
+ * permanent failure (`OUTBOX_PAYLOAD_INVALID`), so the publisher discards the
+ * event instead of retrying it forever; reconciliation still rebuilds the
+ * queue payload from the durable review/job rows.
+ */
+function buildPayload(event: OutboxEvent): ReviewJobPayload {
+  const parsed = outboxPayloadSchema.safeParse(event.payload);
+  if (!parsed.success) {
+    throw new ValidationError("Outbox event payload does not match the review job contract", {
+      code: ERROR_CODES.OUTBOX_PAYLOAD_INVALID,
+      details: parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+    });
+  }
+  // The queue job carries only the review-job contract; the producer-only
+  // `reviewEnabled` snapshot flag stays in the outbox row.
+  const { reviewEnabled: _reviewEnabled, ...payload } = parsed.data;
+  return payload;
 }
 
 function jobRetryOptions(): { attempts: number; backoff: { type: "exponential" | "fixed"; delay: number } } {
@@ -80,7 +91,7 @@ export async function publishOutboxEvent(
       return "discarded";
     }
 
-    const payload = buildPayload(event, job);
+    const payload = buildPayload(event);
     const retry = jobRetryOptions();
 
     // Commit the durable `enqueued` state BEFORE the job becomes visible to
@@ -131,7 +142,29 @@ export async function publishOutboxEvent(
     ]);
     return "published";
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const code = error instanceof AppError ? error.code : undefined;
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = code ? `${code}: ${detail}` : detail;
+
+    if (error instanceof AppError && error.code === ERROR_CODES.OUTBOX_PAYLOAD_INVALID) {
+      // A malformed durable snapshot can never become valid by retrying.
+      // Discard it so the recovery loop stops rescanning it; reconciliation
+      // rebuilds the queue payload from the review/job rows, which remain the
+      // source of truth.
+      try {
+        const discarded = await prisma.outboxEvent.updateMany({
+          where: { id: eventId, status: "pending" },
+          data: { status: "discarded", lastError: message },
+        });
+        if (discarded.count > 0) {
+          logger.error({ err: message, code, outboxEventId: eventId }, "Outbox payload invalid; event discarded");
+          return "discarded";
+        }
+      } catch {
+        // Postgres may be unreachable; fall through to the retryable failure.
+      }
+    }
+
     try {
       await prisma.outboxEvent.updateMany({
         where: { id: eventId, status: "pending" },
@@ -140,7 +173,7 @@ export async function publishOutboxEvent(
     } catch {
       // Postgres may be unreachable too; the event stays pending.
     }
-    logger.warn({ err: message, outboxEventId: eventId }, "Outbox publish failed; event stays pending");
+    logger.warn({ err: message, code, outboxEventId: eventId }, "Outbox publish failed; event stays pending");
     return "failed";
   }
 }

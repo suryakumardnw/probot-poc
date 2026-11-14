@@ -396,7 +396,7 @@ export function createReviewPipelineHook(deps: ReviewPipelineDeps): ReviewPipeli
   const engineHook = createReviewEngineHook(deps);
 
   return async (ctx) => {
-    const reviewType = ctx.payload.reviewType ?? "standard";
+    const reviewType = ctx.payload.reviewType;
     // Review-type injection (§4.1): skill loads the playbook, handbook uses
     // the engineering handbook. Both run BEFORE the engine so missing
     // content fails the review fast (SKILL_PLAYBOOK_UNAVAILABLE /

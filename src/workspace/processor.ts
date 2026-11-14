@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import type { PrismaClient } from "@prisma/client";
-import { Worker } from "bullmq";
+import { UnrecoverableError, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import type pino from "pino";
 import { AgentRuntimeError } from "../agent/types.js";
-import { REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../ingestion/queue.js";
+import { parseReviewJobPayload, REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../ingestion/queue.js";
 import { transitionReviewState } from "../ingestion/review-state.js";
 import {
   createReviewLogger,
@@ -16,6 +16,7 @@ import { getMetricsRegistry } from "../observability/metrics.js";
 import { classifyFailure, retryPolicyFor, type RetryPolicyConfig } from "../observability/retry.js";
 import { DEFAULT_RETRY_POLICY_CONFIG } from "../observability/retry.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
+import { AppError } from "../shared/errors/index.js";
 import { AppInstallationTokenProvider, NullTokenProvider, type InstallationTokenProvider } from "./credentials.js";
 import { redactCredentials } from "./redact.js";
 import { StaleCommitError, ReviewRetrievalError, type WorkspaceResult } from "./workspace.js";
@@ -221,6 +222,46 @@ export async function processReviewJob(
 }
 
 /**
+ * Fail a queue job whose payload violates the contract.
+ *
+ * The payload is permanent input: retrying cannot change it, so the durable
+ * job and review are marked failed with the stable `REVIEW_JOB_PAYLOAD_INVALID`
+ * code and the BullMQ job is thrown as an `UnrecoverableError` (no retries).
+ * A superseded/completed job is left untouched — its review already reached a
+ * terminal state for another reason.
+ */
+async function failMalformedReviewJob(deps: ProcessReviewJobDeps, jobId: string, error: AppError): Promise<void> {
+  const reason = `${error.code}: ${error.message}`.slice(0, 500);
+  try {
+    const row = await deps.prisma.reviewJob.findUnique({
+      where: { id: jobId },
+      select: { reviewId: true, status: true },
+    });
+    if (!row || row.status === "superseded" || row.status === "completed") {
+      return;
+    }
+    await deps.prisma.reviewJob.update({
+      where: { id: jobId },
+      data: { status: "failed", lastError: reason },
+    });
+    await transitionReviewState(row.reviewId, "failed", {
+      errorCode: error.code,
+      errorMessage: reason,
+    }).catch(() => {
+      // The review may already be terminal (e.g. superseded concurrently).
+    });
+  } catch (failure) {
+    deps.logger.warn(
+      {
+        jobId,
+        err: failure instanceof Error ? failure.message : String(failure),
+      },
+      "Could not persist malformed review job failure; recovery will reconcile",
+    );
+  }
+}
+
+/**
  * Start the BullMQ review worker. Connection retries are unbounded for the
  * worker (long-lived process), unlike the outbox publisher's fast-fail
  * connection.
@@ -240,7 +281,23 @@ export function startReviewWorker(redisUrl: string, deps: ProcessReviewJobDeps):
       if (!job.id) {
         throw new Error("BullMQ job has no id");
       }
-      return processReviewJob(job.id, job.data, deps);
+      let payload: ReviewJobPayload;
+      try {
+        payload = parseReviewJobPayload(job.data);
+      } catch (error) {
+        if (!(error instanceof AppError)) {
+          throw error;
+        }
+        deps.logger.error(
+          { jobId: job.id, code: error.code, details: error.details },
+          "Review job payload invalid; failing permanently",
+        );
+        await failMalformedReviewJob(deps, job.id, error);
+        // Permanent: do not consume the configured retry budget on a payload
+        // that cannot become valid between attempts.
+        throw new UnrecoverableError(`${error.code}: ${error.message}`);
+      }
+      return processReviewJob(job.id, payload, deps);
     },
     { connection, concurrency: deps.concurrency },
   );

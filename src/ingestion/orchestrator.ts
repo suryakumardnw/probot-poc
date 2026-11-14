@@ -2,6 +2,14 @@ import type { ReviewState, ReviewTrigger } from "@prisma/client";
 import type pino from "pino";
 import { loadEnv } from "../config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig, type ConfigurationSnapshot } from "../config/review-loader.js";
+import {
+  REVIEW_TYPES,
+  outboxPayloadSchema,
+  type IngestOutcome,
+  type ReviewModeValue,
+  type ReviewTriggerValue,
+  type ReviewTypeValue,
+} from "../contracts/queue.js";
 import { createLogger } from "../lib/logger.js";
 import { getPrisma } from "../lib/prisma.js";
 import { publishOutboxEvent } from "./outbox.js";
@@ -31,11 +39,10 @@ import { TERMINAL_REVIEW_STATES } from "./review-state.js";
 
 const logger: pino.Logger = createLogger(loadEnv());
 
-export type IngestTrigger = "opened" | "synchronized" | "ready_for_review" | "manual";
+export type IngestTrigger = ReviewTriggerValue;
 
-/** Review types (ARCHITECTURE.md §4.1). Mirrors the Prisma ReviewType enum. */
-export const REVIEW_TYPES = ["standard", "skill", "handbook"] as const;
-export type ReviewTypeValue = (typeof REVIEW_TYPES)[number];
+export { REVIEW_TYPES };
+export type { IngestOutcome, ReviewTypeValue };
 
 export type IngestReviewRequestInput = {
   trigger: IngestTrigger;
@@ -68,8 +75,6 @@ export type IngestReviewRequestInput = {
   /** Webhook-delivery event label recorded for idempotency (§12.1). */
   deliveryEvent?: string;
 };
-
-export type IngestOutcome = "created" | "duplicate" | "skipped" | "duplicate_delivery" | "configuration_unavailable";
 
 export type IngestReviewRequestResult = {
   outcome: IngestOutcome;
@@ -106,8 +111,8 @@ export function buildJobKey(parts: {
   repositoryId: string;
   pullRequestNumber: number;
   headSha: string;
-  reviewMode: string;
-  reviewType: string;
+  reviewMode: ReviewModeValue;
+  reviewType: ReviewTypeValue;
 }): string {
   return [
     parts.installationId,
@@ -325,12 +330,14 @@ export async function ingestReviewRequest(input: IngestReviewRequestInput): Prom
       }
     }
 
-    // 4. Transactional outbox event (§12.2).
+    // 4. Transactional outbox event (§12.2). The snapshot is parsed through
+    // the outbox contract before it is committed, so ingestion can never write
+    // a payload the publisher would later reject.
     const outboxEvent = await tx.outboxEvent.create({
       data: {
         reviewJobId: job.id,
         type: "review.requested",
-        payload: {
+        payload: outboxPayloadSchema.parse({
           reviewId: review.id,
           jobKey,
           githubInstallationId: String(installationId),
@@ -344,7 +351,7 @@ export async function ingestReviewRequest(input: IngestReviewRequestInput): Prom
           trigger: input.trigger,
           configurationHash: snapshot.hash,
           reviewEnabled,
-        },
+        }),
       },
     });
 

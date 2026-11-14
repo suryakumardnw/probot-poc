@@ -1,5 +1,8 @@
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { ERROR_CODES } from "../contracts/errors.js";
+import { reviewJobPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
+import { ValidationError } from "../shared/errors/index.js";
 
 /**
  * BullMQ review queue (ARCHITECTURE.md §4.4, §12.2).
@@ -17,23 +20,46 @@ import { Redis } from "ioredis";
 
 export const REVIEW_QUEUE_NAME = "review-jobs";
 
-export type ReviewJobPayload = {
-  reviewId: string;
-  jobKey: string;
-  githubInstallationId: string;
-  githubRepositoryId: string;
-  repositoryFullName: string;
-  pullRequestNumber: number;
-  headSha: string;
-  baseSha?: string | null;
-  reviewMode: string;
-  /** Which review methodology runs (§4.1): standard | skill | handbook. */
-  reviewType: string;
-  trigger: string;
-  configurationHash?: string | null;
-};
+export {
+  INGEST_OUTCOMES,
+  REVIEW_MODES,
+  REVIEW_TRIGGERS,
+  REVIEW_TYPES,
+  ingestOutcomeSchema,
+  outboxPayloadSchema,
+  reviewJobPayloadSchema,
+} from "../contracts/queue.js";
+export type {
+  IngestOutcome,
+  OutboxPayload,
+  ReviewJobPayload,
+  ReviewModeValue,
+  ReviewTriggerValue,
+  ReviewTypeValue,
+} from "../contracts/queue.js";
 
 let queue: Queue<ReviewJobPayload> | undefined;
+
+/**
+ * Parse a BullMQ job's `data` at the worker boundary.
+ *
+ * A failure here is permanent: retrying cannot repair the stored payload, so
+ * the worker records the stable code durably and lets BullMQ fail the job
+ * without consuming its retry budget.
+ */
+export function parseReviewJobPayload(data: unknown): ReviewJobPayload {
+  const parsed = reviewJobPayloadSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new ValidationError("Review job payload does not match the queue contract", {
+      code: ERROR_CODES.REVIEW_JOB_PAYLOAD_INVALID,
+      details: parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+    });
+  }
+  return parsed.data;
+}
 
 /**
  * Dedicated BullMQ connection. Unlike the shared health-check client
