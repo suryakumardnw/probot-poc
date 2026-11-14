@@ -20,6 +20,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "test": "vitest run",
+    "metrics:quality": "node scripts/quality-metrics.mjs",
     "config:validate": "node lib/scripts/config-validate.js",
     "eval:run": "node lib/scripts/eval-run.js",
     "config:dry-run": "node lib/scripts/config-dry-run.js",
