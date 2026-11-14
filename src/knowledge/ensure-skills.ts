@@ -123,8 +123,12 @@ function extensionOf(filePath: string): string {
 
 function isConfigLikeManifest(filePath: string): boolean {
   const base = path.posix.basename(filePath).toLowerCase();
-  if (REJECTED_BASENAMES.has(base)) return true;
-  if (base.endsWith(".schema.json")) return true;
+  if (REJECTED_BASENAMES.has(base)) {
+    return true;
+  }
+  if (base.endsWith(".schema.json")) {
+    return true;
+  }
   return false;
 }
 
@@ -143,19 +147,31 @@ function selectTreeEntries(
   const maxFiles = spec.kind === "skill" ? MAX_SKILL_FILES : MAX_HANDBOOK_FILES;
   const selected: Array<{ path: string }> = [];
   for (const entry of entries) {
-    if (entry.type !== "blob") continue;
+    if (entry.type !== "blob") {
+      continue;
+    }
     // Regular files only: symlinks (mode 120000) are rejected outright.
-    if (entry.mode !== "100644" && entry.mode !== "100755") continue;
-    if (prefix && !(entry.path === prefix || entry.path.startsWith(`${prefix}/`))) continue;
-    if (!extensions.has(extensionOf(entry.path))) continue;
-    if (isConfigLikeManifest(entry.path)) continue;
+    if (entry.mode !== "100644" && entry.mode !== "100755") {
+      continue;
+    }
+    if (prefix && !(entry.path === prefix || entry.path.startsWith(`${prefix}/`))) {
+      continue;
+    }
+    if (!extensions.has(extensionOf(entry.path))) {
+      continue;
+    }
+    if (isConfigLikeManifest(entry.path)) {
+      continue;
+    }
     try {
       validateRelativePath(entry.path);
     } catch {
       continue; // untrusted listing: silently drop unsafe entries
     }
     selected.push({ path: entry.path });
-    if (selected.length >= maxFiles) break;
+    if (selected.length >= maxFiles) {
+      break;
+    }
   }
   return selected.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
@@ -171,9 +187,13 @@ function retryingFetcher(inner: KnowledgeFetcher): KnowledgeFetcher {
     for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt += 1) {
       try {
         const response = await inner(url, init);
-        if (response.status === 200) return response;
+        if (response.status === 200) {
+          return response;
+        }
         // Non-2xx: 4xx (except 429) are terminal; 5xx/429 are retryable.
-        if (response.status < 500 && response.status !== 429) return response;
+        if (response.status < 500 && response.status !== 429) {
+          return response;
+        }
         lastError = new Error(`HTTP ${response.status}`);
       } catch (error) {
         lastError = error;
@@ -305,18 +325,26 @@ async function readCachedEntry(cacheDir: string, kind: "skill" | "handbook", ref
   } catch {
     return null;
   }
-  if (manifest.ref !== ref || !Array.isArray(manifest.files) || manifest.files.length === 0) return null;
+  if (manifest.ref !== ref || !Array.isArray(manifest.files) || manifest.files.length === 0) {
+    return null;
+  }
   try {
     for (const file of manifest.files) {
       validateRelativePath(file.path);
       const content = await fsp.readFile(path.join(dir, file.path), "utf8");
-      if (sha256Hex(content) !== file.sha256) return null;
-      if (Buffer.byteLength(content, "utf8") !== file.bytes) return null;
+      if (sha256Hex(content) !== file.sha256) {
+        return null;
+      }
+      if (Buffer.byteLength(content, "utf8") !== file.bytes) {
+        return null;
+      }
     }
   } catch {
     return null;
   }
-  if (computeContentHash(manifest.files) !== manifest.contentHash) return null;
+  if (computeContentHash(manifest.files) !== manifest.contentHash) {
+    return null;
+  }
   return { dir, manifest };
 }
 
@@ -476,7 +504,9 @@ export async function ensureKnowledgeSources(
     };
   }
   const key = cacheDir;
-  if (inflight && inflightKey === key) return inflight;
+  if (inflight && inflightKey === key) {
+    return inflight;
+  }
 
   const run = (async (): Promise<KnowledgeSnapshot> => {
     await fsp.mkdir(cacheDir, { recursive: true });

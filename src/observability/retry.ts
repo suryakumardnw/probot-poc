@@ -87,13 +87,19 @@ export function classifyFailure(input: { errorCode?: string | null; message?: st
   const message = input.message ?? "";
 
   const agentClass = AGENT_ERROR_CODE_CLASS[code];
-  if (agentClass) return agentClass;
+  if (agentClass) {
+    return agentClass;
+  }
 
-  if (code.includes("stale_commit") || /head moved|stale.*commit/i.test(message)) return "stale_commit";
+  if (code.includes("stale_commit") || /head moved|stale.*commit/i.test(message)) {
+    return "stale_commit";
+  }
   if (code.includes("github") || code.includes("403") || code.includes("401") || code.includes("rate_limit")) {
     return "github_api_transient";
   }
-  if (code.includes("redis") || code.includes("queue")) return "redis_unavailable";
+  if (code.includes("redis") || code.includes("queue")) {
+    return "redis_unavailable";
+  }
   if (
     code.includes("postgres") ||
     code.includes("database") ||
@@ -105,14 +111,20 @@ export function classifyFailure(input: { errorCode?: string | null; message?: st
   if (code.includes("invalid_model_output") || code.includes("schema") || code.includes("validation")) {
     return "invalid_model_output";
   }
-  if (code.includes("clone") || code.includes("checkout") || code.includes("retrieval")) return "clone_failure";
-  if (code.includes("model") || code.includes("provider") || code.includes("agent_runtime")) return "model_unavailable";
+  if (code.includes("clone") || code.includes("checkout") || code.includes("retrieval")) {
+    return "clone_failure";
+  }
+  if (code.includes("model") || code.includes("provider") || code.includes("agent_runtime")) {
+    return "model_unavailable";
+  }
   if (code.includes("resource") || code.includes("quota") || code.includes("timeout") || code.includes("oom")) {
     return "resource_limit_exceeded";
   }
 
   for (const [pattern, cls] of MESSAGE_PATTERNS) {
-    if (pattern.test(message)) return cls;
+    if (pattern.test(message)) {
+      return cls;
+    }
   }
   return "unknown";
 }

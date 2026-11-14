@@ -107,9 +107,15 @@ function redirect(res: ServerResponse, location: string): void {
 }
 
 function displayValue(value: unknown): string {
-  if (value === undefined) return "(unset)";
-  if (Array.isArray(value)) return value.join(", ");
-  if (typeof value === "string") return value;
+  if (value === undefined) {
+    return "(unset)";
+  }
+  if (Array.isArray(value)) {
+    return value.join(", ");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
   return JSON.stringify(value);
 }
 
@@ -161,7 +167,9 @@ async function readUrlEncodedForm(req: IncomingMessage): Promise<FormResult> {
   const raw = parseFormBody(Buffer.concat(chunks).toString("utf8"));
   const fields: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
     fields[key] = value;
   }
   return { ok: true, fields };
@@ -169,7 +177,9 @@ async function readUrlEncodedForm(req: IncomingMessage): Promise<FormResult> {
 
 function lastValue(fields: Record<string, string | string[]>, key: string): string | undefined {
   const value = fields[key];
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   return Array.isArray(value) ? value[value.length - 1] : value;
 }
 
@@ -259,9 +269,13 @@ function buildCandidate(
   let submitted = false;
 
   for (const field of PANEL_FIELDS[section]) {
-    if (field.readonly) continue; // read-only fields are never written by the panel
+    if (field.readonly) {
+      continue;
+    } // read-only fields are never written by the panel
     const raw = lastValue(form, `f:${field.path}`);
-    if (raw === undefined) continue; // untouched (e.g. interstitial round-trip)
+    if (raw === undefined) {
+      continue;
+    } // untouched (e.g. interstitial round-trip)
     submitted = true;
     try {
       switch (field.type) {
@@ -269,7 +283,9 @@ function buildCandidate(
           setPath(candidate, field.path, raw === "true");
           break;
         case "number": {
-          if (raw.trim() === "") break; // leave unchanged
+          if (raw.trim() === "") {
+            break;
+          } // leave unchanged
           const numeric = Number(raw);
           if (!Number.isFinite(numeric)) {
             fieldErrors.set(field.path, "must be a finite number");
@@ -321,7 +337,9 @@ function sensitiveChanges(
   const redactedNext = redactConfiguration(next as unknown as ReviewConfig) as unknown as Record<string, unknown>;
   const changes: SensitiveChange[] = [];
   for (const field of PANEL_FIELDS[section]) {
-    if (!field.sensitive) continue;
+    if (!field.sensitive) {
+      continue;
+    }
     const before = getPath(redactedPrevious, field.path);
     const after = getPath(redactedNext, field.path);
     if (!deepEqual(before, after)) {
@@ -768,7 +786,9 @@ export function createAdminPanel(
         await audit(session.login, "config.update_rejected", "configuration", { reason: "validation failed" });
         const errors = parseIssuePaths(error.message);
         for (const [issuePath, message] of errors) {
-          if (!fieldErrors.has(issuePath)) fieldErrors.set(issuePath, message);
+          if (!fieldErrors.has(issuePath)) {
+            fieldErrors.set(issuePath, message);
+          }
         }
         renderSection(
           res,

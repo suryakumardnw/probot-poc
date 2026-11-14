@@ -22,7 +22,7 @@ export function registerGracefulShutdown(
   let shuttingDown = false;
 
   const shutdown = (signal: string) => {
-    if (shuttingDown) return;
+    if (shuttingDown) {return;}
     shuttingDown = true;
     logger.info({ signal }, "Graceful shutdown initiated");
 

@@ -345,7 +345,9 @@ export async function supersedeFindingsForReview(
     where: { reviewId, status: { in: [...ACTIVE_STATUSES] } },
     select: { id: true, status: true },
   });
-  if (active.length === 0) return 0;
+  if (active.length === 0) {
+    return 0;
+  }
   await prisma.$transaction(async (tx) => {
     for (const finding of active) {
       await tx.finding.update({

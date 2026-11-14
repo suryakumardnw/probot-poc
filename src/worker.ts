@@ -142,7 +142,9 @@ async function main(): Promise<void> {
   // Periodic stale-workspace sweep per repository.workspace.retentionHours.
   const sweepTimer = setInterval(() => {
     void workspaceService.sweepExpired(config.repository.workspace.retentionHours).then((n) => {
-      if (n > 0) logger.info({ swept: n }, "Expired workspaces swept");
+      if (n > 0) {
+        logger.info({ swept: n }, "Expired workspaces swept");
+      }
     });
   }, 10 * 60_000);
   sweepTimer.unref();
@@ -286,7 +288,9 @@ async function main(): Promise<void> {
     {
       name: "metrics-server",
       run: async () => {
-        if (metricsServer) await new Promise<void>((resolve) => metricsServer!.close(() => resolve()));
+        if (metricsServer) {
+          await new Promise<void>((resolve) => metricsServer!.close(() => resolve()));
+        }
       },
     },
     {

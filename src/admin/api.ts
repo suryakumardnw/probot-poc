@@ -81,7 +81,9 @@ export function isAdminConfigured(env: Env): boolean {
 function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
-  for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+  for (const [name, value] of Object.entries(headers)) {
+    res.setHeader(name, value);
+  }
   res.end(JSON.stringify(body));
 }
 
@@ -130,7 +132,9 @@ export function clearOauthStates(): void {
 function createOauthState(now: number): string {
   if (oauthStates.size > 1000) {
     for (const [key, pending] of oauthStates) {
-      if (pending.expiresAt <= now) oauthStates.delete(key);
+      if (pending.expiresAt <= now) {
+        oauthStates.delete(key);
+      }
     }
   }
   const state = randomBytes(24).toString("base64url");
@@ -140,7 +144,9 @@ function createOauthState(now: number): string {
 
 /** Consume a state value: valid only once, only within its TTL. */
 function consumeOauthState(state: string | null, now: number): boolean {
-  if (!state) return false;
+  if (!state) {
+    return false;
+  }
   const pending = oauthStates.get(state);
   oauthStates.delete(state); // single use
   return Boolean(pending && pending.expiresAt > now);
@@ -796,7 +802,9 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         set = new Set<string>();
         bySha.set(review.headSha, set);
       }
-      for (const finding of review.findings) set.add(finding.fingerprint);
+      for (const finding of review.findings) {
+        set.add(finding.fingerprint);
+      }
     }
 
     const rows = reviews.map((review) => {
@@ -807,12 +815,18 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       const fingerprints = new Set(review.findings.map((f) => f.fingerprint));
       const others = new Set<string>();
       for (const [type, bySha] of fingerprintsByType) {
-        if (type === review.reviewType) continue;
-        for (const fingerprint of bySha.get(review.headSha) ?? []) others.add(fingerprint);
+        if (type === review.reviewType) {
+          continue;
+        }
+        for (const fingerprint of bySha.get(review.headSha) ?? []) {
+          others.add(fingerprint);
+        }
       }
       let uniqueCount = 0;
       for (const fingerprint of fingerprints) {
-        if (!others.has(fingerprint)) uniqueCount += 1;
+        if (!others.has(fingerprint)) {
+          uniqueCount += 1;
+        }
       }
       const completedAt = review.completedAt ?? null;
       const durationMs = review.startedAt && completedAt ? completedAt.getTime() - review.startedAt.getTime() : null;

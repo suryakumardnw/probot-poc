@@ -344,13 +344,17 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       throw error;
     } finally {
       running.delete(child);
-      if (running.size === 0) this.running.delete(session.id);
+      if (running.size === 0) {
+        this.running.delete(session.id);
+      }
     }
   }
 
   /** Log a normalized runtime failure with sanitized, truncated detail. */
   private logAgentError(session: AgentSession, error: unknown): void {
-    if (!this.logger) return;
+    if (!this.logger) {
+      return;
+    }
     const code = error instanceof AgentRuntimeError ? error.code : "unknown";
     const rawDetail =
       error instanceof AgentRuntimeError ? error.detail : error instanceof Error ? error.message : String(error);
@@ -385,9 +389,13 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
   // -------------------------------------------------------------------------
 
   private async assertWorkspaceUnchanged(session: AgentSession, baseline: string | undefined): Promise<void> {
-    if (baseline === undefined) return; // git unavailable — guard skipped
+    if (baseline === undefined) {
+      return;
+    } // git unavailable — guard skipped
     const after = await this.gitStatusImpl(session.workspacePath);
-    if (after === undefined || after === baseline) return;
+    if (after === undefined || after === baseline) {
+      return;
+    }
     throw new AgentRuntimeError(
       "workspace_modified",
       "agent modified the review workspace; permission enforcement gap detected",
@@ -424,7 +432,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       }
       let stdout = "";
       child.stdout?.on("data", (chunk: Buffer) => {
-        if (stdout.length < 1024) stdout += chunk.toString("utf8");
+        if (stdout.length < 1024) {
+          stdout += chunk.toString("utf8");
+        }
       });
       child.once("error", () => done({ healthy: false, detail: "runtime binary unavailable", checkedAt }));
       child.once("close", (code) => {
@@ -487,7 +497,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
        */
       const logLine = (stream: "stdout" | "stderr", line: string): void => {
         const trimmed = line.trim();
-        if (!trimmed) return;
+        if (!trimmed) {
+          return;
+        }
         if (loggedLines >= MAX_LOGGED_OUTPUT_LINES || loggedChars >= MAX_LOGGED_OUTPUT_CHARS) {
           if (!logTruncated) {
             logTruncated = true;
@@ -578,9 +590,13 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
           summary,
           truncated: summary.endsWith("…[truncated]"),
         };
-        if (looksLikeError) this.logger?.warn("agent child output", payload);
-        else if (isTracing) this.logger?.info("agent tracing output", payload);
-        else this.logger?.debug("agent child output", payload);
+        if (looksLikeError) {
+          this.logger?.warn("agent child output", payload);
+        } else if (isTracing) {
+          this.logger?.info("agent tracing output", payload);
+        } else {
+          this.logger?.debug("agent child output", payload);
+        }
       };
 
       const feed = (stream: "stdout" | "stderr", chunk: Buffer): void => {
@@ -588,16 +604,25 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
         const combined = (stream === "stdout" ? stdoutPartial : stderrPartial) + decoder.write(chunk);
         const lines = combined.split("\n");
         const partial = lines.pop() ?? "";
-        if (stream === "stdout") stdoutPartial = partial;
-        else stderrPartial = partial;
-        for (const line of lines) logLine(stream, line);
+        if (stream === "stdout") {
+          stdoutPartial = partial;
+        } else {
+          stderrPartial = partial;
+        }
+        for (const line of lines) {
+          logLine(stream, line);
+        }
       };
 
       const flush = (): void => {
         const outTail = stdoutPartial + stdoutDecoder.end();
-        if (outTail) logLine("stdout", outTail);
+        if (outTail) {
+          logLine("stdout", outTail);
+        }
         const errTail = stderrPartial + stderrDecoder.end();
-        if (errTail) logLine("stderr", errTail);
+        if (errTail) {
+          logLine("stderr", errTail);
+        }
         stdoutPartial = "";
         stderrPartial = "";
       };
@@ -636,7 +661,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       // call must not look like a hang without at least a heartbeat).
       let lastOutputAt = startedAt;
       const heartbeat = setInterval(() => {
-        if (settled) return;
+        if (settled) {
+          return;
+        }
         this.logger?.info("agent execute heartbeat", {
           event: "agent_execute_heartbeat",
           sessionId,
@@ -673,7 +700,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
         feed("stderr", chunk);
       });
       child.once("error", (err: NodeJS.ErrnoException) => {
-        if (settled) return;
+        if (settled) {
+          return;
+        }
         settled = true;
         clearTimeout(timer);
         clearInterval(heartbeat);
@@ -692,7 +721,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
         );
       });
       child.once("close", (code, signal) => {
-        if (settled) return;
+        if (settled) {
+          return;
+        }
         settled = true;
         clearTimeout(timer);
         clearInterval(heartbeat);
@@ -779,7 +810,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
 
       for (const candidate of candidates) {
         const extracted = extractJson(candidate);
-        if (extracted === undefined) continue;
+        if (extracted === undefined) {
+          continue;
+        }
         let value: unknown;
         try {
           value = JSON.parse(extracted);
@@ -835,7 +868,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
 // ---------------------------------------------------------------------------
 
 export function buildPrompt(task: AgentTask): string {
-  if (task.output === "text") return task.instruction;
+  if (task.output === "text") {
+    return task.instruction;
+  }
   // For JSON tasks the format requirement travels in the prompt, but the
   // security configuration itself never does (§10.1).
   return `${task.instruction}\n\nRespond with exactly one JSON object and nothing else — no prose, no markdown fences.`;
@@ -882,12 +917,20 @@ export function capPromptArg(prompt: string): {
 
 /** Preserve the OS error code/syscall that explains a spawn failure. */
 function describeSpawnFailure(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
   const err = error as NodeJS.ErrnoException;
   const parts = [err.message];
-  if (err.code) parts.push(`code=${err.code}`);
-  if (typeof err.errno === "number") parts.push(`errno=${err.errno}`);
-  if (err.syscall) parts.push(`syscall=${err.syscall}`);
+  if (err.code) {
+    parts.push(`code=${err.code}`);
+  }
+  if (typeof err.errno === "number") {
+    parts.push(`errno=${err.errno}`);
+  }
+  if (err.syscall) {
+    parts.push(`syscall=${err.syscall}`);
+  }
   return parts.join(" ");
 }
 
@@ -916,7 +959,9 @@ function parseEvents(stdout: string): {
 
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      continue;
+    }
     let event: OpenCodeEvent;
     try {
       event = JSON.parse(trimmed) as OpenCodeEvent;
@@ -931,8 +976,11 @@ function parseEvents(stdout: string): {
           // logical message so streaming chunks still combine.
           const key = event.part.messageID ?? "__anonymous__";
           const parts = textByMessage.get(key);
-          if (parts) parts.push(event.part.text);
-          else textByMessage.set(key, [event.part.text]);
+          if (parts) {
+            parts.push(event.part.text);
+          } else {
+            textByMessage.set(key, [event.part.text]);
+          }
         }
         break;
       case "step_finish": {
@@ -950,7 +998,9 @@ function parseEvents(stdout: string): {
         break;
       }
       case "error":
-        if (typeof event.message === "string") errorMessages.push(event.message);
+        if (typeof event.message === "string") {
+          errorMessages.push(event.message);
+        }
         break;
       default:
         break; // step_start, tool, … are ignored
@@ -969,7 +1019,9 @@ function parseEvents(stdout: string): {
 /** Map a runtime `type:"error"` event onto a normalized AgentErrorCode. */
 function classifyErrorEvent(message: string): "provider_unavailable" | "permission_denied" | "invalid_output" {
   const lower = message.toLowerCase();
-  if (lower.includes("permission")) return "permission_denied";
+  if (lower.includes("permission")) {
+    return "permission_denied";
+  }
   if (
     lower.includes("provider") ||
     lower.includes("auth") ||
@@ -1010,26 +1062,38 @@ export function extractJson(text: string): string | undefined {
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) {
     const inner = fence[1].trim();
-    if (inner.startsWith("{")) return inner;
+    if (inner.startsWith("{")) {
+      return inner;
+    }
   }
   const start = text.indexOf("{");
-  if (start === -1) return undefined;
+  if (start === -1) {
+    return undefined;
+  }
   let depth = 0;
   let inString = false;
   let escaped = false;
   for (let i = start; i < text.length; i += 1) {
     const ch = text[i];
     if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === '"') inString = false;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
       continue;
     }
-    if (ch === '"') inString = true;
-    else if (ch === "{") depth += 1;
-    else if (ch === "}") {
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
       depth -= 1;
-      if (depth === 0) return text.slice(start, i + 1);
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
     }
   }
   return undefined;
@@ -1047,22 +1111,30 @@ export function extractJson(text: string): string | undefined {
 function scrub(text: string, config: AgentRuntimeConfigSource): string {
   let out = text;
   const key = process.env[config.provider.apiKeyEnv];
-  if (key) out = out.split(key).join("[redacted]");
+  if (key) {
+    out = out.split(key).join("[redacted]");
+  }
   // Plugin/server diagnostics are now forwarded (--print-logs); never let
   // tracing credentials appear in worker logs or error details.
   const langfuseSecret = process.env.LANGFUSE_SECRET_KEY;
-  if (langfuseSecret) out = out.split(langfuseSecret).join("[redacted]");
+  if (langfuseSecret) {
+    out = out.split(langfuseSecret).join("[redacted]");
+  }
   const otlpHeaders = process.env.OPENCODE_OTLP_HEADERS;
   if (otlpHeaders) {
     out = out.split(otlpHeaders).join("[redacted]");
     for (const pair of otlpHeaders.split(",")) {
       const separator = pair.indexOf("=");
-      if (separator < 0) continue;
+      if (separator < 0) {
+        continue;
+      }
       const value = pair
         .slice(separator + 1)
         .trim()
         .replace(/^bearer\s+/i, "");
-      if (value.length >= 8) out = out.split(value).join("[redacted]");
+      if (value.length >= 8) {
+        out = out.split(value).join("[redacted]");
+      }
     }
   }
   out = out.replace(/(authorization|api[-_]?key|x-api-key)["'=:\s]+\S+/gi, "$1[redacted]");

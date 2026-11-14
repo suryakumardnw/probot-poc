@@ -283,7 +283,9 @@ describe("runBenchmarkSuite", () => {
     const seenWorkspaces: string[] = [];
     const run = await runBenchmarkSuite(suite, fakeDeps(), async ({ case: benchCase, workspace }) => {
       seenWorkspaces.push(workspace.workspacePath);
-      if (benchCase.expectClean) return outputFor({});
+      if (benchCase.expectClean) {
+        return outputFor({});
+      }
       return outputFor({ findings: [finding({ line: 1, file: "src/a.ts" })] });
     });
 

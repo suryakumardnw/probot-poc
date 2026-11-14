@@ -480,7 +480,9 @@ export async function getReviewStatus(reviewId: string): Promise<ReviewStatusRep
     where: { id: reviewId },
     include: { job: true, transitions: { orderBy: { createdAt: "asc" } } },
   });
-  if (!review) return null;
+  if (!review) {
+    return null;
+  }
   return {
     review: {
       id: review.id,

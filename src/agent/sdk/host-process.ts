@@ -105,14 +105,18 @@ export async function runHostProcess(options: RunHostProcessOptions): Promise<vo
     });
 
     const finish = (): void => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       chain.then(() => dispatcher.handle({ id: 0, method: "close" })).then(() => resolve(), reject);
     };
 
     input.once("end", () => {
       const rest = decoder.end();
-      if (rest) buffer += rest;
+      if (rest) {
+        buffer += rest;
+      }
       if (buffer.trim() !== "") {
         chain = chain.then(() => handleLine(buffer));
         buffer = "";
@@ -138,7 +142,9 @@ function parseRequest(line: string): { ok: true; value: SdkHostRequest } | { ok:
 
 /** True when this file is the process entry point (invoked with `node ...`). */
 function isDirectExecution(): boolean {
-  if (!process.argv[1]) return false;
+  if (!process.argv[1]) {
+    return false;
+  }
   try {
     return import.meta.url === pathToFileURL(process.argv[1]).href;
   } catch {

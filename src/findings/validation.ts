@@ -76,15 +76,23 @@ async function evidenceAnchorsInWorkspace(
   maxFileBytes: number,
 ): Promise<boolean> {
   const excerpt = finding.evidence.find((e) => e.excerpt.trim().length > 0)?.excerpt;
-  if (!excerpt) return false;
+  if (!excerpt) {
+    return false;
+  }
   try {
     const content = await readWorkspaceFile(workspacePath, finding.file, { maxFileBytes });
-    if (content.encoding !== "utf-8" || content.text === undefined) return false;
+    if (content.encoding !== "utf-8" || content.text === undefined) {
+      return false;
+    }
     const normalizedFile = squeezeWhitespace(content.text);
-    if (!normalizedFile.includes(squeezeWhitespace(excerpt))) return false;
+    if (!normalizedFile.includes(squeezeWhitespace(excerpt))) {
+      return false;
+    }
     // When the evidence is line-anchored, the line must point into the file.
     const anchored = finding.evidence.find((e) => typeof e.line === "number");
-    if (anchored && anchored.line! > content.text.split("\n").length) return false;
+    if (anchored && anchored.line! > content.text.split("\n").length) {
+      return false;
+    }
     return true;
   } catch {
     return false;
@@ -169,7 +177,9 @@ export async function validateFindings(
         break;
       }
     }
-    if (!evidenceValid) continue;
+    if (!evidenceValid) {
+      continue;
+    }
 
     // --- Independent verification (§6.4) -----------------------------------
     // Recompute `verified` from the configured threshold AND our own evidence

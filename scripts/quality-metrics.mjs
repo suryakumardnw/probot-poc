@@ -40,13 +40,19 @@ const jsonOnly = args.has("--json");
  */
 function startsRegexLiteral(text, index) {
   let i = index - 1;
-  while (i >= 0 && /\s/.test(text[i])) i -= 1;
-  if (i < 0) return true;
+  while (i >= 0 && /\s/.test(text[i])) {
+    i -= 1;
+  }
+  if (i < 0) {
+    return true;
+  }
 
   const char = text[i];
   if (/[A-Za-z0-9_$]/.test(char)) {
     let start = i;
-    while (start >= 0 && /[A-Za-z0-9_$]/.test(text[start])) start -= 1;
+    while (start >= 0 && /[A-Za-z0-9_$]/.test(text[start])) {
+      start -= 1;
+    }
     const word = text.slice(start + 1, i + 1);
     return [
       "return",
@@ -80,8 +86,12 @@ function startsRegexLiteral(text, index) {
 export function maskCommentsAndStrings(text) {
   const out = text.split("");
   const blank = (index) => {
-    if (index >= text.length) return;
-    if (text[index] !== "\n" && text[index] !== "\r") out[index] = " ";
+    if (index >= text.length) {
+      return;
+    }
+    if (text[index] !== "\n" && text[index] !== "\r") {
+      out[index] = " ";
+    }
   };
 
   let mode = "code"; // code | line-comment | block-comment | regex | single | double | template
@@ -264,7 +274,9 @@ export function maskCommentsAndStrings(text) {
 function lineOf(text, index) {
   let line = 1;
   for (let i = 0; i < index; i += 1) {
-    if (text[i] === "\n") line += 1;
+    if (text[i] === "\n") {
+      line += 1;
+    }
   }
   return line;
 }
@@ -309,22 +321,34 @@ function matchSites(source, pattern) {
 function isModuleAlias(masked, index) {
   const lineStart = masked.lastIndexOf("\n", index) + 1;
   let lineEnd = masked.indexOf("\n", index);
-  if (lineEnd === -1) lineEnd = masked.length;
+  if (lineEnd === -1) {
+    lineEnd = masked.length;
+  }
   const line = masked.slice(lineStart, lineEnd);
-  if (!/^\s*(?:import|export)\b/.test(line)) return false;
+  if (!/^\s*(?:import|export)\b/.test(line)) {
+    return false;
+  }
 
   const before = masked.slice(lineStart, index);
   const after = masked.slice(index + 2);
 
-  if (/\*\s*$/.test(before) && /^\s+[A-Za-z_$]/.test(after)) return true;
+  if (/\*\s*$/.test(before) && /^\s+[A-Za-z_$]/.test(after)) {
+    return true;
+  }
 
   // `export const x = { ... y as T }` is a cast, not a specifier alias.
-  if (before.includes("=")) return false;
+  if (before.includes("=")) {
+    return false;
+  }
 
   const openBrace = before.lastIndexOf("{");
-  if (openBrace === -1) return false;
+  if (openBrace === -1) {
+    return false;
+  }
   const closeBrace = after.indexOf("}");
-  if (closeBrace === -1) return false;
+  if (closeBrace === -1) {
+    return false;
+  }
   return !masked.slice(lineStart + openBrace + 1, index + 2 + closeBrace).includes(";");
 }
 
@@ -337,9 +361,13 @@ function anyTypePositionSites(source) {
     const before = source.masked.slice(0, index);
     const after = source.masked.slice(index + 3);
     // `AbortSignal.any(...)` and `expect.any(...)` are property reads.
-    if (/[.?!]\s*$/.test(before)) continue;
+    if (/[.?!]\s*$/.test(before)) {
+      continue;
+    }
     // `{ any: ... }` is a property name, not a type position.
-    if (/^\s*:/.test(after)) continue;
+    if (/^\s*:/.test(after)) {
+      continue;
+    }
     sites.push({ file: source.file, line: lineOf(source.masked, index), text: "any" });
   }
   return sites;
@@ -351,14 +379,22 @@ function otherAsCastSites(source) {
   const sites = [];
   for (const match of source.masked.matchAll(/\bas\b/g)) {
     const index = match.index ?? 0;
-    if (isModuleAlias(source.masked, index)) continue;
+    if (isModuleAlias(source.masked, index)) {
+      continue;
+    }
 
     const before = source.masked.slice(0, index);
     const after = source.masked.slice(index + 2);
-    if (/^\s+const\b/.test(after)) continue;
-    if (/^\s+unknown\s+as\b/.test(after)) continue;
+    if (/^\s+const\b/.test(after)) {
+      continue;
+    }
+    if (/^\s+unknown\s+as\b/.test(after)) {
+      continue;
+    }
     // Second `as` of `as unknown as`.
-    if (/\bunknown\s+$/.test(before)) continue;
+    if (/\bunknown\s+$/.test(before)) {
+      continue;
+    }
 
     sites.push({ file: source.file, line: lineOf(source.masked, index), text: match[0] });
   }
@@ -377,17 +413,24 @@ function boundaryJsonParseAsSites(source) {
   let from = 0;
   while (from < source.masked.length) {
     const start = source.masked.indexOf(marker, from);
-    if (start === -1) break;
+    if (start === -1) {
+      break;
+    }
 
     let open = start + marker.length;
-    while (open < source.masked.length && source.masked[open] !== "(") open += 1;
-    if (open >= source.masked.length) break;
+    while (open < source.masked.length && source.masked[open] !== "(") {
+      open += 1;
+    }
+    if (open >= source.masked.length) {
+      break;
+    }
 
     let depth = 0;
     let close = -1;
     for (let i = open; i < source.masked.length; i += 1) {
-      if (source.masked[i] === "(") depth += 1;
-      else if (source.masked[i] === ")") {
+      if (source.masked[i] === "(") {
+        depth += 1;
+      } else if (source.masked[i] === ")") {
         depth -= 1;
         if (depth === 0) {
           close = i;
@@ -395,7 +438,9 @@ function boundaryJsonParseAsSites(source) {
         }
       }
     }
-    if (close === -1) break;
+    if (close === -1) {
+      break;
+    }
 
     const rest = source.masked.slice(close + 1);
     const asMatch = /^\s*as\b/.exec(rest);
@@ -410,12 +455,16 @@ function boundaryJsonParseAsSites(source) {
 
 /** @param {Source} source @returns {Site[]} */
 function prismaImportSites(source) {
-  if (/\.repository\.ts$/.test(source.file) || source.file.startsWith("src/platform/db/")) return [];
+  if (/\.repository\.ts$/.test(source.file) || source.file.startsWith("src/platform/db/")) {
+    return [];
+  }
 
   /** @type {Site[]} */
   const sites = [];
   for (const { specifier, line } of importSpecifiers(source)) {
-    if (specifier === "@prisma/client") sites.push({ file: source.file, line, text: specifier });
+    if (specifier === "@prisma/client") {
+      sites.push({ file: source.file, line, text: specifier });
+    }
   }
   // Dynamic `import("@prisma/client")` and `require("@prisma/client")`. The
   // keyword check rejects matches that live inside a comment.
@@ -423,7 +472,9 @@ function prismaImportSites(source) {
   for (const match of source.original.matchAll(dynamic)) {
     const index = match.index ?? 0;
     const keyword = source.original.startsWith("import", index) ? "import" : "require";
-    if (!source.masked.startsWith(keyword, index)) continue;
+    if (!source.masked.startsWith(keyword, index)) {
+      continue;
+    }
     sites.push({ file: source.file, line: lineOf(source.masked, index), text: "import(@prisma/client)" });
   }
   return sites;
@@ -431,7 +482,9 @@ function prismaImportSites(source) {
 
 /** @param {Source} source @returns {Site[]} */
 function processEnvSites(source) {
-  if (source.file.startsWith("src/platform/config/")) return [];
+  if (source.file.startsWith("src/platform/config/")) {
+    return [];
+  }
   return matchSites(source, /\bprocess\.env\b/g);
 }
 
@@ -449,7 +502,9 @@ function importSpecifiers(source) {
   const specifiers = [];
   for (const match of source.original.matchAll(pattern)) {
     const specifier = match[2] ?? match[4];
-    if (!specifier) continue;
+    if (!specifier) {
+      continue;
+    }
     const index = match.index ?? 0;
     // The match may start with the newline that terminates the previous line.
     const line = lineOf(source.original, match[0].startsWith("\n") ? index + 1 : index);
@@ -460,7 +515,9 @@ function importSpecifiers(source) {
 
 /** @param {string} specifier @param {string} fromFile @returns {string|null} */
 function resolveRelativeImport(specifier, fromFile) {
-  if (!specifier.startsWith(".")) return null;
+  if (!specifier.startsWith(".")) {
+    return null;
+  }
   const target = posix.normalize(posix.join(posix.dirname(fromFile), specifier));
   return target.replace(/\.(?:js|ts)$/, ".ts");
 }
@@ -480,13 +537,21 @@ function crossModuleInternalImportSites(source) {
   /** @type {Site[]} */
   const sites = [];
   const fromModule = moduleNameOf(source.file);
-  if (!fromModule) return sites;
+  if (!fromModule) {
+    return sites;
+  }
   for (const { specifier, line } of importSpecifiers(source)) {
     const target = resolveRelativeImport(specifier, source.file);
-    if (!target) continue;
+    if (!target) {
+      continue;
+    }
     const toModule = moduleNameOf(target);
-    if (!toModule || toModule === fromModule) continue;
-    if (target === `src/modules/${toModule}/index.ts`) continue;
+    if (!toModule || toModule === fromModule) {
+      continue;
+    }
+    if (target === `src/modules/${toModule}/index.ts`) {
+      continue;
+    }
     sites.push({ file: source.file, line, text: specifier });
   }
   return sites;
@@ -517,10 +582,16 @@ const TEST_SERVICE_PATTERNS = [
 function testServiceSites(source) {
   /** @type {Site[]} */
   const sites = [];
-  if (source.file.startsWith("test/integration/")) return sites;
-  for (const pattern of TEST_SERVICE_PATTERNS) sites.push(...matchSites(source, pattern));
+  if (source.file.startsWith("test/integration/")) {
+    return sites;
+  }
+  for (const pattern of TEST_SERVICE_PATTERNS) {
+    sites.push(...matchSites(source, pattern));
+  }
   for (const { specifier, line } of importSpecifiers(source)) {
-    if (specifier === "ioredis") sites.push({ file: source.file, line, text: 'from "ioredis"' });
+    if (specifier === "ioredis") {
+      sites.push({ file: source.file, line, text: 'from "ioredis"' });
+    }
   }
   return sites;
 }
@@ -674,9 +745,13 @@ function main() {
       const sites = [...metric.sites.src, ...metric.sites.test].sort(
         (a, b) => a.file.localeCompare(b.file) || a.line - b.line,
       );
-      if (sites.length === 0) continue;
+      if (sites.length === 0) {
+        continue;
+      }
       process.stdout.write(`\n### ${metric.label}\n\n`);
-      for (const site of sites) process.stdout.write(`- \`${site.file}:${site.line}\` ${site.text}\n`);
+      for (const site of sites) {
+        process.stdout.write(`- \`${site.file}:${site.line}\` ${site.text}\n`);
+      }
     }
     process.stdout.write("\n");
   }

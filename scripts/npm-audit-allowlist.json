@@ -1,0 +1,28 @@
+{
+  "advisories": [
+    {
+      "id": "GHSA-ggr8-5vv4-36mx",
+      "package": "deepmerge-ts via @prisma/config",
+      "reason": "Reaches @prisma/config through the Prisma 6 CLI. The fix requires Prisma 7, a major upgrade that changes the database toolchain.",
+      "followUp": "Upgrade Prisma to 7.x and remove this entry."
+    },
+    {
+      "id": "GHSA-5gmw-xhrv-c9v3",
+      "package": "tinypool via vitest",
+      "reason": "Test-runner only; the fix requires Vitest 5, a major upgrade.",
+      "followUp": "Upgrade Vitest to 5.x and remove this entry."
+    },
+    {
+      "id": "GHSA-85c8-ppgw-ccpr",
+      "package": "tinypool via vitest",
+      "reason": "Test-runner only; the fix requires Vitest 5, a major upgrade.",
+      "followUp": "Upgrade Vitest to 5.x and remove this entry."
+    },
+    {
+      "id": "GHSA-mrhx-c7xc-m3w5",
+      "package": "zod via @opencode/sdk's gitlab-ai-provider",
+      "reason": "Transitive optional provider in @opencode/sdk. npm reports no fix; the provider tree must be upgraded or removed upstream.",
+      "followUp": "Upgrade @opencode/sdk once gitlab-ai-provider ships a fixed zod version."
+    }
+  ]
+}

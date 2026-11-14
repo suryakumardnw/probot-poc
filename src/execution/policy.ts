@@ -83,14 +83,24 @@ const ARBITRARY_SCRIPTS = new Set([
 
 function classificationFor(command: string, args: readonly string[]): "test" | "build" | "package" | "other" {
   const base = command.split("/").pop()!.toLowerCase();
-  if (TEST_COMMANDS.has(base)) return "test";
-  if (BUILD_COMMANDS.has(base)) return "build";
+  if (TEST_COMMANDS.has(base)) {
+    return "test";
+  }
+  if (BUILD_COMMANDS.has(base)) {
+    return "build";
+  }
   if (PACKAGE_MANAGERS.has(base)) {
     // Find the first non-flag argument (the subcommand / script name).
     const sub = args.find((a) => !a.startsWith("-"))?.toLowerCase();
-    if (sub && ARBITRARY_SCRIPTS.has(sub)) return "package";
-    if (sub && TEST_SCRIPTS.has(sub)) return "test";
-    if (sub && BUILD_SCRIPTS.has(sub)) return "build";
+    if (sub && ARBITRARY_SCRIPTS.has(sub)) {
+      return "package";
+    }
+    if (sub && TEST_SCRIPTS.has(sub)) {
+      return "test";
+    }
+    if (sub && BUILD_SCRIPTS.has(sub)) {
+      return "build";
+    }
     return "package";
   }
   return "other";
@@ -102,12 +112,20 @@ function classificationFor(command: string, args: readonly string[]): "test" | "
  * `..` traversal). Relative paths inside the workspace are fine.
  */
 function validateArg(arg: string, workspacePath: string): ExecutionReason | null {
-  if (CONTROL_CHARS.test(arg)) return "invalid_arg";
-  if (arg.startsWith("-")) return null; // flags are not paths
+  if (CONTROL_CHARS.test(arg)) {
+    return "invalid_arg";
+  }
+  if (arg.startsWith("-")) {
+    return null;
+  } // flags are not paths
   // Path-like tokens: absolute paths or traversal attempts are confined.
-  if (arg.startsWith("/") || arg.startsWith("~/")) return "path_escape";
+  if (arg.startsWith("/") || arg.startsWith("~/")) {
+    return "path_escape";
+  }
   const segments = arg.split("/");
-  if (segments.includes("..")) return "path_escape";
+  if (segments.includes("..")) {
+    return "path_escape";
+  }
   // Strip a leading "./" and resolve within the workspace for a final check.
   const rel = arg.replace(/^\.\//, "");
   if (rel.length > 0 && (rel.startsWith("/") || (rel.includes(":") && arg.includes("\\")))) {

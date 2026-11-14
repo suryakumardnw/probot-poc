@@ -44,7 +44,9 @@ getRedis(env);
  */
 function materializePrivateKeyFromBase64(): void {
   const base64 = process.env.GITHUB_PRIVATE_KEY_BASE64;
-  if (!base64 || process.env.PRIVATE_KEY || process.env.PRIVATE_KEY_PATH) return;
+  if (!base64 || process.env.PRIVATE_KEY || process.env.PRIVATE_KEY_PATH) {
+    return;
+  }
   try {
     const pem = Buffer.from(base64.replace(/\s+/g, ""), "base64").toString("utf8");
     if (pem.includes("-----BEGIN")) {

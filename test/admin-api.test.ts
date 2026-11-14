@@ -95,7 +95,9 @@ function mockResponse(): { res: ServerResponse; result: MockResponse } {
     },
     end(body?: string) {
       result.body = body ?? "";
-      if (result.statusCode === 0) result.statusCode = res.statusCode;
+      if (result.statusCode === 0) {
+        result.statusCode = res.statusCode;
+      }
     },
   } as unknown as ServerResponse;
   Object.defineProperty(res, "statusCode", {
@@ -107,7 +109,9 @@ function mockResponse(): { res: ServerResponse; result: MockResponse } {
   // Flush headers when the handler finishes reading them (end or first set).
   const originalEnd = res.end.bind(res) as (body?: string) => void;
   res.end = ((body?: string) => {
-    for (const [name, value] of store) result.headers[name] = value as string;
+    for (const [name, value] of store) {
+      result.headers[name] = value as string;
+    }
     return originalEnd(body);
   }) as typeof res.end;
   return { res, result };
@@ -141,19 +145,24 @@ const githubMock: GithubFetch = (async (input: unknown) => {
   const jsonResponse = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   if (url === "https://github.com/login/oauth/access_token") {
-    if (tokenExchangeShouldFail)
+    if (tokenExchangeShouldFail) {
       return jsonResponse(200, {
         error: "bad_verification_code",
         error_description: "The code passed is incorrect or expired.",
       });
+    }
     return jsonResponse(200, { access_token: "gho_test_token" });
   }
   if (url === "https://api.github.com/user") {
-    if (!githubUsers) return jsonResponse(401, {});
+    if (!githubUsers) {
+      return jsonResponse(401, {});
+    }
     return jsonResponse(200, { login: githubUsers.login, id: 7001 });
   }
   if (url.startsWith("https://api.github.com/orgs/octo-org/memberships/")) {
-    if (!githubUsers || !githubUsers.membership) return new Response("", { status: 404 });
+    if (!githubUsers || !githubUsers.membership) {
+      return new Response("", { status: 404 });
+    }
     return jsonResponse(200, githubUsers.membership);
   }
   return new Response("not found", { status: 404 });

@@ -88,9 +88,15 @@ export function parseDiffStats(diff: string): DiffStats {
   const stats: DiffStats = { added: 0, removed: 0, bodyLines: [], newFiles: 0, deletedFiles: 0, renamedFiles: 0 };
   for (const line of diff.split("\n")) {
     if (line.startsWith("diff ")) {
-      if (line.includes("new file mode") || line.includes("new file")) stats.newFiles++;
-      if (line.includes("deleted file mode")) stats.deletedFiles++;
-      if (line.includes("rename from") || line.includes("similarity index")) stats.renamedFiles++;
+      if (line.includes("new file mode") || line.includes("new file")) {
+        stats.newFiles++;
+      }
+      if (line.includes("deleted file mode")) {
+        stats.deletedFiles++;
+      }
+      if (line.includes("rename from") || line.includes("similarity index")) {
+        stats.renamedFiles++;
+      }
       continue;
     }
     if (line.startsWith("index ") || line.startsWith("@@") || line.startsWith("---") || line.startsWith("+++")) {
@@ -114,7 +120,9 @@ function countKeywordMatches(lines: string[], keywords: readonly string[]): numb
   for (const line of lines) {
     const lower = line.toLowerCase();
     for (const keyword of keywords) {
-      if (lower.includes(keyword)) count++;
+      if (lower.includes(keyword)) {
+        count++;
+      }
     }
   }
   return count;

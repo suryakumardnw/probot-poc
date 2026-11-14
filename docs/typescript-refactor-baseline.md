@@ -198,6 +198,14 @@ metrics.
 - Counts are tied to the current layout. Compare before/after with the same
   script revision, not across script changes.
 
+## Dependency audit follow-ups
+
+The dependency audit is separate from the refactor metrics. `npm run
+security:audit` fails on new high/critical advisories; the four known
+high/critical advisories and their upgrade follow-ups are tracked in
+[security-audit-follow-ups.md](./security-audit-follow-ups.md) and enforced by
+`scripts/npm-audit-allowlist.json`.
+
 ## Rollback
 
 Delete `scripts/quality-metrics.mjs`, this document, and the

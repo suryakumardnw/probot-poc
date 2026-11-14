@@ -66,7 +66,9 @@ export function handbookVariantDir(knowledgeDir: string, ref: string): string {
 
 /** Copy one source's cached files into a target directory, verifying hashes. */
 async function copySource(source: KnowledgeSourceSnapshot, targetRoot: string): Promise<void> {
-  if (source.status === "unavailable" || !source.dir) return;
+  if (source.status === "unavailable" || !source.dir) {
+    return;
+  }
   for (const file of source.files) {
     const sourcePath = path.join(source.dir, file.path);
     const targetPath = path.join(targetRoot, file.path);
@@ -84,15 +86,20 @@ async function copySource(source: KnowledgeSourceSnapshot, targetRoot: string): 
 }
 
 function sameSource(a: PersistedKnowledgeSource | undefined, b: KnowledgeSourceSnapshot | undefined): boolean {
-  if (!a || !b) return false;
-  if (a.status === "unavailable" || b.status === "unavailable")
+  if (!a || !b) {
+    return false;
+  }
+  if (a.status === "unavailable" || b.status === "unavailable") {
     return a.status === b.status && a.contentHash === (b.contentHash ?? "");
+  }
   return a.ref === b.ref && a.contentHash === b.contentHash;
 }
 
 /** Same technology list, order-insensitive (config order is not identity). */
 function sameTechnologies(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
+  if (a.length !== b.length) {
+    return false;
+  }
   const left = [...a].map((tech) => tech.toLowerCase()).sort();
   const right = [...b].map((tech) => tech.toLowerCase()).sort();
   return left.every((tech, index) => tech === right[index]);
@@ -149,7 +156,9 @@ export async function materializeReviewKnowledge(
   input: MaterializeKnowledgeInput,
 ): Promise<MaterializeKnowledgeResult> {
   const kinds = KINDS_BY_REVIEW_TYPE[input.reviewType] ?? [];
-  if (kinds.length === 0) return { knowledgeDir: null, snapshot: input.snapshot };
+  if (kinds.length === 0) {
+    return { knowledgeDir: null, snapshot: input.snapshot };
+  }
 
   if (!input.snapshot) {
     // Knowledge init never ran (e.g. tests / degraded boot): there is no
@@ -162,14 +171,18 @@ export async function materializeReviewKnowledge(
     where: { id: input.reviewId },
     select: { knowledgeSnapshot: true },
   });
-  if (!review) throw new KnowledgeSnapshotError(`Review '${input.reviewId}' not found for knowledge materialization`);
+  if (!review) {
+    throw new KnowledgeSnapshotError(`Review '${input.reviewId}' not found for knowledge materialization`);
+  }
 
   const stored = (review.knowledgeSnapshot ?? null) as PersistedKnowledgeSnapshot | null;
   if (stored) {
     // Recovery path: verify the persisted snapshot is still reproducible.
     for (const kind of kinds) {
       const persisted = stored[kind];
-      if (!persisted) continue;
+      if (!persisted) {
+        continue;
+      }
       const current = input.snapshot[kind];
       if (!sameSource(persisted, current)) {
         throw new KnowledgeSnapshotError(
@@ -177,7 +190,9 @@ export async function materializeReviewKnowledge(
         );
       }
     }
-    if (kinds.includes("handbook")) verifyHandbookVariants(stored, input.snapshot);
+    if (kinds.includes("handbook")) {
+      verifyHandbookVariants(stored, input.snapshot);
+    }
   }
 
   const knowledgeDir = path.join(input.workspacePath, "knowledge");
@@ -194,7 +209,9 @@ export async function materializeReviewKnowledge(
     const persisted: PersistedKnowledgeSnapshot = {};
     for (const kind of kinds) {
       const source = input.snapshot[kind];
-      if (source.status !== "unavailable") persisted[kind] = persistedFromSource(source);
+      if (source.status !== "unavailable") {
+        persisted[kind] = persistedFromSource(source);
+      }
     }
     const variants = (input.snapshot.handbookVariants ?? []).filter(
       (variant) => variant.source.status !== "unavailable",
@@ -237,7 +254,9 @@ export async function persistKnowledgeMetrics(
     where: { id: reviewId },
     select: { knowledgeSnapshot: true },
   });
-  if (!review) return; // row gone — nothing to persist
+  if (!review) {
+    return;
+  } // row gone — nothing to persist
   const stored = (review.knowledgeSnapshot ?? null) as PersistedKnowledgeSnapshot | null;
   const merged: PersistedKnowledgeSnapshot = { ...(stored ?? {}), metrics: { source, ...metrics } };
   await prisma.review.update({

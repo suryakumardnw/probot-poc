@@ -62,7 +62,9 @@ class FakeChild extends EventEmitter {
   kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
     this.killed = true;
     this.signals.push(signal);
-    if (this.exitCode !== null) return true;
+    if (this.exitCode !== null) {
+      return true;
+    }
     if (this.closeOnKill) {
       const sig = this.closeOnKill;
       setTimeout(() => this.close(null, sig), 5);

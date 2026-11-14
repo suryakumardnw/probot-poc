@@ -190,8 +190,12 @@ async function ensureQueueReady(timeoutMs = 10_000): Promise<void> {
       getReviewQueue();
       conn = getQueueConnection();
     }
-    if (conn?.status === "ready") return;
-    if (!conn) getReviewQueue();
+    if (conn?.status === "ready") {
+      return;
+    }
+    if (!conn) {
+      getReviewQueue();
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("BullMQ connection did not become ready in time");
@@ -845,8 +849,11 @@ async function shell(command: string): Promise<string> {
   const { execFile } = await import("node:child_process");
   return new Promise((resolve, reject) => {
     execFile("sh", ["-c", command], { timeout: 30_000 }, (error, stdout, stderr) => {
-      if (error) reject(new Error(`${command}: ${(stderr || stdout || error.message).trim()}`));
-      else resolve(stdout);
+      if (error) {
+        reject(new Error(`${command}: ${(stderr || stdout || error.message).trim()}`));
+      } else {
+        resolve(stdout);
+      }
     });
   });
 }
@@ -855,7 +862,9 @@ async function waitRedisUp(timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const check = await checkRedis();
-    if (check.status === "ok") return;
+    if (check.status === "ok") {
+      return;
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error("Redis did not come back up in time");

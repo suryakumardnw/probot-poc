@@ -29,7 +29,9 @@ export interface AgentRuntimePlugin {
 const registry = new Map<string, AgentRuntimePlugin>();
 
 export function registerAgentRuntimePlugin(plugin: AgentRuntimePlugin): void {
-  if (!plugin.id) throw new Error("agent runtime plugin id is required");
+  if (!plugin.id) {
+    throw new Error("agent runtime plugin id is required");
+  }
   for (const runtimeType of plugin.runtimeTypes) {
     if (registry.has(runtimeType)) {
       throw new Error(`agent runtime plugin already registered for type "${runtimeType}"`);
@@ -47,7 +49,9 @@ export function listAgentRuntimePlugins(): Array<{
   const seen = new Set<string>();
   const plugins: Array<{ id: string; runtimeTypes: readonly string[] }> = [];
   for (const plugin of registry.values()) {
-    if (seen.has(plugin.id)) continue;
+    if (seen.has(plugin.id)) {
+      continue;
+    }
     seen.add(plugin.id);
     plugins.push({ id: plugin.id, runtimeTypes: plugin.runtimeTypes });
   }

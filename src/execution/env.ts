@@ -54,9 +54,13 @@ export function buildExecutionEnv(options: {
     ...GIT_HARDENING,
   };
   for (const key of EXECUTION_ENV_ALLOWLIST) {
-    if (key === "PATH") continue;
+    if (key === "PATH") {
+      continue;
+    }
     const value = appEnv[key];
-    if (typeof value === "string" && value.length > 0) env[key] = value;
+    if (typeof value === "string" && value.length > 0) {
+      env[key] = value;
+    }
   }
   for (const [key, value] of Object.entries(options.extraEnv ?? {})) {
     if (EXECUTION_ENV_ALLOWLIST.includes(key) && typeof value === "string") {

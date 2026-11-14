@@ -33,7 +33,9 @@ class Counter {
     for (const [key, value] of this.values) {
       lines.push(`${this.name}${key} ${value}`);
     }
-    if (this.values.size === 0) lines.push(`${this.name} 0`);
+    if (this.values.size === 0) {
+      lines.push(`${this.name} 0`);
+    }
     return lines.join("\n");
   }
 }
@@ -65,8 +67,12 @@ class Gauge {
     if (this.labelNames.length === 0) {
       lines.push(`${this.name} ${this.value}`);
     } else {
-      for (const [key, value] of this.labeled) lines.push(`${this.name}${key} ${value}`);
-      if (this.labeled.size === 0) lines.push(`${this.name} 0`);
+      for (const [key, value] of this.labeled) {
+        lines.push(`${this.name}${key} ${value}`);
+      }
+      if (this.labeled.size === 0) {
+        lines.push(`${this.name} 0`);
+      }
     }
     return lines.join("\n");
   }
@@ -88,7 +94,9 @@ class Histogram {
 
   observe(value: number): void {
     for (let i = 0; i < this.buckets.length; i++) {
-      if (value <= this.buckets[i]) this.bucketCounts[i] += 1;
+      if (value <= this.buckets[i]) {
+        this.bucketCounts[i] += 1;
+      }
     }
     this.count += 1;
     this.sum += value;
@@ -224,7 +232,9 @@ export class MetricsRegistry {
 let registry: MetricsRegistry | undefined;
 
 export function getMetricsRegistry(): MetricsRegistry {
-  if (!registry) registry = new MetricsRegistry();
+  if (!registry) {
+    registry = new MetricsRegistry();
+  }
   return registry;
 }
 
@@ -244,9 +254,15 @@ export type ProviderCallRecord = {
 export function recordProviderCall(call: ProviderCallRecord): void {
   const m = getMetricsRegistry();
   m.providerLatency.observe(Math.max(0, call.durationMs / 1000));
-  if (typeof call.inputTokens === "number") m.inputTokens.inc(call.inputTokens);
-  if (typeof call.outputTokens === "number") m.outputTokens.inc(call.outputTokens);
-  if (call.errorCode) m.providerErrors.inc(1, { error_code: call.errorCode });
+  if (typeof call.inputTokens === "number") {
+    m.inputTokens.inc(call.inputTokens);
+  }
+  if (typeof call.outputTokens === "number") {
+    m.outputTokens.inc(call.outputTokens);
+  }
+  if (call.errorCode) {
+    m.providerErrors.inc(1, { error_code: call.errorCode });
+  }
 }
 
 export function recordReviewFindings(result: {

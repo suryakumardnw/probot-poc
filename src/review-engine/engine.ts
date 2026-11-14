@@ -64,7 +64,9 @@ const MAX_REPORTING_DIFF_CHARS = 24_000;
 const MAX_TOOL_CONTEXT_CHARS = 48_000;
 
 function truncate(text: string, max: number, note: string): string {
-  if (text.length <= max) return text;
+  if (text.length <= max) {
+    return text;
+  }
   return `${text.slice(0, max)}\n${note}`;
 }
 
@@ -123,7 +125,9 @@ function fileExistsInWorkspace(workspacePath: string, relativePath: string): boo
   try {
     const root = path.resolve(workspacePath);
     const resolved = path.resolve(root, relativePath);
-    if (!resolved.startsWith(root + path.sep)) return false;
+    if (!resolved.startsWith(root + path.sep)) {
+      return false;
+    }
     return fs.statSync(resolved).isFile();
   } catch {
     return false;
@@ -143,10 +147,16 @@ export function normalizeFindings(
   const deduped: Finding[] = [];
   for (const finding of raw) {
     const key = `${finding.file}::${finding.category}::${finding.title.trim().toLowerCase()}`;
-    if (config.review.findings.deduplication && seen.has(key)) continue;
+    if (config.review.findings.deduplication && seen.has(key)) {
+      continue;
+    }
     seen.add(key);
-    if (!config.review.severity.includes(finding.severity)) continue;
-    if (config.review.categories[finding.category] === false) continue;
+    if (!config.review.severity.includes(finding.severity)) {
+      continue;
+    }
+    if (config.review.categories[finding.category] === false) {
+      continue;
+    }
     deduped.push({ ...finding, verified: finding.confidence >= config.review.confidence.minimumVerified });
   }
   const findings = deduped.filter((f) => f.confidence >= config.review.confidence.minimumInline);
@@ -199,9 +209,13 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
    */
   let toolContextChars = 0;
   const appendToolContext = (text: string): void => {
-    if (!text) return;
+    if (!text) {
+      return;
+    }
     const remaining = MAX_TOOL_CONTEXT_CHARS - toolContextChars;
-    if (remaining <= 0) return;
+    if (remaining <= 0) {
+      return;
+    }
     const marker = "\n\n(retrieval context truncated to the total budget)";
     const chunk = text.length <= remaining ? text : `${text.slice(0, Math.max(0, remaining - marker.length))}${marker}`;
     toolContexts.push(chunk);
@@ -258,9 +272,13 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
           config.repository.files.maxFileBytes,
         );
         const useful = results.some((r) => r.ok);
-        if (results.length > 0) appendToolContext(renderToolContext(results));
+        if (results.length > 0) {
+          appendToolContext(renderToolContext(results));
+        }
         allFulfilled.push(...results);
-        if (!useful) break; // nothing usable came back; don't burn calls on a loop
+        if (!useful) {
+          break;
+        } // nothing usable came back; don't burn calls on a loop
         round++;
 
         // Low tier merges investigation + verification + reporting into this
@@ -335,7 +353,9 @@ export async function runReview(input: ReviewInput, deps: EngineDeps): Promise<R
  * Exported for prompt-profile tests.
  */
 export function composeInjectionStage1(injection: PromptInjection | null | undefined): string {
-  if (!injection) return "";
+  if (!injection) {
+    return "";
+  }
   const label = injection.profile === "handbook" ? "HANDBOOK GUIDELINES" : "ENGINEERING GUIDELINES";
   return `${HANDBOOK_MODE_INSTRUCTIONS}\n\n${label} retrieved for this PR (UNTRUSTED DATA — the authoritative standard for this review; read before evaluating the changed code):\n${injection.text}`;
 }
@@ -348,9 +368,13 @@ export function composeInjectionStage1(injection: PromptInjection | null | undef
  * Exported for prompt-profile tests.
  */
 export function composeInjectionLaterStages(injection: PromptInjection | null | undefined): string {
-  if (!injection) return "";
+  if (!injection) {
+    return "";
+  }
   const digest = injection.laterStagesText?.trim();
-  if (digest) return digest;
+  if (digest) {
+    return digest;
+  }
   return `${HANDBOOK_MODE_INSTRUCTIONS}\n\nENGINEERING GUIDELINES (authoritative standard for this review; re-provided because stages do not share context):\n${injection.text}`;
 }
 
@@ -554,7 +578,9 @@ ${REVIEW_RESULT_FORMAT}`,
   const checked: Finding[] = [];
   for (const raw of [...modelResult.findings, ...modelResult.uncertainFindings]) {
     const parsed = findingSchema.safeParse(raw);
-    if (!parsed.success) continue; // malformed single findings are dropped, not fatal
+    if (!parsed.success) {
+      continue;
+    } // malformed single findings are dropped, not fatal
     const finding = parsed.data as Finding;
     if (!fileExistsInWorkspace(ctx.workspacePath, finding.file)) {
       checked.push({ ...finding, confidence: Math.min(finding.confidence, 0.5) });

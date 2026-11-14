@@ -13,7 +13,9 @@ export interface KnowledgeSnapshotSummary {
 }
 
 export function summarizeKnowledgeSnapshot(value: unknown): KnowledgeSnapshotSummary | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
   const snapshot = value as PersistedKnowledgeSnapshot;
   const summarize = (source: PersistedKnowledgeSnapshot["skill"]) =>
     source && source.contentHash ? { ref: source.ref, contentHash: source.contentHash } : null;
@@ -48,9 +50,13 @@ export interface KnowledgeMetricsSummary {
  * knowledge injection).
  */
 export function summarizeKnowledgeMetrics(value: unknown): KnowledgeMetricsSummary | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
   const metrics = (value as PersistedKnowledgeSnapshot).metrics;
-  if (!metrics || typeof metrics !== "object" || typeof metrics.injectedTokens !== "number") return null;
+  if (!metrics || typeof metrics !== "object" || typeof metrics.injectedTokens !== "number") {
+    return null;
+  }
   return {
     source: metrics.source,
     injectedTokens: metrics.injectedTokens,

@@ -13,7 +13,9 @@ export async function handleIssuesOpened(context: Context<"issues.opened">): Pro
   const { issue, repository } = context.payload;
 
   // Skip PRs (issues webhook fires for PRs too) and bots.
-  if (issue.pull_request || issue.user?.type === "Bot") return;
+  if (issue.pull_request || issue.user?.type === "Bot") {
+    return;
+  }
 
   context.log.info(`Triaging issue #${issue.number} in ${repository.full_name}`);
 

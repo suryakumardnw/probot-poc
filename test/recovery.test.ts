@@ -114,7 +114,9 @@ function fakeQueue(existingState?: "completed" | "failed" | "waiting" | "active"
       return { id: opts.jobId ?? "x" };
     },
     getJob: async () => {
-      if (!existingState) return undefined;
+      if (!existingState) {
+        return undefined;
+      }
       return {
         getState: async () => existingState,
         remove: async () => {

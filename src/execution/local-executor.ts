@@ -85,10 +85,14 @@ export class LocalSandboxExecutor implements SandboxExecutor {
       let stdout = "";
       let stderr = "";
       child.stdout?.on("data", (chunk: Buffer) => {
-        if (stdout.length < this.maxOutputBytes) stdout += chunk.toString();
+        if (stdout.length < this.maxOutputBytes) {
+          stdout += chunk.toString();
+        }
       });
       child.stderr?.on("data", (chunk: Buffer) => {
-        if (stderr.length < this.maxOutputBytes) stderr += chunk.toString();
+        if (stderr.length < this.maxOutputBytes) {
+          stderr += chunk.toString();
+        }
       });
 
       // Hard timeout with SIGTERM → SIGKILL escalation.
@@ -212,9 +216,13 @@ export class LocalSandboxExecutor implements SandboxExecutor {
    * unprivileged account; refuse to execute when it cannot be resolved.
    */
   private resolveNonRootIds(policy: EffectivePolicy): { uid: number; gid: number } | null {
-    if (!policy.runAsNonRoot) return null;
+    if (!policy.runAsNonRoot) {
+      return null;
+    }
     const currentUid = typeof process.getuid === "function" ? process.getuid() : 0;
-    if (currentUid !== 0) return null; // already unprivileged
+    if (currentUid !== 0) {
+      return null;
+    } // already unprivileged
     throw new ExecutionError(
       "Non-root execution is required but no unprivileged uid/gid is configured",
       "executor_error",

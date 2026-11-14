@@ -59,7 +59,9 @@ function listMarkdownFiles(dir: string): Promise<string[]> {
     entries
       .filter((entry) => {
         const relative = path.relative(dir, path.resolve(dir, entry));
-        if (relative.startsWith("..") || path.isAbsolute(relative)) return false;
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          return false;
+        }
         const stats = fs.statSync(path.resolve(dir, entry));
         return stats.isFile() && /\.(md|txt)$/i.test(entry);
       })
@@ -76,7 +78,9 @@ function estimateTokens(text: string): number {
 /** Apply the token budget to injected knowledge text (backstop-style). */
 function enforceTokenBudget(text: string, maxTokens: number): { text: string; truncated: boolean } {
   const maxChars = maxTokens * CHARS_PER_TOKEN;
-  if (text.length <= maxChars) return { text, truncated: false };
+  if (text.length <= maxChars) {
+    return { text, truncated: false };
+  }
   return { text: `${text.slice(0, maxChars)}\n(truncated to fit the knowledge token budget)`, truncated: true };
 }
 
@@ -171,7 +175,9 @@ function headingTokens(heading: string): string[] {
 export function selectHandbookSections(text: string, changedFiles: string[], maxChars: number): string {
   const prTokens = new Set<string>();
   for (const file of changedFiles) {
-    for (const token of pathTokens(file)) prTokens.add(token);
+    for (const token of pathTokens(file)) {
+      prTokens.add(token);
+    }
   }
 
   const sectionPattern = /^#{1,3} .*/gm;
@@ -179,19 +185,26 @@ export function selectHandbookSections(text: string, changedFiles: string[], max
   for (const match of text.matchAll(sectionPattern)) {
     headings.push({ heading: match[0], start: match.index ?? 0 });
   }
-  if (headings.length === 0) return text.slice(0, maxChars);
+  if (headings.length === 0) {
+    return text.slice(0, maxChars);
+  }
 
   const sections: Array<{ heading: string; body: string; score: number }> = [];
   for (let i = 0; i < headings.length; i += 1) {
     const start = headings[i].start;
     const end = i + 1 < headings.length ? headings[i + 1].start : text.length;
     const sectionText = text.slice(start, end).trim();
-    if (!sectionText) continue;
+    if (!sectionText) {
+      continue;
+    }
     const tokens = headingTokens(headings[i].heading);
     let score = 0;
     for (const token of tokens) {
-      if (prTokens.has(token)) score += 2;
-      else if ([...prTokens].some((pr) => pr.startsWith(token) || token.startsWith(pr))) score += 1;
+      if (prTokens.has(token)) {
+        score += 2;
+      } else if ([...prTokens].some((pr) => pr.startsWith(token) || token.startsWith(pr))) {
+        score += 1;
+      }
     }
     sections.push({ heading: headings[i].heading, body: sectionText, score });
   }
@@ -202,7 +215,9 @@ export function selectHandbookSections(text: string, changedFiles: string[], max
   const out: string[] = [];
   let used = 0;
   for (const section of chosen) {
-    if (used >= maxChars) break;
+    if (used >= maxChars) {
+      break;
+    }
     const remaining = maxChars - used;
     out.push(section.body.length > remaining ? `${section.body.slice(0, remaining)}\n(truncated)` : section.body);
     used += Math.min(section.body.length, remaining) + 2;
@@ -369,7 +384,9 @@ export async function resolveReviewInjection(input: ResolveInjectionInput): Prom
   }
   if (reviewType === "handbook") {
     const settings = config.knowledge.handbook;
-    if (!settings.repo.trim()) throw handbookNotConfigured();
+    if (!settings.repo.trim()) {
+      throw handbookNotConfigured();
+    }
     if (!input.knowledgeDir || !input.snapshot) {
       throw new ReviewEngineError(
         "handbook_unavailable",

@@ -115,8 +115,12 @@ class ApiError extends Error {
 /** HTTP status from an Octokit RequestError (or a test double). */
 function errorStatus(error: unknown): number | undefined {
   const candidate = error as { status?: unknown; response?: { status?: unknown } } | null;
-  if (typeof candidate?.status === "number") return candidate.status;
-  if (typeof candidate?.response?.status === "number") return candidate.response.status;
+  if (typeof candidate?.status === "number") {
+    return candidate.status;
+  }
+  if (typeof candidate?.response?.status === "number") {
+    return candidate.response.status;
+  }
   return undefined;
 }
 
@@ -126,8 +130,12 @@ function errorStatus(error: unknown): number | undefined {
  */
 export function isRetryableGitHubError(error: unknown): boolean {
   const status = errorStatus(error);
-  if (status === undefined) return true;
-  if (status === 408 || status === 409 || status === 429) return true;
+  if (status === undefined) {
+    return true;
+  }
+  if (status === 408 || status === 409 || status === 429) {
+    return true;
+  }
   return status < 400 || status >= 500;
 }
 
@@ -244,7 +252,9 @@ export interface PublishReviewInput {
 
 function splitFullName(repositoryFullName: string): { owner: string; repo: string } {
   const [owner, repo] = repositoryFullName.split("/");
-  if (!owner || !repo) throw new Error(`Invalid repository full name: ${repositoryFullName}`);
+  if (!owner || !repo) {
+    throw new Error(`Invalid repository full name: ${repositoryFullName}`);
+  }
   return { owner, repo };
 }
 
@@ -254,7 +264,9 @@ async function listAll<T>(fetchPage: (page: number) => Promise<T[]>): Promise<T[
   for (let page = 1; page <= 10; page += 1) {
     const batch = await fetchPage(page);
     all.push(...batch);
-    if (batch.length < 100) break;
+    if (batch.length < 100) {
+      break;
+    }
   }
   return all;
 }
@@ -312,7 +324,9 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
   const knownFingerprints = new Map<string, number>();
   for (const comment of existingComments) {
     const fp = comment.body ? extractFingerprint(comment.body) : null;
-    if (fp && !knownFingerprints.has(fp)) knownFingerprints.set(fp, comment.id);
+    if (fp && !knownFingerprints.has(fp)) {
+      knownFingerprints.set(fp, comment.id);
+    }
   }
   const publishedRows = await prisma.reviewComment.findMany({
     where: { reviewId, status: "published", fingerprint: { not: null } },
@@ -458,7 +472,9 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
       logger,
     );
   } catch (error) {
-    if (errorStatus(error) !== 422 || commentPayloads.length === 0) throw error;
+    if (errorStatus(error) !== 422 || commentPayloads.length === 0) {
+      throw error;
+    }
     if (!publishSummary) {
       // Inline-only mode cannot degrade to a summary review.
       throw error;
@@ -507,7 +523,9 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
   const fingerprintToCommentId = new Map<string, number>();
   for (const comment of responseComments) {
     const fp = comment.body ? extractFingerprint(comment.body) : null;
-    if (fp) fingerprintToCommentId.set(fp, comment.id);
+    if (fp) {
+      fingerprintToCommentId.set(fp, comment.id);
+    }
   }
 
   await prisma.$transaction(async (tx) => {

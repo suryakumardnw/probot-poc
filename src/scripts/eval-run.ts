@@ -91,7 +91,9 @@ async function main(): Promise<void> {
       qualityThreshold,
     });
     printSuiteReport(suite, run);
-    if (!run.score.passed) allPassed = false;
+    if (!run.score.passed) {
+      allPassed = false;
+    }
 
     // Persistence is best-effort: an offline run still prints its report.
     try {

@@ -40,16 +40,24 @@ function formatConfidence(confidence: number): string {
 
 export function fingerprintMarker(fingerprint: string, meta: FingerprintMarkerMeta = {}): string {
   const parts = ["review-bot:v1"];
-  if (meta.rule) parts.push(`rule=${meta.rule}`);
+  if (meta.rule) {
+    parts.push(`rule=${meta.rule}`);
+  }
   parts.push(`fp=${fingerprint}`);
-  if (meta.severity) parts.push(`sev=${meta.severity}`);
-  if (typeof meta.confidence === "number") parts.push(`conf=${formatConfidence(meta.confidence)}`);
+  if (meta.severity) {
+    parts.push(`sev=${meta.severity}`);
+  }
+  if (typeof meta.confidence === "number") {
+    parts.push(`conf=${formatConfidence(meta.confidence)}`);
+  }
   return `<!-- ${parts.join(" ")} -->`;
 }
 
 export function extractFingerprint(body: string): string | null {
   const reviewBot = /<!--\s*review-bot:v1\b[^>]*?\bfp=([A-Za-z0-9:_-]+)\b[^>]*-->/.exec(body);
-  if (reviewBot?.[1]) return reviewBot[1];
+  if (reviewBot?.[1]) {
+    return reviewBot[1];
+  }
   const legacy = /<!--\s*ai-pr-reviewer:fingerprint:([A-Za-z0-9:_-]+)\s*-->/.exec(body);
   return legacy?.[1] ?? null;
 }
@@ -73,8 +81,12 @@ const SEVERITY_ICON: Record<string, string> = {
 
 /** Confidence band shown next to the numeric score. */
 function confidenceLabel(confidence: number): string {
-  if (confidence >= 0.85) return "High";
-  if (confidence >= 0.65) return "Medium";
+  if (confidence >= 0.85) {
+    return "High";
+  }
+  if (confidence >= 0.65) {
+    return "Medium";
+  }
   return "Low";
 }
 
@@ -111,7 +123,9 @@ function maxSeverityRank(findings: StoredFinding[]): number {
   let rank = 0;
   for (const finding of findings) {
     const candidate = SEVERITY_RANK[finding.severity as FindingSeverity] ?? 0;
-    if (candidate > rank) rank = candidate;
+    if (candidate > rank) {
+      rank = candidate;
+    }
   }
   return rank;
 }
@@ -119,8 +133,12 @@ function maxSeverityRank(findings: StoredFinding[]): number {
 /** Overall review verdict, derived from the findings (no model-supplied verdict). */
 function verdictFor(verified: StoredFinding[]): string {
   const rank = maxSeverityRank(verified);
-  if (rank >= SEVERITY_RANK.medium) return "Changes requested";
-  if (rank >= SEVERITY_RANK.low) return "Comment";
+  if (rank >= SEVERITY_RANK.medium) {
+    return "Changes requested";
+  }
+  if (rank >= SEVERITY_RANK.low) {
+    return "Comment";
+  }
   return "No changes requested";
 }
 
@@ -146,7 +164,9 @@ function quote(text: string): string {
 /** First N sentences, without cutting mid-sentence. */
 function firstSentences(text: string, count: number): string {
   const matches = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g);
-  if (!matches) return text.trim();
+  if (!matches) {
+    return text.trim();
+  }
   return matches
     .slice(0, count)
     .map((sentence) => sentence.trim())
@@ -182,13 +202,17 @@ function humanizeModel(model: string): string {
 }
 
 function prNumberFromSource(source: string | undefined): number | null {
-  if (!source) return null;
+  if (!source) {
+    return null;
+  }
   const match = /#(\d+)/.exec(source);
   return match ? Number(match[1]) : null;
 }
 
 function commitFromSource(source: string | undefined): string | null {
-  if (!source) return null;
+  if (!source) {
+    return null;
+  }
   const match = /@\s*([0-9a-f]{7,40})\b/i.exec(source);
   return match?.[1] ?? null;
 }
@@ -245,18 +269,24 @@ export interface GuidelineSource {
 /** Extract the cited file path from a free-form guideline reference. */
 function guidelinePath(guideline: string, files?: string[]): string | undefined {
   const match = guideline.match(/([A-Za-z0-9_.@/-]+\.(?:md|markdown|txt))/i);
-  if (!match) return undefined;
+  if (!match) {
+    return undefined;
+  }
   let filePath = match[1]!;
   if (!filePath.includes("/")) {
     const resolved = files?.find((file) => file === filePath || file.endsWith(`/${filePath}`));
-    if (!resolved) return undefined;
+    if (!resolved) {
+      return undefined;
+    }
     filePath = resolved;
   }
   return filePath.replace(/^\/+/, "");
 }
 
 function guidelineUrl(filePath: string, source?: GuidelineSource): string | undefined {
-  if (!source?.repo || !source?.ref) return undefined;
+  if (!source?.repo || !source?.ref) {
+    return undefined;
+  }
   const repoPath = source.repo.split("/").map(encodeURIComponent).join("/");
   const refPath = source.ref.split("/").map(encodeURIComponent).join("/");
   const filePathEncoded = filePath.split("/").map(encodeURIComponent).join("/");
@@ -265,18 +295,24 @@ function guidelineUrl(filePath: string, source?: GuidelineSource): string | unde
 
 /** Render a guideline bullet, linked to the handbook file when resolvable. */
 function renderGuideline(finding: StoredFinding, source?: GuidelineSource): string | undefined {
-  if (!finding.guideline) return undefined;
+  if (!finding.guideline) {
+    return undefined;
+  }
   const text = truncate(finding.guideline, 300).replace(/\r?\n/g, " ");
   const filePath = guidelinePath(finding.guideline, source?.files);
   const url = filePath ? guidelineUrl(filePath, source) : undefined;
-  if (!url) return `- Guideline: ${text}`;
+  if (!url) {
+    return `- Guideline: ${text}`;
+  }
   const label = text.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
   return `- Guideline: [${label}](${url})`;
 }
 
 /** Rule id prefixed to a guideline reference (`RULE_ID – file §section`). */
 function explicitRuleId(guideline: string | undefined): string | undefined {
-  if (!guideline) return undefined;
+  if (!guideline) {
+    return undefined;
+  }
   const match = /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\s*(?:[–—-]|::|:)\s*/.exec(guideline.trim());
   return match?.[1];
 }
@@ -297,7 +333,9 @@ function guidelineReference(guideline: string): string {
 
 /** One-line guideline citation for the compact inline report. */
 function renderInlineGuideline(finding: StoredFinding, source?: GuidelineSource): string | undefined {
-  if (!finding.guideline) return undefined;
+  if (!finding.guideline) {
+    return undefined;
+  }
   const rule = explicitRuleId(finding.guideline);
   const reference = rule
     ? guidelineReference(finding.guideline)
@@ -313,8 +351,12 @@ function renderInlineGuideline(finding: StoredFinding, source?: GuidelineSource)
 function renderTechnicalDetails(finding: StoredFinding, guidelineSource?: GuidelineSource): string {
   const bullets = [`- Confidence: \`${Math.round(finding.confidence * 100)}%\``];
   const guideline = renderGuideline(finding, guidelineSource);
-  if (guideline) bullets.push(guideline);
-  if (finding.status) bullets.push(`- Status: ${finding.status}`);
+  if (guideline) {
+    bullets.push(guideline);
+  }
+  if (finding.status) {
+    bullets.push(`- Status: ${finding.status}`);
+  }
   for (const evidence of (finding.evidence ?? []).slice(0, 2)) {
     const location = evidence.line ? `${evidence.file}:${evidence.line}` : evidence.file;
     bullets.push(`- Evidence: \`${location}\` — ${truncate(evidence.reason, 300)}`);
@@ -417,7 +459,9 @@ export function buildReviewBody(input: FindingsBodyInput): string {
     input.meta?.reviewedAt ? formatShortDate(input.meta.reviewedAt, input.meta.timezone ?? "UTC") : "",
     commit ? `\`${commit}\`` : "",
   ].filter(Boolean);
-  if (footer.length > 0) parts.push(`---\n\n<sub>${footer.join(" · ")}</sub>\n`);
+  if (footer.length > 0) {
+    parts.push(`---\n\n<sub>${footer.join(" · ")}</sub>\n`);
+  }
   parts.push("🔓 Break glass · 🔄 Re-run review");
 
   const body = parts.join("\n");

@@ -28,7 +28,9 @@ export type ReviewLogger = pino.Logger;
  */
 export function createReviewLogger(logger: pino.Logger, correlation: ReviewCorrelation): ReviewLogger {
   // Defensive: tolerate simplified logger stubs (no `child`) in tests.
-  if (typeof (logger as unknown as { child?: unknown }).child !== "function") return logger;
+  if (typeof (logger as unknown as { child?: unknown }).child !== "function") {
+    return logger;
+  }
   return logger.child(correlation);
 }
 

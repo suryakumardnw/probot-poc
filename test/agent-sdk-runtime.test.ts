@@ -107,8 +107,12 @@ class FakeHostClient implements SdkHostClient {
 
   async start(): Promise<void> {
     this.startCalls += 1;
-    if (this.options.hangStart) return new Promise<void>(() => {});
-    if (this.options.startError) throw this.options.startError;
+    if (this.options.hangStart) {
+      return new Promise<void>(() => {});
+    }
+    if (this.options.startError) {
+      throw this.options.startError;
+    }
   }
 
   async createSession(input: SdkCreateSessionInput): Promise<SdkSessionRow> {
@@ -118,7 +122,9 @@ class FakeHostClient implements SdkHostClient {
 
   async getSession(input: SdkSessionRef): Promise<SdkSessionRow> {
     this.getCalls += 1;
-    if (this.options.hangGet) return new Promise<SdkSessionRow>(() => {});
+    if (this.options.hangGet) {
+      return new Promise<SdkSessionRow>(() => {});
+    }
     return {
       id: input.sessionID,
       time: { idle: this.now() },
@@ -128,8 +134,12 @@ class FakeHostClient implements SdkHostClient {
 
   async prompt(input: SdkPromptInput): Promise<void> {
     this.prompts.push(input);
-    if (this.options.hangPrompt) return new Promise<void>(() => {});
-    if (this.options.promptError) throw this.options.promptError;
+    if (this.options.hangPrompt) {
+      return new Promise<void>(() => {});
+    }
+    if (this.options.promptError) {
+      throw this.options.promptError;
+    }
     this.advance(10);
   }
 
@@ -139,13 +149,19 @@ class FakeHostClient implements SdkHostClient {
 
   async removeSession(input: SdkSessionRef): Promise<void> {
     this.removeSessionCalls.push(input);
-    if (this.options.removeError) throw this.options.removeError;
+    if (this.options.removeError) {
+      throw this.options.removeError;
+    }
   }
 
   async close(): Promise<void> {
     this.closeCalls += 1;
-    if (this.options.hangClose) return new Promise<void>(() => {});
-    if (this.options.closeError) throw this.options.closeError;
+    if (this.options.hangClose) {
+      return new Promise<void>(() => {});
+    }
+    if (this.options.closeError) {
+      throw this.options.closeError;
+    }
   }
 
   kill(): void {
@@ -181,7 +197,9 @@ function makeHarness(options: HarnessOptions = {}) {
   });
 
   const probeSdkHost = vi.fn(async () => {
-    if (options.probeError) throw options.probeError;
+    if (options.probeError) {
+      throw options.probeError;
+    }
     return { version: options.probeVersion ?? "2.3.0" };
   });
 
@@ -224,7 +242,9 @@ async function started(
 
 function findSessionDir(reviewId: string): string {
   const root = path.join(os.tmpdir(), "opencode-sdk-sessions");
-  if (!existsSync(root)) return "";
+  if (!existsSync(root)) {
+    return "";
+  }
   const matches = readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith(`${reviewId}-`))
     .map((entry) => path.join(root, entry.name))
@@ -283,7 +303,9 @@ describe("SDK session lifecycle", () => {
       expect(session.timeoutMs).toBe(baseConfig.agent.runtime.timeoutMs);
       expect(harness.createHostClient).not.toHaveBeenCalled();
     } finally {
-      if (dir) rmSync(dir, { recursive: true, force: true });
+      if (dir) {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 

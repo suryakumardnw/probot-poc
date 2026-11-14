@@ -97,10 +97,20 @@ export function reviewSpanAttributes(corr: {
   head_sha?: string;
 }): Attributes {
   const attrs: Attributes = {};
-  if (corr.review_id) attrs["review.id"] = corr.review_id;
-  if (corr.job_id) attrs["job.id"] = corr.job_id;
-  if (corr.repository) attrs["repository"] = corr.repository;
-  if (typeof corr.pull_request_number === "number") attrs["pull_request.number"] = corr.pull_request_number;
-  if (corr.head_sha) attrs["head_sha"] = corr.head_sha;
+  if (corr.review_id) {
+    attrs["review.id"] = corr.review_id;
+  }
+  if (corr.job_id) {
+    attrs["job.id"] = corr.job_id;
+  }
+  if (corr.repository) {
+    attrs["repository"] = corr.repository;
+  }
+  if (typeof corr.pull_request_number === "number") {
+    attrs["pull_request.number"] = corr.pull_request_number;
+  }
+  if (corr.head_sha) {
+    attrs["head_sha"] = corr.head_sha;
+  }
   return attrs;
 }

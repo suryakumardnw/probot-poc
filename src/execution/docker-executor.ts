@@ -158,10 +158,14 @@ export class DockerSandboxExecutor implements SandboxExecutor {
       let stdout = "";
       let stderr = "";
       child.stdout?.on("data", (c: Buffer) => {
-        if (stdout.length < 1_000_000) stdout += c.toString();
+        if (stdout.length < 1_000_000) {
+          stdout += c.toString();
+        }
       });
       child.stderr?.on("data", (c: Buffer) => {
-        if (stderr.length < 1_000_000) stderr += c.toString();
+        if (stderr.length < 1_000_000) {
+          stderr += c.toString();
+        }
       });
 
       let timedOut = false;

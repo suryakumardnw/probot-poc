@@ -329,7 +329,9 @@ describe("validation and independent verification (§6.4, §7.1)", () => {
     expect(outcome.rejected.map((r) => r.reason).sort()).toEqual(cases.map(([, reason]) => reason).sort());
     expect(outcome.verified).toHaveLength(0);
     expect(outcome.uncertain).toHaveLength(0);
-    for (const r of outcome.rejected) expect(r.detail.length).toBeGreaterThan(0);
+    for (const r of outcome.rejected) {
+      expect(r.detail.length).toBeGreaterThan(0);
+    }
   });
 
   test("severity not enabled in configuration is rejected", async () => {

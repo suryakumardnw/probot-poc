@@ -234,7 +234,9 @@ async function insertStoredFinding(
     reopened: false,
     ...overrides,
   };
-  if (!base.fingerprint) base.fingerprint = `fp1:${base.title.replace(/\s+/g, "-").toLowerCase()}-test`;
+  if (!base.fingerprint) {
+    base.fingerprint = `fp1:${base.title.replace(/\s+/g, "-").toLowerCase()}-test`;
+  }
   const row = await prisma.finding.create({
     data: {
       reviewId,
@@ -292,7 +294,9 @@ function makeFakeOctokit(state: FakeState): PublisherOctokit {
             comments: params.comments ?? [],
           });
           const queuedError = state.createReviewErrors.shift();
-          if (queuedError !== undefined) throw queuedError;
+          if (queuedError !== undefined) {
+            throw queuedError;
+          }
           if (state.failCreateTimes > 0) {
             state.failCreateTimes -= 1;
             throw new Error("simulated GitHub 502");
@@ -303,7 +307,9 @@ function makeFakeOctokit(state: FakeState): PublisherOctokit {
           });
           // Real GitHub attaches inline comments and the review itself to the
           // PR; mirror that so subsequent list* calls see them.
-          for (const c of created) state.existingComments.push(c);
+          for (const c of created) {
+            state.existingComments.push(c);
+          }
           state.existingReviews.push({ id: 5001, body: params.body, state: params.event });
           return { data: { id: 5001, comments: created } };
         },
@@ -745,7 +751,9 @@ describe("retry policy", () => {
       "test",
       async () => {
         attempts += 1;
-        if (attempts < 3) throw new Error("boom");
+        if (attempts < 3) {
+          throw new Error("boom");
+        }
         return "ok";
       },
       { maxAttempts: 3, baseDelayMs: 1 },

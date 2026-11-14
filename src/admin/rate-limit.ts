@@ -44,7 +44,9 @@ export function checkRateLimit(key: string, options: RateLimitOptions): RateLimi
   // Opportunistic cleanup so the map does not grow without bound.
   if (buckets.size > 10_000) {
     for (const [k, b] of buckets) {
-      if (b.windowStart + windowMs <= now) buckets.delete(k);
+      if (b.windowStart + windowMs <= now) {
+        buckets.delete(k);
+      }
     }
   }
   return { allowed: true, remaining: options.limitPerMinute - bucket.count, retryAfterSeconds: 0 };

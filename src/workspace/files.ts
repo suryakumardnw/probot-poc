@@ -62,11 +62,17 @@ const STATUS_MAP: Record<string, ChangeStatus> = {
 export function parseNameStatus(output: string): ChangedFile[] {
   const files: ChangedFile[] = [];
   for (const line of output.split("\n")) {
-    if (!line.trim()) continue;
+    if (!line.trim()) {
+      continue;
+    }
     const parts = line.split("\t");
-    if (parts.length < 2) continue;
+    if (parts.length < 2) {
+      continue;
+    }
     const status = STATUS_MAP[parts[0][0]];
-    if (!status) continue;
+    if (!status) {
+      continue;
+    }
     if ((status === "renamed" || status === "copied") && parts.length >= 3) {
       files.push({ status, previousPath: parts[1], path: parts[parts.length - 1] });
     } else {

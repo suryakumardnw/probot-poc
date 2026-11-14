@@ -84,7 +84,9 @@ function makeFetcher(
       if (parts[3] === "commits") {
         const ref = decodeURIComponent(parts[4]!);
         const sha = refs[ref] ?? (/^[0-9a-f]{40}$/.test(ref) ? ref : null);
-        if (!sha) return { status: 404, text: JSON.stringify({ message: "Not Found" }) };
+        if (!sha) {
+          return { status: 404, text: JSON.stringify({ message: "Not Found" }) };
+        }
         return { status: 200, text: JSON.stringify({ sha }) };
       }
       if (parts[3] === "git" && parts[4] === "trees") {
@@ -103,7 +105,9 @@ function makeFetcher(
         const sha = parsed.searchParams.get("ref") ?? "";
         const filePath = parts.slice(4).map(decodeURIComponent).join("/");
         const content = files[`${sha}/${filePath}`];
-        if (content === undefined) return { status: 404, text: JSON.stringify({ message: "Not Found" }) };
+        if (content === undefined) {
+          return { status: 404, text: JSON.stringify({ message: "Not Found" }) };
+        }
         return {
           status: 200,
           text: JSON.stringify({ encoding: "base64", content: Buffer.from(content, "utf8").toString("base64") }),
@@ -130,7 +134,9 @@ beforeEach(() => {
 
 afterAll(async () => {
   await disconnectPrisma();
-  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+  for (const dir of tempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 describe("ensureKnowledgeSources", () => {

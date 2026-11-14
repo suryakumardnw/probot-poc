@@ -42,9 +42,9 @@ involved. -->
 ## Checklist
 
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) and the rules in `CONTRIBUTING.md`.
-- [ ] `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` pass locally.
+- [ ] `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run metrics:quality`, `npm test`, `npm run build`, and `npm run security:audit` pass locally.
 - [ ] No new `any`, non-null assertion (`!`), or unsafe `as` was introduced.
 - [ ] Tests cover the change, and any new infrastructure dependency is explicit.
 - [ ] This PR is one intent; refactors and behavior changes are separate.
 - [ ] Any disabled lint rule is documented with a TODO and a follow-up PR.
-- [ ] Branch protection requires the `Quality`, `Test`, and `Commitlint` checks before merge.
+- [ ] Branch protection requires the `Quality`, `Test`, `Commitlint`, and `Security` checks before merge.

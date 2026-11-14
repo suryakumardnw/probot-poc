@@ -83,11 +83,15 @@ export function detectTechnologies(changedFiles: string[]): string[] {
   for (const file of changedFiles) {
     const normalized = file.replace(/\\/g, "/").toLowerCase();
     const extension = normalized.includes(".") ? normalized.split(".").pop()! : "";
-    for (const tech of EXTENSION_TECH[extension] ?? []) detected.add(tech);
+    for (const tech of EXTENSION_TECH[extension] ?? []) {
+      detected.add(tech);
+    }
     const segments = normalized.split("/");
     for (const hint of PATH_TECH_HINTS) {
       if (segments.some((segment) => segment.includes(hint.token))) {
-        for (const tech of hint.tech) detected.add(tech);
+        for (const tech of hint.tech) {
+          detected.add(tech);
+        }
       }
     }
   }
@@ -112,7 +116,9 @@ function changedPathTokens(changedFiles: string[]): Set<string> {
     const extension = normalized.includes(".") ? normalized.split(".").pop()! : "";
     const stem = normalized.replace(new RegExp(`\\.${extension}$`), "");
     for (const token of [...segments, ...stem.split(/[^a-z0-9]+/), extension]) {
-      if (token.length > 1) tokens.add(token);
+      if (token.length > 1) {
+        tokens.add(token);
+      }
     }
   }
   return tokens;
@@ -160,8 +166,11 @@ export function rankHandbookFiles(
     // (b) Heading/filename keyword overlap with the changed file paths.
     let overlapScore = 0;
     for (const token of fileTokens) {
-      if (prTokens.has(token)) overlapScore += 2;
-      else if ([...prTokens].some((pr) => pr.startsWith(token) || token.startsWith(pr))) overlapScore += 1;
+      if (prTokens.has(token)) {
+        overlapScore += 2;
+      } else if ([...prTokens].some((pr) => pr.startsWith(token) || token.startsWith(pr))) {
+        overlapScore += 1;
+      }
     }
 
     // (c) General categories: always eligible, deprioritized (small baseline).
@@ -195,7 +204,9 @@ export interface HandbookRenderOptions {
 /** Render the citation header, including the readable workspace copy when known. */
 function handbookHeader(filePath: string, workspacePrefix?: string): string {
   const header = `## handbook file: ${filePath}`;
-  if (!workspacePrefix) return header;
+  if (!workspacePrefix) {
+    return header;
+  }
   const prefix = workspacePrefix.replace(/\\/g, "/").replace(/\/+$/, "");
   return `${header}\n(workspace copy: ${prefix}/${filePath})`;
 }
@@ -224,12 +235,16 @@ function splitSections(text: string, filePath: string): Array<{ key: string; bod
   for (const match of text.matchAll(pattern)) {
     headings.push({ heading: match[0], start: match.index ?? 0 });
   }
-  if (headings.length === 0) return [{ key: `${filePath}#`, body: text.trim() }].filter((s) => s.body);
+  if (headings.length === 0) {
+    return [{ key: `${filePath}#`, body: text.trim() }].filter((s) => s.body);
+  }
   const sections: Array<{ key: string; body: string }> = [];
   for (let i = 0; i < headings.length; i += 1) {
     const end = i + 1 < headings.length ? headings[i + 1].start : text.length;
     const body = text.slice(headings[i].start, end).trim();
-    if (body) sections.push({ key: `${filePath}#${headings[i].heading}`, body });
+    if (body) {
+      sections.push({ key: `${filePath}#${headings[i].heading}`, body });
+    }
   }
   return sections;
 }
@@ -239,9 +254,14 @@ function sectionRelevance(body: string, prTokens: Set<string>): number {
   const heading = body.match(/^#{1,3} .*$/m)?.[0]?.toLowerCase() ?? "";
   let score = 0;
   for (const token of heading.split(/[^a-z0-9]+/)) {
-    if (token.length <= 2) continue;
-    if (prTokens.has(token)) score += 2;
-    else if ([...prTokens].some((pr) => pr.startsWith(token) || token.startsWith(pr))) score += 1;
+    if (token.length <= 2) {
+      continue;
+    }
+    if (prTokens.has(token)) {
+      score += 2;
+    } else if ([...prTokens].some((pr) => pr.startsWith(token) || token.startsWith(pr))) {
+      score += 1;
+    }
   }
   return score;
 }
@@ -274,22 +294,32 @@ export function selectHandbookUnderBudget(
     const wholeFile = `${header}\n\n${file.content}`;
     if (used + wholeFile.length <= maxChars) {
       // Whole-file preference: take the file intact when it fits.
-      if (usedFiles.has(file.path) || seenKeys.has(file.path)) return false;
+      if (usedFiles.has(file.path) || seenKeys.has(file.path)) {
+        return false;
+      }
       // Cross-file dedup: skip the file when ANY of its sections duplicates
       // content already injected from another file.
-      if (sections.some((section) => seenBodies.has(bodyHash(section.body)))) return false;
+      if (sections.some((section) => seenBodies.has(bodyHash(section.body)))) {
+        return false;
+      }
       seenKeys.add(file.path);
       parts.push(wholeFile);
       usedFiles.add(file.path);
       used += wholeFile.length + 2;
-      for (const section of sections) seenBodies.add(bodyHash(section.body));
+      for (const section of sections) {
+        seenBodies.add(bodyHash(section.body));
+      }
       return true;
     }
     // Budget path: as many whole top sections as fit, no fragments.
     let fileSelected = false;
     for (const section of sections) {
-      if (seenKeys.has(section.key)) continue;
-      if (seenBodies.has(bodyHash(section.body))) continue;
+      if (seenKeys.has(section.key)) {
+        continue;
+      }
+      if (seenBodies.has(bodyHash(section.body))) {
+        continue;
+      }
       const render = `${header}\n\n${section.body}`;
       if (used + render.length > maxChars) {
         truncated = true;
@@ -309,7 +339,9 @@ export function selectHandbookUnderBudget(
   for (const file of ranked) {
     const sections = scoredSections(file, prTokens);
     const hasRelevantSection = file.score > 0 || sections.some((s) => s.score > 0);
-    if (!hasRelevantSection) continue;
+    if (!hasRelevantSection) {
+      continue;
+    }
     relevant += 1;
     tryAdd(file, sections);
     // Degenerate budget: not even ONE section of the top-ranked file fit.
@@ -330,7 +362,9 @@ export function selectHandbookUnderBudget(
   // flowing (mirrors the legacy "first sections win" behavior).
   if (usedFiles.size === 0) {
     for (const file of ranked.slice(0, 3)) {
-      if (used >= maxChars) break;
+      if (used >= maxChars) {
+        break;
+      }
       tryAdd(file, scoredSections(file, prTokens));
     }
   }

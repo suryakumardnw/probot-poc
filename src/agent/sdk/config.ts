@@ -50,7 +50,9 @@ export function buildSdkPermissions(config: AgentRuntimeConfigSource): SdkPermis
     const actions = new Set<string>();
     for (const tool of config.agent.tools.enabled) {
       const action = TOOL_ACTION_MAP[tool];
-      if (action && READ_ONLY_ACTIONS.has(action)) actions.add(action);
+      if (action && READ_ONLY_ACTIONS.has(action)) {
+        actions.add(action);
+      }
     }
     for (const action of ["read", "grep", "glob"]) {
       if (actions.has(action)) {
@@ -132,7 +134,9 @@ export function validateSdkPermissions(
       problems.push(`rule ${index} is not an object`);
       continue;
     }
-    if (typeof rule.action !== "string" || !rule.action) problems.push(`rule ${index} has no action`);
+    if (typeof rule.action !== "string" || !rule.action) {
+      problems.push(`rule ${index} has no action`);
+    }
     if (typeof rule.resource !== "string" || !rule.resource) {
       problems.push(`rule ${index} has no resource`);
     }
@@ -144,11 +148,19 @@ export function validateSdkPermissions(
   const has = (action: string, resource: string, effect: SdkPermissionEffect): boolean =>
     (rules ?? []).some((rule) => rule.action === action && rule.resource === resource && rule.effect === effect);
 
-  if (!has("*", "*", "deny")) problems.push("missing catch-all deny");
-  if (!has("*", "*/*", "deny")) problems.push("missing path catch-all deny");
-  if (!has("external_directory", "*", "deny")) problems.push("missing external_directory deny");
+  if (!has("*", "*", "deny")) {
+    problems.push("missing catch-all deny");
+  }
+  if (!has("*", "*/*", "deny")) {
+    problems.push("missing path catch-all deny");
+  }
+  if (!has("external_directory", "*", "deny")) {
+    problems.push("missing external_directory deny");
+  }
   for (const resource of [".env", "*.env", "*.env.*", "*credential*", "*credentials*", ".git-credentials"]) {
-    if (!has("read", resource, "deny")) problems.push(`missing secret read deny ${resource}`);
+    if (!has("read", resource, "deny")) {
+      problems.push(`missing secret read deny ${resource}`);
+    }
   }
   const hasReadAllow = has("read", "*", "allow");
   if (options.requireReadAccess === true && !hasReadAllow) {

@@ -170,9 +170,13 @@ export async function recoverOutbox(limit = 100, queue?: Queue<ReviewJobPayload>
   const summary: OutboxRecoverySummary = { scanned: pending.length, published: 0, discarded: 0, failed: 0 };
   for (const event of pending) {
     const result = await publishOutboxEvent(event.id, queue);
-    if (result === "published") summary.published += 1;
-    else if (result === "discarded") summary.discarded += 1;
-    else if (result === "failed") summary.failed += 1;
+    if (result === "published") {
+      summary.published += 1;
+    } else if (result === "discarded") {
+      summary.discarded += 1;
+    } else if (result === "failed") {
+      summary.failed += 1;
+    }
   }
   return summary;
 }

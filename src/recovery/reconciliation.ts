@@ -91,7 +91,9 @@ function buildPayloadFromRows(review: Review, job: ReviewJob, repositoryFullName
  */
 export async function resetReviewForRecovery(prisma: PrismaClient, reviewId: string): Promise<void> {
   const review = await prisma.review.findUnique({ where: { id: reviewId }, select: { state: true } });
-  if (!review) throw new Error(`Review '${reviewId}' not found`);
+  if (!review) {
+    throw new Error(`Review '${reviewId}' not found`);
+  }
   await prisma.$transaction([
     prisma.review.update({
       where: { id: reviewId },

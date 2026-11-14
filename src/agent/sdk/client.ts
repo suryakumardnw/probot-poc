@@ -77,7 +77,9 @@ class StdioSdkHostClient implements SdkHostClient {
   }
 
   async start(): Promise<void> {
-    if (this.child) return;
+    if (this.child) {
+      return;
+    }
     const child = this.spawnImpl(process.execPath, [this.options.hostProcessPath], {
       cwd: this.options.workspacePath,
       env: this.options.env,
@@ -114,7 +116,9 @@ class StdioSdkHostClient implements SdkHostClient {
 
   async close(): Promise<void> {
     const child = this.child;
-    if (!child || this.closed) return;
+    if (!child || this.closed) {
+      return;
+    }
     this.closed = true;
     try {
       await Promise.race([this.request("close", undefined), sleep(CLOSE_GRACE_MS)]);
@@ -129,11 +133,15 @@ class StdioSdkHostClient implements SdkHostClient {
 
   kill(): void {
     const child = this.child;
-    if (!child || this.killed) return;
+    if (!child || this.killed) {
+      return;
+    }
     this.killed = true;
     child.kill("SIGTERM");
     const timer = setTimeout(() => {
-      if (child.exitCode === null) child.kill("SIGKILL");
+      if (child.exitCode === null) {
+        child.kill("SIGKILL");
+      }
     }, KILL_ESCALATION_MS);
     timer.unref?.();
   }
@@ -196,7 +204,9 @@ class StdioSdkHostClient implements SdkHostClient {
     while (idx >= 0) {
       const line = this.stdoutBuffer.slice(0, idx);
       this.stdoutBuffer = this.stdoutBuffer.slice(idx + 1);
-      if (line.trim() !== "") this.handleResponseLine(line);
+      if (line.trim() !== "") {
+        this.handleResponseLine(line);
+      }
       idx = this.stdoutBuffer.indexOf("\n");
     }
     if (Buffer.byteLength(this.stdoutBuffer, "utf8") > MAX_LINE_BYTES) {
@@ -218,7 +228,9 @@ class StdioSdkHostClient implements SdkHostClient {
       return;
     }
     const pending = this.pending.get(response.id);
-    if (!pending) return; // late or duplicate response — ignore.
+    if (!pending) {
+      return;
+    } // late or duplicate response — ignore.
     this.pending.delete(response.id);
     clearTimeout(pending.timer);
     if (response.ok) {
@@ -237,13 +249,17 @@ class StdioSdkHostClient implements SdkHostClient {
   }
 
   private onStderrData(chunk: Buffer | string): void {
-    if (!this.options.onStderr) return;
+    if (!this.options.onStderr) {
+      return;
+    }
     this.stderrBuffer += this.stderrDecoder.write(chunk);
     let idx = this.stderrBuffer.indexOf("\n");
     while (idx >= 0) {
       const line = this.stderrBuffer.slice(0, idx);
       this.stderrBuffer = this.stderrBuffer.slice(idx + 1);
-      if (line.trim() !== "") this.options.onStderr(line);
+      if (line.trim() !== "") {
+        this.options.onStderr(line);
+      }
       idx = this.stderrBuffer.indexOf("\n");
     }
     if (Buffer.byteLength(this.stderrBuffer, "utf8") > MAX_LINE_BYTES) {
@@ -289,7 +305,9 @@ export async function probeSdkHost(options: {
         : "unknown";
     return { version };
   } finally {
-    if (child.exitCode === null && !child.killed) child.kill("SIGTERM");
+    if (child.exitCode === null && !child.killed) {
+      child.kill("SIGTERM");
+    }
   }
 }
 
@@ -332,13 +350,15 @@ function requestHealth(child: ChildProcess, timeoutMs: number): Promise<unknown>
         }
         if (response.id === 1) {
           cleanup();
-          if (response.ok) resolve(response.result);
-          else
+          if (response.ok) {
+            resolve(response.result);
+          } else {
             reject(
               new AgentRuntimeError("unknown", response.error?.message ?? "health probe failed", {
                 detail: response.error?.message,
               }),
             );
+          }
           return;
         }
         idx = buffer.indexOf("\n");

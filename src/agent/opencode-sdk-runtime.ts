@@ -239,7 +239,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
       });
       throw normalized;
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
@@ -261,7 +263,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
 
     if (client) {
       try {
-        if (sdkSessionId) await client.removeSession({ sessionID: sdkSessionId });
+        if (sdkSessionId) {
+          await client.removeSession({ sessionID: sdkSessionId });
+        }
       } catch (cause) {
         this.logger?.warn("agent sdk session remove failed", {
           event: "agent_sdk_session_remove_failed",
@@ -353,7 +357,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
     try {
       await client.prompt({ sessionID: sdkSessionId, text: buildPrompt(task) });
     } catch (cause) {
-      if (this.now() >= deadline) this.throwTimeout(session);
+      if (this.now() >= deadline) {
+        this.throwTimeout(session);
+      }
       throw new AgentRuntimeError("crash", "opencode sdk prompt admission failed", {
         sessionId: session.id,
         detail: this.safeDetail(cause),
@@ -396,7 +402,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
 
       for (const candidate of candidates) {
         const extracted = extractJson(candidate);
-        if (extracted === undefined) continue;
+        if (extracted === undefined) {
+          continue;
+        }
         let value: unknown;
         try {
           value = JSON.parse(extracted);
@@ -443,7 +451,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
   }
 
   private async ensureHost(state: SessionState): Promise<SdkHostClient> {
-    if (state.client) return state.client;
+    if (state.client) {
+      return state.client;
+    }
     const session = state.session;
 
     const inlineConfig = buildSdkInlineConfig(this.config, process.env, {
@@ -516,7 +526,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
   }
 
   private async ensureSdkSession(state: SessionState, client: SdkHostClient): Promise<string> {
-    if (state.sdkSessionId) return state.sdkSessionId;
+    if (state.sdkSessionId) {
+      return state.sdkSessionId;
+    }
     const session = state.session;
     try {
       const row = await client.createSession({
@@ -583,7 +595,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
 
   /** Fail fast when the total execution deadline has passed. */
   private throwIfExpired(session: AgentSession, deadline: number): void {
-    if (this.now() >= deadline) this.throwTimeout(session);
+    if (this.now() >= deadline) {
+      this.throwTimeout(session);
+    }
   }
 
   private throwTimeout(session: AgentSession): never {
@@ -630,21 +644,31 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
     let usage: NormalizedUsage | undefined;
     for (const message of messages) {
       usage = mergeUsage(usage, normalizeUsage(message.usage ?? message.tokens));
-      if (message.type !== "assistant" || !Array.isArray(message.content)) continue;
+      if (message.type !== "assistant" || !Array.isArray(message.content)) {
+        continue;
+      }
       const parts: string[] = [];
       for (const part of message.content) {
         usage = mergeUsage(usage, normalizeUsage(part.usage ?? part.tokens));
-        if (part.type === "text" && typeof part.text === "string") parts.push(part.text);
+        if (part.type === "text" && typeof part.text === "string") {
+          parts.push(part.text);
+        }
       }
-      if (parts.length > 0) textMessages.push(parts.join("\n\n"));
+      if (parts.length > 0) {
+        textMessages.push(parts.join("\n\n"));
+      }
     }
     return { text: textMessages.join("\n\n").trim(), textMessages, usage };
   }
 
   private async assertWorkspaceUnchanged(state: SessionState, baseline: string | undefined): Promise<void> {
-    if (baseline === undefined) return; // git unavailable — guard skipped
+    if (baseline === undefined) {
+      return;
+    } // git unavailable — guard skipped
     const after = await this.gitStatusImpl(state.session.workspacePath);
-    if (after === undefined || after === baseline) return;
+    if (after === undefined || after === baseline) {
+      return;
+    }
     throw new AgentRuntimeError(
       "workspace_modified",
       "agent modified the review workspace; permission enforcement gap detected",
@@ -659,7 +683,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
     const client = state.client;
     state.client = undefined;
     state.sdkSessionId = undefined;
-    if (!client) return;
+    if (!client) {
+      return;
+    }
     try {
       await client.close();
     } catch (cause) {
@@ -674,7 +700,9 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
 
   private killClient(state: SessionState): void {
     const client = state.client;
-    if (!client) return;
+    if (!client) {
+      return;
+    }
     client.kill();
   }
 
@@ -693,38 +721,52 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
 
   /** Scrub known secret values and authorization headers, then truncate. */
   private safeDetail(value: unknown): string | undefined {
-    if (value === undefined || value === null) return undefined;
+    if (value === undefined || value === null) {
+      return undefined;
+    }
     let raw: string;
-    if (typeof value === "string") raw = value;
-    else if (value instanceof Error) raw = value.message;
-    else {
+    if (typeof value === "string") {
+      raw = value;
+    } else if (value instanceof Error) {
+      raw = value.message;
+    } else {
       try {
         raw = JSON.stringify(value);
       } catch {
         raw = String(value);
       }
     }
-    if (!raw) return undefined;
+    if (!raw) {
+      return undefined;
+    }
     return truncate(this.scrub(raw), MAX_DETAIL_LENGTH);
   }
 
   private scrub(text: string): string {
     let out = text;
     const apiKey = process.env[this.config.provider.apiKeyEnv];
-    if (apiKey) out = out.split(apiKey).join("[redacted]");
+    if (apiKey) {
+      out = out.split(apiKey).join("[redacted]");
+    }
     const langfuseSecret = process.env.LANGFUSE_SECRET_KEY;
-    if (langfuseSecret) out = out.split(langfuseSecret).join("[redacted]");
+    if (langfuseSecret) {
+      out = out.split(langfuseSecret).join("[redacted]");
+    }
     const otlpHeaders = process.env.OPENCODE_OTLP_HEADERS;
     if (otlpHeaders) {
       out = out.split(otlpHeaders).join("[redacted]");
       for (const pair of otlpHeaders.split(",")) {
         const separator = pair.indexOf("=");
-        if (separator < 0) continue;
+        if (separator < 0) {
+          continue;
+        }
         const value = pair
           .slice(separator + 1)
           .trim()
           .replace(/^bearer\s+/i, "");
-        if (value.length >= 8) out = out.split(value).join("[redacted]");
+        if (value.length >= 8) {
+          out = out.split(value).join("[redacted]");
+        }
       }
     }
     out = out.replace(/(authorization|api[-_]?key|x-api-key)["'=:\s]+\S+/gi, "$1[redacted]");
@@ -764,13 +806,17 @@ function sleep(ms: number): Promise<void> {
 
 function numberOrUndefined(...values: unknown[]): number | undefined {
   for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
   }
   return undefined;
 }
 
 function normalizeUsage(value: unknown): NormalizedUsage | undefined {
-  if (!value || typeof value !== "object") return undefined;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
   const obj = value as Record<string, unknown>;
   const inner = obj.usage && typeof obj.usage === "object" ? (obj.usage as Record<string, unknown>) : obj;
   const inputTokens = numberOrUndefined(inner.input, inner.inputTokens);
@@ -786,8 +832,12 @@ function mergeUsage(
   current: NormalizedUsage | undefined,
   next: NormalizedUsage | undefined,
 ): NormalizedUsage | undefined {
-  if (!next) return current;
-  if (!current) return next;
+  if (!next) {
+    return current;
+  }
+  if (!current) {
+    return next;
+  }
   return {
     inputTokens: next.inputTokens ?? current.inputTokens,
     outputTokens: next.outputTokens ?? current.outputTokens,

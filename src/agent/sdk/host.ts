@@ -43,12 +43,16 @@ export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLo
   let closed = false;
 
   async function loadModule(): Promise<SdkModule> {
-    if (!module) module = await loadSdk();
+    if (!module) {
+      module = await loadSdk();
+    }
     return module;
   }
 
   function requireHost(): SdkHost {
-    if (!host) throw new Error("SDK host is not created");
+    if (!host) {
+      throw new Error("SDK host is not created");
+    }
     return host;
   }
 
@@ -57,7 +61,9 @@ export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLo
       switch (request.method) {
         case "create": {
           const params = request.params as SdkHostCreateParams;
-          if (host) throw new Error("SDK host already created");
+          if (host) {
+            throw new Error("SDK host already created");
+          }
           const sdk = await loadModule();
           const options: SdkHostOptions = {
             config: { content: params.configContent, project: false, claude: false },
@@ -117,11 +123,15 @@ export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLo
   }
 
   async function close(): Promise<void> {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     closed = true;
     const current = host;
     host = undefined;
-    if (!current) return;
+    if (!current) {
+      return;
+    }
     await current.close();
   }
 
@@ -133,7 +143,9 @@ function resolveSdkVersion(): string {
   try {
     const require = createRequire(import.meta.url);
     const pkg = require("@opencode/sdk/package.json") as { version?: unknown };
-    if (typeof pkg.version === "string") return pkg.version;
+    if (typeof pkg.version === "string") {
+      return pkg.version;
+    }
   } catch {
     // Fall through to entry-point traversal.
   }
@@ -152,7 +164,9 @@ function resolveSdkVersion(): string {
         }
       }
       const parent = path.dirname(dir);
-      if (parent === dir) break;
+      if (parent === dir) {
+        break;
+      }
       dir = parent;
     }
   } catch {

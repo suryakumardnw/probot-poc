@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  # gitleaks reads pull request metadata when scanning a PR.
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -129,12 +131,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Audit dependencies
-        # Advisory until the pre-existing advisories in @prisma/config and
-        # @opencode/sdk's gitlab-ai-provider are upgraded. Tracked in
-        # docs/typescript-refactor-baseline.md; do not weaken the threshold.
-        run: npm audit --audit-level=high
-        continue-on-error: true
+        # Fails on any high/critical advisory that is not explicitly allowlisted.
+        # The four known pre-existing advisories and their follow-ups live in
+        # scripts/npm-audit-allowlist.json and docs/security-audit-follow-ups.md.
+        run: npm run security:audit
       - name: Scan for secrets
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"

@@ -114,38 +114,59 @@ function normalizeFinishReason(raw: unknown): {
 }
 
 function normalizeUsage(raw: unknown): ModelResponse["usage"] {
-  if (typeof raw !== "object" || raw === null) return undefined;
+  if (typeof raw !== "object" || raw === null) {
+    return undefined;
+  }
   const usage = raw as Record<string, unknown>;
   const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   const prompt = num(usage.prompt_tokens);
   const completion = num(usage.completion_tokens);
   const total = num(usage.total_tokens);
-  if (prompt === undefined && completion === undefined && total === undefined) return undefined;
+  if (prompt === undefined && completion === undefined && total === undefined) {
+    return undefined;
+  }
   return { promptTokens: prompt, completionTokens: completion, totalTokens: total };
 }
 
 function extractErrorDetail(body: unknown): string | undefined {
-  if (body === undefined) return undefined;
-  if (typeof body === "string") return truncateDetail(body);
+  if (body === undefined) {
+    return undefined;
+  }
+  if (typeof body === "string") {
+    return truncateDetail(body);
+  }
   if (typeof body === "object" && body !== null) {
     const record = body as Record<string, unknown>;
     const error = record.error;
-    if (typeof error === "string") return truncateDetail(error);
+    if (typeof error === "string") {
+      return truncateDetail(error);
+    }
     if (typeof error === "object" && error !== null) {
       const message = (error as Record<string, unknown>).message;
-      if (typeof message === "string") return truncateDetail(message);
+      if (typeof message === "string") {
+        return truncateDetail(message);
+      }
     }
-    if (typeof record.message === "string") return truncateDetail(record.message);
+    if (typeof record.message === "string") {
+      return truncateDetail(record.message);
+    }
   }
   return undefined;
 }
 
 function statusToErrorCode(status: number): { code: ModelErrorCode; retryable: boolean; label: string } {
-  if (status === 401 || status === 403)
+  if (status === 401 || status === 403) {
     return { code: "auth_failure", retryable: false, label: "authentication failed" };
-  if (status === 429) return { code: "rate_limit", retryable: true, label: "rate limited" };
-  if (status === 400 || status === 422) return { code: "invalid_request", retryable: false, label: "invalid request" };
-  if (status >= 500) return { code: "provider_unavailable", retryable: true, label: "provider unavailable" };
+  }
+  if (status === 429) {
+    return { code: "rate_limit", retryable: true, label: "rate limited" };
+  }
+  if (status === 400 || status === 422) {
+    return { code: "invalid_request", retryable: false, label: "invalid request" };
+  }
+  if (status >= 500) {
+    return { code: "provider_unavailable", retryable: true, label: "provider unavailable" };
+  }
   return { code: "unknown", retryable: false, label: `unexpected HTTP status ${status}` };
 }
 
@@ -205,7 +226,9 @@ export function createOpenAICompatibleProvider(
 
   async function readBody(response: Response): Promise<unknown> {
     const text = await response.text();
-    if (text.length === 0) return undefined;
+    if (text.length === 0) {
+      return undefined;
+    }
     try {
       return JSON.parse(text) as ChatCompletionPayload;
     } catch {
@@ -401,7 +424,9 @@ export function createOpenAICompatibleProvider(
         error instanceof ModelProviderError &&
         error.retryable &&
         !(request.signal?.aborted ?? false);
-      if (!mayRetry) throw error;
+      if (!mayRetry) {
+        throw error;
+      }
       logger.warn(
         { event: "model_retry", endpoint, code: error.code, policy: config.failurePolicy },
         "Transient model failure; performing the single configured retry",

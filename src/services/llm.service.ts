@@ -49,7 +49,9 @@ export function estimateTokens(text: string): number {
 
 /** Truncate text to roughly `maxTokens` tokens, appending a notice. */
 export function truncate(text: string, maxTokens: number): string {
-  if (estimateTokens(text) <= maxTokens) return text;
+  if (estimateTokens(text) <= maxTokens) {
+    return text;
+  }
   const maxChars = maxTokens * 4;
   return text.slice(0, maxChars) + "\n\n... [truncated: diff/content too large to analyze fully]";
 }

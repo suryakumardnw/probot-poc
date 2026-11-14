@@ -50,7 +50,9 @@ export function runGit(args: readonly string[], options: RunGitOptions = {}): Pr
     ...options.env,
   };
   for (const key of Object.keys(childEnv)) {
-    if (childEnv[key] === undefined) delete childEnv[key];
+    if (childEnv[key] === undefined) {
+      delete childEnv[key];
+    }
   }
 
   return new Promise((resolve, reject) => {

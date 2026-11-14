@@ -44,7 +44,9 @@ function sign(value: string, secret: string): string {
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
+  if (bufA.length !== bufB.length) {
+    return false;
+  }
   return timingSafeEqual(bufA, bufB);
 }
 
@@ -84,20 +86,26 @@ export function buildSetCookieHeader(session: AdminSession, env: Env): string {
     "HttpOnly",
     "SameSite=Lax",
   ];
-  if (env.NODE_ENV === "production") parts.push("Secure");
+  if (env.NODE_ENV === "production") {
+    parts.push("Secure");
+  }
   parts.push(`Expires=${new Date(session.expiresAt).toUTCString()}`);
   return parts.join("; ");
 }
 
 export function buildClearCookieHeader(env: Env): string {
   const parts = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
-  if (env.NODE_ENV === "production") parts.push("Secure");
+  if (env.NODE_ENV === "production") {
+    parts.push("Secure");
+  }
   return parts.join("; ");
 }
 
 /** Parse the Cookie header and extract the admin session cookie value. */
 export function readSessionCookie(cookieHeader: string | undefined): string | undefined {
-  if (!cookieHeader) return undefined;
+  if (!cookieHeader) {
+    return undefined;
+  }
   for (const part of cookieHeader.split(";")) {
     const [name, ...rest] = part.trim().split("=");
     if (name === SESSION_COOKIE) {
@@ -116,14 +124,22 @@ export function getSessionFromCookie(
   env: Env,
   now: number = Date.now(),
 ): AdminSession | null {
-  if (!cookieValue || !env.SESSION_SECRET) return null;
+  if (!cookieValue || !env.SESSION_SECRET) {
+    return null;
+  }
   const dot = cookieValue.lastIndexOf(".");
-  if (dot <= 0) return null;
+  if (dot <= 0) {
+    return null;
+  }
   const id = cookieValue.slice(0, dot);
   const signature = cookieValue.slice(dot + 1);
-  if (!safeEqual(signature, sign(id, env.SESSION_SECRET))) return null;
+  if (!safeEqual(signature, sign(id, env.SESSION_SECRET))) {
+    return null;
+  }
   const session = sessions.get(id);
-  if (!session) return null;
+  if (!session) {
+    return null;
+  }
   if (session.expiresAt <= now) {
     sessions.delete(id);
     return null;

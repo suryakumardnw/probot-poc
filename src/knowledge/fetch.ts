@@ -74,9 +74,13 @@ export async function resolveCommitSha(
   const response = await fetcher(`${DEFAULT_GITHUB_API}/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`, {
     timeoutMs,
   });
-  if (response.status !== 200) throw new Error(`resolving ref '${ref}' failed with HTTP ${response.status}`);
+  if (response.status !== 200) {
+    throw new Error(`resolving ref '${ref}' failed with HTTP ${response.status}`);
+  }
   const body = JSON.parse(response.text) as { sha?: string };
-  if (!body.sha || !/^[0-9a-f]{40}$/.test(body.sha)) throw new Error(`ref '${ref}' did not resolve to a commit SHA`);
+  if (!body.sha || !/^[0-9a-f]{40}$/.test(body.sha)) {
+    throw new Error(`ref '${ref}' did not resolve to a commit SHA`);
+  }
   return body.sha;
 }
 
@@ -91,10 +95,13 @@ export async function fetchRepoTree(
   const response = await fetcher(`${DEFAULT_GITHUB_API}/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`, {
     timeoutMs,
   });
-  if (response.status !== 200)
+  if (response.status !== 200) {
     throw new Error(`fetching tree of ${owner}/${repo}@${sha} failed with HTTP ${response.status}`);
+  }
   const body = JSON.parse(response.text) as { tree?: GitHubTreeEntry[] };
-  if (!Array.isArray(body.tree)) throw new Error("unexpected tree response");
+  if (!Array.isArray(body.tree)) {
+    throw new Error("unexpected tree response");
+  }
   return body.tree;
 }
 
@@ -111,9 +118,15 @@ export async function fetchFileContent(
     `${DEFAULT_GITHUB_API}/repos/${owner}/${repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}?ref=${sha}`,
     { timeoutMs },
   );
-  if (response.status !== 200) throw new Error(`fetching '${filePath}' failed with HTTP ${response.status}`);
+  if (response.status !== 200) {
+    throw new Error(`fetching '${filePath}' failed with HTTP ${response.status}`);
+  }
   const body = JSON.parse(response.text) as { content?: string; encoding?: string };
-  if (typeof body.content !== "string") throw new Error(`'${filePath}' has no content`);
-  if (body.encoding !== "base64") throw new Error(`'${filePath}' has unsupported encoding '${body.encoding}'`);
+  if (typeof body.content !== "string") {
+    throw new Error(`'${filePath}' has no content`);
+  }
+  if (body.encoding !== "base64") {
+    throw new Error(`'${filePath}' has unsupported encoding '${body.encoding}'`);
+  }
   return Buffer.from(body.content, "base64").toString("utf8");
 }

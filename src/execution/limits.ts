@@ -18,7 +18,9 @@ const execFileAsync = promisify(execFile);
 /** Parse "2Gi" | "512Mi" | "1G" | "500M" into bytes. */
 export function resolveQuantity(value: string): number | null {
   const match = /^(\d+)(Gi|Mi|G|M)$/.exec(value);
-  if (!match) return null;
+  if (!match) {
+    return null;
+  }
   const n = Number(match[1]);
   switch (match[2]) {
     case "Gi":
@@ -68,7 +70,9 @@ export function createDiskQuotaWatcher(
     let total = 0;
     for (const path of paths) {
       const usage = await diskUsageBytes(path);
-      if (usage === null) return null;
+      if (usage === null) {
+        return null;
+      }
       total += usage;
     }
     return total;
@@ -90,13 +94,17 @@ export function createDiskQuotaWatcher(
     async exceeded() {
       await started;
       const current = await measure();
-      if (current === null) return { exceeded: false, usageBytes: null };
+      if (current === null) {
+        return { exceeded: false, usageBytes: null };
+      }
       const usage = Math.max(0, current - baseline);
       return { exceeded: quotaBytes > 0 && usage > quotaBytes, usageBytes: usage };
     },
     stop() {
       stopped = true;
-      if (timer) clearInterval(timer);
+      if (timer) {
+        clearInterval(timer);
+      }
     },
   };
 }

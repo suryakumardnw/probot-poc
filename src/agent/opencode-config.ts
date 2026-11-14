@@ -100,7 +100,9 @@ export function buildPermissionRules(config: AgentRuntimeConfigSource): Record<s
     const actions = new Set<string>();
     for (const tool of config.agent.tools.enabled) {
       const action = TOOL_ACTION_MAP[tool];
-      if (action) actions.add(action);
+      if (action) {
+        actions.add(action);
+      }
     }
     for (const action of actions) {
       if (action === "read") {
@@ -177,13 +179,21 @@ export function buildChildEnv(
 ): NodeJS.ProcessEnv {
   const child: NodeJS.ProcessEnv = {};
   for (const name of CHILD_ENV_ALLOWLIST) {
-    if (env[name] !== undefined) child[name] = env[name];
+    if (env[name] !== undefined) {
+      child[name] = env[name];
+    }
   }
   // Provider credential + endpoint, referenced by configuration `env` field.
   const keyName = config.provider.apiKeyEnv;
-  if (env[keyName] !== undefined) child[keyName] = env[keyName];
-  if (env.MODEL_BASE_URL !== undefined) child.MODEL_BASE_URL = env.MODEL_BASE_URL;
-  if (env.MODEL_NAME !== undefined) child.MODEL_NAME = env.MODEL_NAME;
+  if (env[keyName] !== undefined) {
+    child[keyName] = env[keyName];
+  }
+  if (env.MODEL_BASE_URL !== undefined) {
+    child.MODEL_BASE_URL = env.MODEL_BASE_URL;
+  }
+  if (env.MODEL_NAME !== undefined) {
+    child.MODEL_NAME = env.MODEL_NAME;
+  }
 
   // Agent tracing credentials (no-op unless a tracing plugin is enabled).
   const agentTracing = config.observability?.agentTracing;
@@ -192,7 +202,9 @@ export function buildChildEnv(
     const isLangfuse = /langfuse/i.test(plugin);
     const allowlist = isLangfuse ? LANGFUSE_ENV_ALLOWLIST : OPENCODE_TRACING_ENV_ALLOWLIST;
     for (const name of allowlist) {
-      if (env[name] !== undefined) child[name] = env[name];
+      if (env[name] !== undefined) {
+        child[name] = env[name];
+      }
     }
     if (isLangfuse && correlation?.reviewId) {
       child.LANGFUSE_USER_ID = `review:${correlation.reviewId}`;
@@ -228,9 +240,15 @@ export function buildTraceTags(input: {
   pullRequestNumber?: number;
 }): string[] {
   const tags: string[] = [];
-  if (input.reviewId) tags.push(`review:${input.reviewId}`);
-  if (input.repository) tags.push(`repository:${input.repository}`);
-  if (typeof input.pullRequestNumber === "number") tags.push(`pr:${input.pullRequestNumber}`);
+  if (input.reviewId) {
+    tags.push(`review:${input.reviewId}`);
+  }
+  if (input.repository) {
+    tags.push(`repository:${input.repository}`);
+  }
+  if (typeof input.pullRequestNumber === "number") {
+    tags.push(`pr:${input.pullRequestNumber}`);
+  }
   return tags;
 }
 
@@ -246,8 +264,12 @@ export function buildSpanAttributes(input: {
   pullRequestNumber?: number;
 }): string {
   const attributes: string[] = [];
-  if (input.reviewId) attributes.push(`review.id=${input.reviewId}`);
-  if (input.repository) attributes.push(`repository=${input.repository}`);
+  if (input.reviewId) {
+    attributes.push(`review.id=${input.reviewId}`);
+  }
+  if (input.repository) {
+    attributes.push(`repository=${input.repository}`);
+  }
   if (typeof input.pullRequestNumber === "number") {
     attributes.push(`pr.number=${input.pullRequestNumber}`);
   }
@@ -270,7 +292,9 @@ export function buildAgentTracingPlugin(
   input: AgentTracingInput,
 ): { package: string; options: Record<string, unknown> } | undefined {
   const agentTracing = input.config.observability?.agentTracing;
-  if (!agentTracing?.enabled) return undefined;
+  if (!agentTracing?.enabled) {
+    return undefined;
+  }
 
   const options: Record<string, unknown> = {
     ...agentTracing.options,
@@ -279,14 +303,18 @@ export function buildAgentTracingPlugin(
     enabled: true,
   };
   const tags = buildTraceTags(input);
-  if (tags.length > 0) options.tags = tags;
+  if (tags.length > 0) {
+    options.tags = tags;
+  }
   const spanAttributes = [
     typeof agentTracing.options?.spanAttributes === "string" ? agentTracing.options.spanAttributes : "",
     buildSpanAttributes(input),
   ]
     .filter((value) => value.length > 0)
     .join(",");
-  if (spanAttributes.length > 0) options.spanAttributes = spanAttributes;
+  if (spanAttributes.length > 0) {
+    options.spanAttributes = spanAttributes;
+  }
 
   return {
     package: agentTracing.plugin ?? DEFAULT_AGENT_TRACING_PLUGIN,
@@ -352,6 +380,8 @@ export function buildSessionConfig(input: OpenCodeSessionConfigInput): Record<st
  */
 export function resolveModelId(config: AgentRuntimeConfigSource, env: NodeJS.ProcessEnv): string {
   const fromEnv = env.MODEL_NAME?.trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) {
+    return fromEnv;
+  }
   return config.provider.model;
 }

@@ -43,11 +43,17 @@ export function registerIssueCommentHandlers(app: Probot): void {
     const { issue, comment, repository } = context.payload;
 
     // Only pull requests.
-    if (!issue.pull_request) return;
+    if (!issue.pull_request) {
+      return;
+    }
     // Closed/merged pull requests are not re-reviewed via comments.
-    if (issue.state === "closed") return;
+    if (issue.state === "closed") {
+      return;
+    }
     // Never react to bots (including our own app) to avoid loops.
-    if (comment.user?.type === "Bot") return;
+    if (comment.user?.type === "Bot") {
+      return;
+    }
     const installation = context.payload.installation;
     if (!installation) {
       context.log.debug({ issue: issue.number }, "issue_comment without installation metadata; ignoring");
@@ -174,7 +180,9 @@ export function registerIssueCommentHandlers(app: Probot): void {
         );
       }
     }
-    if (!headSha) return;
+    if (!headSha) {
+      return;
+    }
 
     try {
       const result = await ingestReviewRequest({

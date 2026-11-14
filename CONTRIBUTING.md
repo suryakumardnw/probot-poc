@@ -47,7 +47,8 @@ Run the same commands locally that CI runs. Everything must pass before review.
 | `npm run typecheck`                    | Run `tsc --noEmit`.                                        |
 | `npm test`                             | Run every Vitest suite; needs Postgres, Redis, and Docker. |
 | `npm run build`                        | Compile `src/` to `lib/`.                                  |
-| `npm run metrics:quality`              | Print the refactor quality metrics (Markdown + JSON).      |
+| `npm run security:audit`               | Fail on new high/critical dependency advisories.           |
+| `npm run metrics:quality`              | Print quality metrics (informational; CI runs this too).   |
 | `npm run metrics:quality -- --details` | List every metric match site.                              |
 | `npm run db:generate`                  | Regenerate the Prisma client.                              |
 | `npm run db:migrate`                   | Apply migrations (`prisma migrate deploy`).                |
@@ -56,8 +57,12 @@ Run the same commands locally that CI runs. Everything must pass before review.
 The full local gate is:
 
 ```bash
-npm run format:check && npm run lint && npm run typecheck && npm test && npm run build
+npm run format:check && npm run lint && npm run typecheck && npm run metrics:quality && npm test && npm run build && npm run security:audit
 ```
+
+`metrics:quality` is informational for this phase: it records the refactor
+counts and fails only if the metrics script itself errors. No metric thresholds
+are enforced yet. CI runs the same command.
 
 ## Commit messages
 
@@ -114,6 +119,10 @@ These rules apply to every PR:
   `@typescript-eslint/no-non-null-assertion` until PR 4.2, and a fixed list of
   source files has `no-non-null-assertion` disabled until the same PR; see
   `eslint.config.mjs`.
+- **Lint exceptions are explicit.** `deploy/inspect-key.js` is a one-off
+  diagnostic copied into the worker container and runs as CommonJS outside the
+  package, so `eslint.config.mjs` permits `console` and `require` for that file
+  only. It is not application code.
 - **Report metrics for structural PRs.** Include `npm run metrics:quality`
   before/after counts in the PR description.
 - **Keep dependencies still.** New dependencies need a justification; tooling
@@ -149,12 +158,16 @@ GitHub Actions runs four jobs on every pull request:
 - `Test`: Postgres 16 and Redis 7 service containers, migrations, `npm test`,
   and `npm run build`.
 - `Commitlint`: the PR title and every commit in the branch.
-- `Security`: `npm audit --audit-level=high` (advisory while the pre-existing
-  advisories are upgraded) and a gitleaks secret scan.
+- `Security`: `npm run security:audit` and a gitleaks secret scan.
+  `security:audit` runs `npm audit --audit-level=high` and fails on any
+  high/critical advisory that is not in
+  [`scripts/npm-audit-allowlist.json`](scripts/npm-audit-allowlist.json). The
+  four current exceptions and their follow-ups are listed in
+  [docs/security-audit-follow-ups.md](docs/security-audit-follow-ups.md).
 
-`Quality`, `Test`, and `Commitlint` must pass before merge. Repository
-administrators must configure branch protection to require those checks; the
-workflow cannot enforce that setting itself.
+`Quality`, `Test`, `Commitlint`, and `Security` must pass before merge.
+Repository administrators must configure branch protection to require those
+checks; the workflow cannot enforce that setting itself.
 
 ## Resources
 

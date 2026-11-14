@@ -107,9 +107,13 @@ export class ExecutionService {
     const watcher = createDiskQuotaWatcher([request.workspacePath], policy.diskQuotaBytes, 500);
     try {
       const result = await this.executor.execute(request, policy);
-      if (result.diskQuotaExceeded) return result;
+      if (result.diskQuotaExceeded) {
+        return result;
+      }
       const { exceeded } = await watcher.exceeded();
-      if (!exceeded) return result;
+      if (!exceeded) {
+        return result;
+      }
       return {
         ...result,
         decision: "error",

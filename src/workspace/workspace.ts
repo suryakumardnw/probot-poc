@@ -333,11 +333,15 @@ export class ReviewWorkspaceService {
     if (input.baseSha) {
       // Exact base SHA from the webhook payload.
       const direct = await fetchBase(input.baseSha, input.baseSha);
-      if (direct) return direct;
+      if (direct) {
+        return direct;
+      }
     }
     if (input.baseRef) {
       const fromRef = await fetchBase(`+refs/heads/${input.baseRef}:refs/review/base`, "refs/review/base");
-      if (fromRef) return fromRef;
+      if (fromRef) {
+        return fromRef;
+      }
     }
     throw new DiffFailedError(
       `Could not resolve base commit (baseSha=${input.baseSha ?? "unknown"}, baseRef=${input.baseRef ?? "unknown"})`,
@@ -375,7 +379,9 @@ export class ReviewWorkspaceService {
     };
 
     const direct = await tryMergeBase();
-    if (direct) return direct;
+    if (direct) {
+      return direct;
+    }
 
     let depth = Math.max(1, policy.cloneDepth);
     while (depth < MAX_MERGE_BASE_DEPTH) {
@@ -398,7 +404,9 @@ export class ReviewWorkspaceService {
         return null;
       }
       const found = await tryMergeBase();
-      if (found) return found;
+      if (found) {
+        return found;
+      }
     }
     return null;
   }
@@ -446,7 +454,9 @@ export class ReviewWorkspaceService {
    */
   async cleanupAfterFailure(reviewId: string, errorMessage?: string): Promise<void> {
     const { prisma } = this.opts;
-    if (!prisma) return;
+    if (!prisma) {
+      return;
+    }
     const rows = await prisma.reviewWorkspace.findMany({ where: { reviewId, status: "active" } });
     for (const row of rows) {
       await this.removeDirectory(row.path).catch(() => {
@@ -470,7 +480,9 @@ export class ReviewWorkspaceService {
    */
   async sweepExpired(retentionHours: number): Promise<number> {
     const { prisma } = this.opts;
-    if (!prisma || retentionHours <= 0) return 0;
+    if (!prisma || retentionHours <= 0) {
+      return 0;
+    }
     const cutoff = new Date(Date.now() - retentionHours * 3_600_000);
     const stale = await prisma.reviewWorkspace.findMany({
       where: { status: "active", createdAt: { lt: cutoff } },

@@ -87,7 +87,9 @@ export class RetrievalBudget {
   }
 
   consume(): boolean {
-    if (this.exhausted) return false;
+    if (this.exhausted) {
+      return false;
+    }
     this.used++;
     return true;
   }
@@ -104,7 +106,9 @@ export class RetrievalBudget {
  * are always rejected.
  */
 export function parseToolRequests(value: unknown, budget: RetrievalBudget): ToolRequest[] {
-  if (value === undefined || value === null) return [];
+  if (value === undefined || value === null) {
+    return [];
+  }
   if (!Array.isArray(value)) {
     budget.violation("tool_requests: not an array; ignored");
     return [];
@@ -126,8 +130,9 @@ export function parseToolRequests(value: unknown, budget: RetrievalBudget): Tool
     // and native tool names arrive as read/glob/grep. Infer the safe read-only
     // tool instead of discarding the request.
     if (tool === undefined) {
-      if (typeof queryValue === "string") tool = "search_code";
-      else if (typeof pathValue === "string") {
+      if (typeof queryValue === "string") {
+        tool = "search_code";
+      } else if (typeof pathValue === "string") {
         tool = /diff/i.test(pathValue) ? "get_diff" : "read_file";
       }
     }
@@ -158,8 +163,12 @@ export function parseToolRequests(value: unknown, budget: RetrievalBudget): Tool
       tool: mappedTool,
       includeDiff: candidate.includeDiff === true || args.includeDiff === true,
     };
-    if (path !== undefined) request.path = path;
-    if (query !== undefined) request.query = query;
+    if (path !== undefined) {
+      request.path = path;
+    }
+    if (query !== undefined) {
+      request.query = query;
+    }
     requests.push(request);
   }
   return requests;
@@ -178,7 +187,9 @@ function renderResult(result: ToolResult): string {
 
 /** Recursively collect regular files under a directory, skipping noise dirs. */
 async function collectSearchFiles(dir: string, out: string[], depth: number): Promise<void> {
-  if (depth > 30 || out.length >= 2_000) return;
+  if (depth > 30 || out.length >= 2_000) {
+    return;
+  }
   let entries;
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
@@ -187,8 +198,12 @@ async function collectSearchFiles(dir: string, out: string[], depth: number): Pr
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    if (SEARCH_SKIP_DIRS.has(entry.name)) continue;
-    if (entry.isSymbolicLink()) continue;
+    if (SEARCH_SKIP_DIRS.has(entry.name)) {
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      continue;
+    }
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       await collectSearchFiles(full, out, depth + 1);
@@ -213,14 +228,20 @@ async function searchCode(
   const start = resolveWorkspacePath(workspacePath, relativePath);
   const stat = await fs.stat(start);
   const files: string[] = [];
-  if (stat.isFile()) files.push(start);
-  else if (stat.isDirectory()) await collectSearchFiles(start, files, 0);
-  else return `No matches for '${query}'.`;
+  if (stat.isFile()) {
+    files.push(start);
+  } else if (stat.isDirectory()) {
+    await collectSearchFiles(start, files, 0);
+  } else {
+    return `No matches for '${query}'.`;
+  }
 
   const needle = query.toLowerCase();
   const matches: string[] = [];
   for (const full of files) {
-    if (matches.length >= MAX_SEARCH_MATCHES) break;
+    if (matches.length >= MAX_SEARCH_MATCHES) {
+      break;
+    }
     const relative = path.relative(workspacePath, full).split(path.sep).join("/") || relativePath;
     let file;
     try {
@@ -228,12 +249,16 @@ async function searchCode(
     } catch {
       continue;
     }
-    if (file.encoding !== "utf-8" || file.text === undefined) continue;
+    if (file.encoding !== "utf-8" || file.text === undefined) {
+      continue;
+    }
     const lines = file.text.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (lines[i]!.toLowerCase().includes(needle)) {
         matches.push(`${relative}:${i + 1}: ${lines[i]!.trim().slice(0, 300)}`);
-        if (matches.length >= MAX_SEARCH_MATCHES) break;
+        if (matches.length >= MAX_SEARCH_MATCHES) {
+          break;
+        }
       }
     }
   }
@@ -314,6 +339,8 @@ export async function fulfillToolRequests(
 
 /** Render fulfilled results as the next instruction's context section. */
 export function renderToolContext(results: ToolResult[]): string {
-  if (results.length === 0) return "";
+  if (results.length === 0) {
+    return "";
+  }
   return results.map(renderResult).join("\n\n");
 }

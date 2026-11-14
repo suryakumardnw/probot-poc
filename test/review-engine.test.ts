@@ -612,7 +612,9 @@ describe("review result schema", () => {
     });
     const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [withNullLine] });
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
+    if (parsed.success) {
+      expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
+    }
   });
 
   test("zero evidence line is treated as unspecified", () => {
@@ -621,7 +623,9 @@ describe("review result schema", () => {
     });
     const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [withZeroLine] });
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
+    if (parsed.success) {
+      expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
+    }
   });
 
   test("null optional finding fields are normalized to absent", () => {
@@ -667,7 +671,9 @@ describe("review result schema", () => {
       summary: null,
     });
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.summary).toBe("");
+    if (parsed.success) {
+      expect(parsed.data.summary).toBe("");
+    }
   });
 
   test("missing schemaVersion and finding lists use safe defaults", () => {

@@ -56,7 +56,9 @@ function makeFakeModule(options: FakeOptions = {}) {
             }),
             get: vi.fn(async (input: SdkSessionRef) => {
               state.gets.push(input);
-              if (options.getError) throw options.getError;
+              if (options.getError) {
+                throw options.getError;
+              }
               return { id: "sdksess_1", time: { idle: 1 } };
             }),
             prompt: vi.fn(async (input: { sessionID: string; text: string }) => {

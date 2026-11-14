@@ -48,7 +48,9 @@ const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
  */
 export function parseUnifiedDiff(diff: string): Map<string, ParsedDiffFile> {
   const files = new Map<string, ParsedDiffFile>();
-  if (!diff) return files;
+  if (!diff) {
+    return files;
+  }
 
   let current: ParsedDiffFile | null = null;
   let hunk: DiffHunk | null = null;
@@ -73,10 +75,14 @@ export function parseUnifiedDiff(diff: string): Map<string, ParsedDiffFile> {
             hunks: [],
           }
         : null;
-      if (current) files.set(current.path, current);
+      if (current) {
+        files.set(current.path, current);
+      }
       continue;
     }
-    if (!current) continue;
+    if (!current) {
+      continue;
+    }
     if (raw.startsWith("new file mode")) {
       current.isNewFile = true;
       continue;
@@ -114,7 +120,9 @@ export function parseUnifiedDiff(diff: string): Map<string, ParsedDiffFile> {
       newLine = hunk.newStart;
       continue;
     }
-    if (!hunk) continue;
+    if (!hunk) {
+      continue;
+    }
     if (raw.startsWith("+")) {
       hunk.lines.push({ type: "added", newLine, content: raw.slice(1) });
       newLine += 1;
@@ -136,7 +144,9 @@ export function newSideLines(file: ParsedDiffFile): Set<number> {
   const lines = new Set<number>();
   for (const hunk of file.hunks) {
     for (const line of hunk.lines) {
-      if (line.newLine !== undefined) lines.add(line.newLine);
+      if (line.newLine !== undefined) {
+        lines.add(line.newLine);
+      }
     }
   }
   return lines;
@@ -147,7 +157,9 @@ export function oldSideLines(file: ParsedDiffFile): Set<number> {
   const lines = new Set<number>();
   for (const hunk of file.hunks) {
     for (const line of hunk.lines) {
-      if (line.oldLine !== undefined) lines.add(line.oldLine);
+      if (line.oldLine !== undefined) {
+        lines.add(line.oldLine);
+      }
     }
   }
   return lines;
@@ -174,13 +186,21 @@ export function resolveInlinePosition(
   line: number,
 ): InlineResolution {
   const file = diffFiles.get(filePath);
-  if (!file) return { kind: "file_not_in_diff" };
-  if (file.isBinary) return { kind: "binary_file" };
-  if (file.isDeletedFile) return { kind: "deleted_file" };
+  if (!file) {
+    return { kind: "file_not_in_diff" };
+  }
+  if (file.isBinary) {
+    return { kind: "binary_file" };
+  }
+  if (file.isDeletedFile) {
+    return { kind: "deleted_file" };
+  }
   if (newSideLines(file).has(line)) {
     return { kind: "anchored", position: { path: filePath, line, side: "RIGHT" } };
   }
   // The line exists only on the old side (deleted) or outside every hunk.
-  if (oldSideLines(file).has(line)) return { kind: "deleted_line" };
+  if (oldSideLines(file).has(line)) {
+    return { kind: "deleted_line" };
+  }
   return { kind: "line_not_in_diff" };
 }

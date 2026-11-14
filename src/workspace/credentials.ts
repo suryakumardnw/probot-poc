@@ -88,6 +88,8 @@ export class AppInstallationTokenProvider implements InstallationTokenProvider {
  */
 export function buildCloneUrl(repositoryFullName: string, token: string, githubBaseUrl = "https://github.com"): string {
   const base = githubBaseUrl.replace(/\/$/, "");
-  if (!token) return `${base}/${repositoryFullName}.git`;
+  if (!token) {
+    return `${base}/${repositoryFullName}.git`;
+  }
   return `https://x-access-token:${encodeURIComponent(token)}@${base.replace(/^https?:\/\//, "")}/${repositoryFullName}.git`;
 }

@@ -196,7 +196,9 @@ export async function processReviewJob(
       },
       "Review retrieval failed",
     );
-    if (span) endSpan(span, error);
+    if (span) {
+      endSpan(span, error);
+    }
     getMetricsRegistry().reviewsFailed.inc(1, { failure_class: failureClass });
     await deps.service.cleanupAfterFailure(job.reviewId, message).catch(() => {
       /* cleanup is best-effort */
@@ -235,7 +237,9 @@ export function startReviewWorker(redisUrl: string, deps: ProcessReviewJobDeps):
   const worker = new Worker<ReviewJobPayload>(
     REVIEW_QUEUE_NAME,
     async (job) => {
-      if (!job.id) throw new Error("BullMQ job has no id");
+      if (!job.id) {
+        throw new Error("BullMQ job has no id");
+      }
       return processReviewJob(job.id, job.data, deps);
     },
     { connection, concurrency: deps.concurrency },
@@ -263,7 +267,9 @@ export function createDefaultTokenProvider(): InstallationTokenProvider {
   let privateKey = process.env.GITHUB_PRIVATE_KEY;
   if (!privateKey) {
     const privateKeyPath = process.env.GITHUB_PRIVATE_KEY_PATH;
-    if (privateKeyPath) privateKey = fs.readFileSync(privateKeyPath, "utf-8");
+    if (privateKeyPath) {
+      privateKey = fs.readFileSync(privateKeyPath, "utf-8");
+    }
   }
   if (!privateKey && process.env.GITHUB_PRIVATE_KEY_BASE64) {
     privateKey = Buffer.from(process.env.GITHUB_PRIVATE_KEY_BASE64.replace(/\s+/g, ""), "base64").toString("utf8");

@@ -74,7 +74,9 @@ export const findingSchema = z.object({
 
 export const reviewResultSchema = z.preprocess(
   (raw) => {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      return raw;
+    }
     const value = { ...(raw as Record<string, unknown>) };
     // The model is shown snake_case keys in the prompt template; accept both
     // spellings so the validation boundary stays strict on content, not casing.
@@ -85,13 +87,19 @@ export const reviewResultSchema = z.preprocess(
     // Models sometimes omit or null an empty list. Normalize it to the
     // documented empty-array shape instead of failing the whole review.
     for (const key of ["findings", "uncertainFindings", "conventions"] as const) {
-      if (value[key] === null || value[key] === undefined) value[key] = [];
+      if (value[key] === null || value[key] === undefined) {
+        value[key] = [];
+      }
     }
     // The engine already falls back to the analysis objective; accept a
     // missing/null summary rather than failing the whole review.
-    if (value.summary === null || value.summary === undefined) value.summary = "";
+    if (value.summary === null || value.summary === undefined) {
+      value.summary = "";
+    }
     // schemaVersion is a constant in this protocol; normalize omission.
-    if (value.schemaVersion === null || value.schemaVersion === undefined) value.schemaVersion = 1;
+    if (value.schemaVersion === null || value.schemaVersion === undefined) {
+      value.schemaVersion = 1;
+    }
     return value;
   },
   z
@@ -114,7 +122,9 @@ export type ParsedReviewResult = z.infer<typeof reviewResultSchema>;
 /** Lenient schema for the analysis-stage answer (stage 1/2 combined call). */
 export const analysisOutputSchema = z.preprocess(
   (input) => {
-    if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      return input;
+    }
     // Models occasionally answer an analysis stage with reporting-stage keys
     // (`summary`, `findings`, `uncertain_findings`). These are benign drift,
     // not a failure: fold the findings into the analysis list and keep the
@@ -124,10 +134,14 @@ export const analysisOutputSchema = z.preprocess(
     const preliminary = Array.isArray(value.preliminary_findings) ? [...(value.preliminary_findings as unknown[])] : [];
     for (const key of ["findings", "uncertain_findings"] as const) {
       const extra = value[key];
-      if (Array.isArray(extra)) preliminary.push(...extra);
+      if (Array.isArray(extra)) {
+        preliminary.push(...extra);
+      }
       delete value[key];
     }
-    if (preliminary.length > 0) value.preliminary_findings = preliminary;
+    if (preliminary.length > 0) {
+      value.preliminary_findings = preliminary;
+    }
     if ((typeof value.objective !== "string" || value.objective.length === 0) && typeof value.summary === "string") {
       value.objective = value.summary;
     }

@@ -27,19 +27,27 @@ function matchFindings(predicted: Finding[], expected: ExpectedFinding[]): Match
   const candidates: Array<{ e: number; p: number; delta: number }> = [];
   for (let e = 0; e < expected.length; e++) {
     for (let p = 0; p < predicted.length; p++) {
-      if (usedPredicted.has(p)) continue;
+      if (usedPredicted.has(p)) {
+        continue;
+      }
       const exp = expected[e];
       const pred = predicted[p];
-      if (pred.category !== exp.category || pred.file !== exp.file) continue;
+      if (pred.category !== exp.category || pred.file !== exp.file) {
+        continue;
+      }
       const tolerance = exp.lineTolerance ?? DEFAULT_LINE_TOLERANCE;
       const delta = Math.abs(pred.line - exp.line);
-      if (delta <= tolerance) candidates.push({ e, p, delta });
+      if (delta <= tolerance) {
+        candidates.push({ e, p, delta });
+      }
     }
   }
   // Greedy: closest line pairs first.
   candidates.sort((a, b) => a.delta - b.delta);
   for (const c of candidates) {
-    if (usedPredicted.has(c.p) || matches.some((m) => m.expected === c.e)) continue;
+    if (usedPredicted.has(c.p) || matches.some((m) => m.expected === c.e)) {
+      continue;
+    }
     usedPredicted.add(c.p);
     matches.push({ expected: c.e, predicted: c.p, lineDelta: c.delta });
   }
@@ -103,7 +111,9 @@ export function scoreCase(
 
 /** Nearest-rank percentile of a numeric list (null when empty). */
 export function percentile(values: number[], p: number): number | null {
-  if (values.length === 0) return null;
+  if (values.length === 0) {
+    return null;
+  }
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
   return Math.max(0, Math.floor(sorted[index]));

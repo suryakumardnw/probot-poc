@@ -60,7 +60,6 @@ export default tseslint.config(
           varsIgnorePattern: "^_",
         },
       ],
-      curly: ["error", "all"],
       eqeqeq: ["error", "always", { null: "ignore" }],
       "import/no-cycle": ["error", { maxDepth: Infinity }],
       "import/order": [
@@ -131,4 +130,12 @@ export default tseslint.config(
     },
   },
   prettier,
+  {
+    // eslint-config-prettier disables `curly` because the two tools can
+    // disagree about one-line bodies. Re-enable it after Prettier so braces are
+    // still mandatory; Prettier formats the resulting blocks.
+    rules: {
+      curly: ["error", "all"],
+    },
+  },
 );

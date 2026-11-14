@@ -15,7 +15,9 @@ export async function handlePullRequest(
   const { pull_request: pr, repository } = context.payload;
 
   // Skip bots (including our own app) and drafts to avoid loops/noise.
-  if (pr.draft || pr.user?.type === "Bot") return;
+  if (pr.draft || pr.user?.type === "Bot") {
+    return;
+  }
 
   context.log.info(`Reviewing PR #${pr.number} in ${repository.full_name}`);
 
