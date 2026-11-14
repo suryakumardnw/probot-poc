@@ -476,7 +476,7 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
     env.XDG_DATA_HOME = path.join(state.dir, "data");
     env.XDG_STATE_HOME = path.join(state.dir, "state");
 
-    let client: SdkHostClient;
+    let client: SdkHostClient | undefined;
     try {
       client = this.createHostClient({
         configContent: JSON.stringify(inlineConfig),
@@ -494,9 +494,14 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
       state.client = client;
       await client.start();
     } catch (cause) {
-      // A failed start must not leave a half-registered client behind. At this
-      // point state.client is either the client that just failed to start, or
-      // (if createHostClient threw before returning) already undefined.
+      // A failed start must not leave a half-registered client behind. The
+      // real client may have spawned a child before its create handshake
+      // timed out; kill it before dropping the only reference.
+      try {
+        client?.kill();
+      } catch {
+        /* best-effort cleanup */
+      }
       state.client = undefined;
       if (cause instanceof AgentRuntimeError) {
         // Preserve the normalized code/message but scrub/truncate the detail:
@@ -514,6 +519,11 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
       });
     }
 
+    if (!client) {
+      throw new AgentRuntimeError("spawn", "failed to create opencode sdk host", {
+        sessionId: session.id,
+      });
+    }
     this.logger?.info("agent sdk host created", {
       event: "agent_sdk_host_created",
       sessionId: session.id,

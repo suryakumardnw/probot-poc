@@ -53,6 +53,8 @@ describe("SDK permission rules", () => {
     const rules = buildSdkPermissions(baseConfig);
     for (const path of [".env", "config/prod.env", "prod.env.local", "credentials/token.txt", ".git-credentials"]) {
       expect(evaluateSdkPermission(rules, "read", path)).toBe("deny");
+      expect(evaluateSdkPermission(rules, "grep", path)).toBe("deny");
+      expect(evaluateSdkPermission(rules, "glob", path)).toBe("deny");
     }
   });
 

@@ -59,15 +59,22 @@ export function buildSdkPermissions(config: AgentRuntimeConfigSource): SdkPermis
     }
   }
 
-  // 3. Secret paths are denied even if reads were allowed above.
-  rules.push(
-    { action: "read", resource: ".env", effect: "deny" },
-    { action: "read", resource: "*.env", effect: "deny" },
-    { action: "read", resource: "*.env.*", effect: "deny" },
-    { action: "read", resource: "*credential*", effect: "deny" },
-    { action: "read", resource: "*credentials*", effect: "deny" },
-    { action: "read", resource: ".git-credentials", effect: "deny" },
-  );
+  // 3. Secret paths are denied even if reads/grep/glob were allowed above.
+  // grep reads file content and glob reveals path existence, so the denial
+  // must apply to every read-only action that can observe workspace files.
+  const secretResources = [
+    ".env",
+    "*.env",
+    "*.env.*",
+    "*credential*",
+    "*credentials*",
+    ".git-credentials",
+  ];
+  for (const action of ["read", "grep", "glob"]) {
+    for (const resource of secretResources) {
+      rules.push({ action, resource, effect: "deny" });
+    }
+  }
 
   // 4. Confine the agent to the review workspace.
   rules.push({ action: "external_directory", resource: "*", effect: "deny" });

@@ -700,6 +700,8 @@ describe("SDK secret hygiene", () => {
       expect(error.detail).not.toContain(secret);
       expect(error.detail).toContain("[redacted]");
       expect(JSON.stringify(lines)).not.toContain(secret);
+      // A failed start must clean up the child handle before dropping it.
+      expect(harness.state.clients[0]?.killCalls).toBeGreaterThanOrEqual(1);
 
       await runtime.terminate(session);
     } finally {
