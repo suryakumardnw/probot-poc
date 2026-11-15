@@ -16,8 +16,6 @@ const LEGACY_ELEMENT_PATHS = [
   "src/config",
   "src/controllers",
   "src/eval",
-  "src/execution",
-  "src/knowledge",
   "src/lib",
   "src/models",
   "src/observability",
@@ -46,10 +44,12 @@ const PROCESS_ENV_ALLOWED_FILES = [
   "src/admin/**/*.ts",
   // TODO(PR 3.9; PR 3.12 final): agent runtimes move to platform/agents.
   "src/agent/**/*.ts",
-  // TODO(PR 3.8; PR 3.12 final): execution moves into a module.
-  "src/execution/**/*.ts",
-  // TODO(PR 3.8; PR 3.12 final): knowledge moves into a module.
-  "src/knowledge/**/*.ts",
+  // TODO(PR 3.12): the execution module still reads sandbox and process
+  // environment settings.
+  "src/modules/execution/**/*.ts",
+  // TODO(PR 3.12): the knowledge module still reads GitHub tokens from the
+  // environment in its fetcher.
+  "src/modules/knowledge/**/*.ts",
   // TODO(PR 3.9; PR 3.12 final): model adapters move to platform/models.
   "src/models/**/*.ts",
   // TODO(PR 3.10; PR 3.12 final): observability moves to platform/observability.
@@ -79,10 +79,12 @@ const PRISMA_ALLOWED_FILES = [
   "src/lib/health.ts",
   // TODO(PR 3.10): the composition root should consume platform/db factories.
   "src/bootstrap/clients.ts",
-  // TODO(PR 3.8): knowledge moves into a module; PR 3.12 removes this.
-  "src/knowledge/materialize.ts",
-  // TODO(PR 3.8): execution moves into a module; PR 3.12 removes this.
-  "src/execution/service.ts",
+  // TODO(PR 3.12): the knowledge module's materializer still takes the Prisma
+  // client directly; replace it with a port.
+  "src/modules/knowledge/materialize.ts",
+  // TODO(PR 3.12): the execution service still takes the Prisma client
+  // directly; replace it with a port.
+  "src/modules/execution/service.ts",
   // TODO(PR 3.11): eval moves under scripts; PR 3.12 removes this.
   "src/eval/persistence.ts",
 ];
@@ -96,9 +98,9 @@ const FETCH_ALLOWED_FILES = [
   // TODO(PR 3.6): the admin OAuth client moves into the admin module behind a
   // GitHub identity port.
   "src/admin/**/*.ts",
-  // TODO(PR 3.8): knowledge moves into a module; PR 3.12 replaces this with a
-  // platform-owned model/knowledge client.
-  "src/knowledge/**/*.ts",
+  // TODO(PR 3.12): the knowledge module fetches its sources directly; replace
+  // this with a platform-owned knowledge client.
+  "src/modules/knowledge/**/*.ts",
   // TODO(PR 3.7): triage moves to the model-provider port.
   "src/services/**/*.ts",
 ];
@@ -251,7 +253,7 @@ export default tseslint.config(
               allow: { to: { element: { type: "module", fileInternalPath: "index.ts" } } },
             },
             {
-              // TODO(PR 3.8/3.9/3.10): modules still reach un-moved top-level
+              // TODO(PR 3.9/3.10): modules still reach un-moved top-level
               // directories directly. Each path is removed when its directory
               // moves (or becomes a port-backed platform adapter).
               from: { element: { type: "module" } },
@@ -259,7 +261,7 @@ export default tseslint.config(
                 to: {
                   element: {
                     type: "legacy",
-                    path: ["src/agent", "src/config", "src/knowledge", "src/observability"],
+                    path: ["src/agent", "src/config", "src/observability"],
                   },
                 },
               },
@@ -408,8 +410,8 @@ export default tseslint.config(
       "src/admin/rate-limit.ts",
       "src/admin/session.ts",
       "src/config/review-loader.ts",
-      "src/execution/local-executor.ts",
-      "src/execution/policy.ts",
+      "src/modules/execution/local-executor.ts",
+      "src/modules/execution/policy.ts",
       "src/modules/findings/validation.ts",
       "src/modules/webhooks/issue-comment.ts",
       "src/observability/alerts.ts",

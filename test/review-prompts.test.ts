@@ -22,7 +22,7 @@ import { join } from "node:path";
 import type pino from "pino";
 import { describe, expect, test } from "vitest";
 import { reviewConfigSchema } from "../src/config/review-schema.js";
-import type { KnowledgeSnapshot } from "../src/knowledge/types.js";
+import type { KnowledgeSnapshot } from "../src/modules/knowledge/types.js";
 import { composeInjectionStage1, composeInjectionLaterStages } from "../src/modules/review/engine.js";
 import { resolveReviewInjection } from "../src/modules/review/injection.js";
 import {

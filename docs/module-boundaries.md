@@ -25,7 +25,7 @@ descriptor and are therefore `bootstrap`.
 | `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | `src/{admin,agent,config,controllers,eval,execution,knowledge,lib,models,observability,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
+| `legacy` | `src/{admin,agent,config,controllers,eval,lib,models,observability,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -91,7 +91,6 @@ removal.
 |---|---|
 | `src/admin` | PR 3.6 |
 | `src/controllers`, `src/services`, `src/views` | PR 3.7 (triage moves out of the MVC layout) |
-| `src/execution`, `src/knowledge` | PR 3.8 |
 | `src/agent`, `src/models` | PR 3.9 |
 | `src/config`, `src/lib`, `src/observability` | PR 3.10 |
 | `src/eval` | PR 3.11 |
@@ -102,7 +101,6 @@ removal.
 | Allowance | Why it exists | Removed by |
 |---|---|---|
 | `module` -> `src/agent` | Workspace processors and the review engine use the agent runtime types before agent becomes a platform adapter. | PR 3.9 |
-| `module` -> `src/knowledge` | The review engine reads the boot-time knowledge snapshot and handbook paths before knowledge becomes a module. | PR 3.8 |
 | `module` -> `src/config` | Modules use the review schema/loader before config becomes `platform/config`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `module` -> `src/observability` | Modules emit metrics before observability becomes `platform/observability`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `ports` -> `src/config` | `ports/review-config.ts` re-exports `ConfigValidationError` and the `ReviewConfig` type from the concrete loader. | PR 3.10 |
@@ -122,7 +120,8 @@ the allowance.
 | `src/bootstrap/**` | PR 3.10; PR 3.12 final |
 | `src/admin/**` | PR 3.6; PR 3.12 final |
 | `src/agent/**` | PR 3.9; PR 3.12 final |
-| `src/execution/**`, `src/knowledge/**` | PR 3.8; PR 3.12 final |
+| `src/modules/execution/**` | PR 3.12 final (sandbox and process environment reads) |
+| `src/modules/knowledge/**` | PR 3.12 final (GitHub token reads) |
 | `src/models/**` | PR 3.9; PR 3.12 final |
 | `src/observability/**` | PR 3.10; PR 3.12 final |
 | `src/modules/publishing/**` | PR 3.12 final (model id resolution reads environment) |
@@ -138,8 +137,8 @@ Permanent: `src/**/*.repository.ts`, `src/platform/db/**`, `test/**`.
 |---|---|
 | `src/lib/prisma.ts`, `src/lib/health.ts` | PR 3.10 (become `platform/db` and `platform/health`) |
 | `src/bootstrap/clients.ts` | PR 3.10 (composition root consumes platform factories); PR 3.12 removes any direct vendor type |
-| `src/knowledge/materialize.ts` | PR 3.8 moves the file; PR 3.12 replaces the vendor type with a port |
-| `src/execution/service.ts` | PR 3.8 moves the file; PR 3.12 replaces the vendor type with a port |
+| `src/modules/knowledge/materialize.ts` | PR 3.12 replaces the vendor type with a port |
+| `src/modules/execution/service.ts` | PR 3.12 replaces the vendor type with a port |
 | `src/eval/persistence.ts` | PR 3.11 moves eval under scripts; PR 3.12 removes the vendor type |
 
 ### `fetch` allowances
@@ -149,7 +148,7 @@ Permanent: `src/platform/**`.
 | Temporary path | Removed by |
 |---|---|
 | `src/admin/**` | PR 3.6 (GitHub identity client moves behind a port) |
-| `src/knowledge/**` | PR 3.8 moves the file; PR 3.12 replaces the client with a platform-owned client or port |
+| `src/modules/knowledge/**` | PR 3.12 replaces the client with a platform-owned client or port |
 | `src/services/**` | PR 3.7 (triage uses the model-provider port) |
 
 ## Negative checks

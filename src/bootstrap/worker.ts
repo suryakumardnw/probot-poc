@@ -2,19 +2,19 @@ import path from "node:path";
 import type { Worker } from "bullmq";
 import { createAgentRuntime } from "../agent/index.js";
 import { loadEnv, type Env } from "../config/env.js";
-import {
-  ensureKnowledgeSources,
-  getKnowledgeSnapshot,
-  materializeReviewKnowledge,
-  persistKnowledgeMetrics,
-  setKnowledgeSnapshot,
-} from "../knowledge/index.js";
 import { createLogger, type PlatformLogger } from "../lib/logger.js";
 import { checkPrisma, disconnectPrisma } from "../lib/prisma.js";
 import { checkRedis, disconnectRedis, waitRedisReady } from "../lib/redis.js";
 import { registerGracefulShutdown, runShutdownSteps, type ShutdownStep } from "../lib/shutdown.js";
 import { reconcileIncompleteReviews } from "../modules/ingestion/index.js";
 import { createWorkerConnection } from "../modules/ingestion/queue.js";
+import {
+  ensureKnowledgeSources,
+  getKnowledgeSnapshot,
+  materializeReviewKnowledge,
+  persistKnowledgeMetrics,
+  setKnowledgeSnapshot,
+} from "../modules/knowledge/index.js";
 import { createReviewPipelineHook } from "../modules/publishing/index.js";
 import {
   ReviewWorkspaceService,

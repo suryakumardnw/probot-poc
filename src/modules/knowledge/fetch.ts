@@ -18,7 +18,7 @@ import {
   githubContentResponseSchema,
   githubTreeResponseSchema,
   type GitHubTreeEntry,
-} from "../contracts/knowledge.js";
+} from "../../contracts/knowledge.js";
 import type { KnowledgeFetcher } from "./types.js";
 
 export type { GitHubTreeEntry };

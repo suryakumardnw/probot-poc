@@ -19,7 +19,7 @@ import { join } from "node:path";
 import type pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
-import { fetchFileContent, fetchRepoTree, resolveCommitSha, sha256Hex } from "../src/knowledge/fetch.js";
+import { fetchFileContent, fetchRepoTree, resolveCommitSha, sha256Hex } from "../src/modules/knowledge/fetch.js";
 import {
   ensureKnowledgeSources,
   knowledgeSpecsFromConfig,
@@ -28,8 +28,8 @@ import {
   resetKnowledgeSnapshotForTests,
   setKnowledgeSnapshot,
   KnowledgeSnapshotError,
-} from "../src/knowledge/index.js";
-import type { KnowledgeFetcher } from "../src/knowledge/types.js";
+} from "../src/modules/knowledge/index.js";
+import type { KnowledgeFetcher } from "../src/modules/knowledge/types.js";
 import { resolveReviewInjection, selectHandbookSections } from "../src/modules/review/injection.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 

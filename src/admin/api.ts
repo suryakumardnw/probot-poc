@@ -25,13 +25,13 @@ import {
   type AdminErrorEnvelope,
 } from "../contracts/admin.js";
 import { ERROR_CODES } from "../contracts/errors.js";
-import { summarizeKnowledgeMetrics, summarizeKnowledgeSnapshot } from "../knowledge/index.js";
 import {
   ManualIngestionError,
   type IngestionReadService,
   type ReviewComparisonInput,
   type ReviewTypeValue,
 } from "../modules/ingestion/index.js";
+import { summarizeKnowledgeMetrics, summarizeKnowledgeSnapshot } from "../modules/knowledge/index.js";
 import { toErrorLogPayload, toHttpEnvelope } from "../platform/http/error-mapper.js";
 import { ConfigValidationError, type ReviewConfigStore } from "../ports/review-config.js";
 import {

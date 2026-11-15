@@ -5,7 +5,7 @@
  * engineering handbook (from `nativewit/engineering-handbook`) are fetched
  * ONCE per worker boot into a persistent cache — never per review. Reviews
  * never touch the network for knowledge: they read their own snapshot copy
- * materialized from this cache (src/knowledge/materialize.ts).
+ * materialized from this cache (src/modules/knowledge/materialize.ts).
  *
  * Cache layout (under the configured cacheDir):
  *
@@ -31,9 +31,9 @@
  */
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type { ReviewConfig } from "../config/review-schema.js";
-import { knowledgeManifestSchema, type GitHubTreeEntry, type KnowledgeManifest } from "../contracts/knowledge.js";
-import type { Logger } from "../ports/logger.js";
+import type { ReviewConfig } from "../../config/review-schema.js";
+import { knowledgeManifestSchema, type GitHubTreeEntry, type KnowledgeManifest } from "../../contracts/knowledge.js";
+import type { Logger } from "../../ports/logger.js";
 import {
   createDefaultKnowledgeFetcher,
   fetchFileContent,

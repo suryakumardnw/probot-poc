@@ -8,7 +8,7 @@
  * workspace copy (§10 security invariant).
  */
 
-import type { KnowledgeFileRecord } from "../contracts/knowledge.js";
+import type { KnowledgeFileRecord } from "../../contracts/knowledge.js";
 
 /** status "fresh": fetched from GitHub; "unavailable": no content (there is no fallback). */
 export type KnowledgeSourceStatus = "fresh" | "unavailable";

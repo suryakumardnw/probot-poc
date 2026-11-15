@@ -25,7 +25,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { PrismaClient } from "@prisma/client";
-import type { Logger } from "../ports/logger.js";
+import type { Logger } from "../../ports/logger.js";
 import { sha256Hex } from "./fetch.js";
 import {
   knowledgeRefSlug,
