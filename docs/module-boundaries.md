@@ -25,7 +25,7 @@ descriptor and are therefore `bootstrap`.
 | `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | `src/{admin,agent,config,controllers,eval,execution,knowledge,lib,models,observability,publishing,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
+| `legacy` | `src/{admin,agent,config,controllers,eval,execution,knowledge,lib,models,observability,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -89,7 +89,6 @@ removal.
 
 | Path | Removed by |
 |---|---|
-| `src/publishing` | PR 3.5 |
 | `src/admin` | PR 3.6 |
 | `src/controllers`, `src/services`, `src/views` | PR 3.7 (triage moves out of the MVC layout) |
 | `src/execution`, `src/knowledge` | PR 3.8 |
@@ -126,7 +125,7 @@ the allowance.
 | `src/execution/**`, `src/knowledge/**` | PR 3.8; PR 3.12 final |
 | `src/models/**` | PR 3.9; PR 3.12 final |
 | `src/observability/**` | PR 3.10; PR 3.12 final |
-| `src/publishing/**` | PR 3.5; PR 3.12 final |
+| `src/modules/publishing/**` | PR 3.12 final (model id resolution reads environment) |
 | `src/services/**` | PR 3.7; PR 3.12 final |
 | `src/modules/workspace/**` | PR 3.12 final (token provider reads environment) |
 | `src/scripts/**` | PR 3.11; PR 3.12 final |

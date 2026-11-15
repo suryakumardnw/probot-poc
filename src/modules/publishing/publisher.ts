@@ -21,11 +21,8 @@
  *  - GitHub API error handling: bounded retries with exponential backoff.
  */
 
-import { Octokit } from "@octokit/core";
-import { restEndpointMethods } from "@octokit/plugin-rest-endpoint-methods";
-import { retry } from "@octokit/plugin-retry";
-import type { StoredFinding } from "../modules/findings/index.js";
-import type { CreatedReviewResponse, PublisherOctokit } from "../ports/github-publisher.js";
+import type { CreatedReviewResponse, PublisherOctokit } from "../../ports/github-publisher.js";
+import type { StoredFinding } from "../findings/index.js";
 import { resolveInlinePosition, parseUnifiedDiff, type InlinePosition } from "./diff-positions.js";
 import type { ReviewCommentRepository } from "./publishing.repository.js";
 import {
@@ -41,22 +38,7 @@ export type {
   CreatedReviewResponse,
   PublisherOctokit,
   ReviewCommentParams,
-} from "../ports/github-publisher.js";
-
-/**
- * Concrete GitHub transport (rest methods + retry plugin).
- *
- * The service only depends on the `PublisherOctokit` port. This factory stays
- * at the module edge; PR 3.5 moves it to `platform/github`.
- */
-const RestOctokit = Octokit.plugin(restEndpointMethods, retry);
-
-export function createGitHubOctokit(token: string, baseUrl?: string): PublisherOctokit {
-  return new RestOctokit({
-    auth: token,
-    ...(baseUrl ? { baseUrl } : {}),
-  }) as unknown as PublisherOctokit;
-}
+} from "../../ports/github-publisher.js";
 
 // ---------------------------------------------------------------------------
 // Errors

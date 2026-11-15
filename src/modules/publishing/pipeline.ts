@@ -16,10 +16,13 @@
  *  - GitHub API failure after bounded retries → `completed_with_warnings`
  *    (the review data is retained; publication can be retried later).
  */
-import { resolveModelId } from "../agent/index.js";
-import type { AgentRuntime } from "../agent/types.js";
-import type { ReviewConfig } from "../config/review-schema.js";
-import type { MaterializeKnowledgeResult } from "../knowledge/index.js";
+import { resolveModelId } from "../../agent/index.js";
+import type { AgentRuntime } from "../../agent/types.js";
+import type { ReviewConfig } from "../../config/review-schema.js";
+import type { MaterializeKnowledgeResult } from "../../knowledge/index.js";
+import { endSpan, reviewSpanAttributes, startSpan } from "../../observability/tracing.js";
+import type { PublisherOctokit } from "../../ports/github-publisher.js";
+import type { Logger } from "../../ports/logger.js";
 import {
   getFindingsForReview,
   isActiveFindingStatus,
@@ -27,21 +30,17 @@ import {
   type FindingRecord,
   type FindingsServiceDependencies,
   type StoredFinding,
-} from "../modules/findings/index.js";
-import type { ReviewStateService } from "../modules/ingestion/index.js";
-import type { ReviewJobPayload } from "../modules/ingestion/queue.js";
+} from "../findings/index.js";
+import type { ReviewJobPayload, ReviewStateService } from "../ingestion/index.js";
 import {
   createReviewEngineHook,
   resolveReviewInjection,
   type KnowledgeInjectionMetrics,
   type PromptInjection,
   type RunReviewOutput,
-} from "../modules/review/index.js";
-import { redactCredentials, type InstallationTokenProvider, type WorkspaceResult } from "../modules/workspace/index.js";
-import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
-import type { PublisherOctokit } from "../ports/github-publisher.js";
-import type { Logger } from "../ports/logger.js";
-import { StaleHeadError, createGitHubOctokit, publishReview, recordPublicationFailure } from "./publisher.js";
+} from "../review/index.js";
+import { redactCredentials, type InstallationTokenProvider, type WorkspaceResult } from "../workspace/index.js";
+import { StaleHeadError, publishReview, recordPublicationFailure } from "./publisher.js";
 import type { PublishingRepositories, ReviewPublicationRepository } from "./publishing.repository.js";
 
 /**
@@ -78,8 +77,8 @@ export interface ReviewPipelineDeps {
   knowledge: ReviewKnowledgeDependencies;
   /** Installation-token provider used to authenticate the GitHub API calls. */
   tokenProvider: InstallationTokenProvider;
-  /** Octokit factory (tests inject a fake; default builds a real one). */
-  octokitFactory?: (token: string) => PublisherOctokit;
+  /** Octokit factory supplied by the composition root (tests inject a fake). */
+  octokitFactory: (token: string) => PublisherOctokit;
   /** Bounded retry policy for GitHub API calls. */
   publishRetry?: { maxAttempts: number; baseDelayMs: number };
 }
@@ -313,9 +312,7 @@ export async function finalizeReview(
       BigInt(payload.githubInstallationId),
       payload.repositoryFullName,
     );
-    const octokit = deps.octokitFactory
-      ? deps.octokitFactory(token.token)
-      : createGitHubOctokit(token.token, process.env.GITHUB_BASE_URL);
+    const octokit = deps.octokitFactory(token.token);
 
     const storedFindings = (await getFindingsForReview(reviewId, deps.findings)).flatMap((row) => {
       const finding = toStoredFinding(row);

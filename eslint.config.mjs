@@ -21,7 +21,6 @@ const LEGACY_ELEMENT_PATHS = [
   "src/lib",
   "src/models",
   "src/observability",
-  "src/publishing",
   "src/services",
   "src/views",
 ];
@@ -55,8 +54,9 @@ const PROCESS_ENV_ALLOWED_FILES = [
   "src/models/**/*.ts",
   // TODO(PR 3.10; PR 3.12 final): observability moves to platform/observability.
   "src/observability/**/*.ts",
-  // TODO(PR 3.5; PR 3.12 final): publishing moves into a module.
-  "src/publishing/**/*.ts",
+  // TODO(PR 3.12): the publishing module still resolves the model id from the
+  // environment.
+  "src/modules/publishing/**/*.ts",
   // TODO(PR 3.7; PR 3.12 final): triage services move into a module.
   "src/services/**/*.ts",
   // TODO(PR 3.12): the workspace module still reads GitHub App credentials
@@ -413,9 +413,9 @@ export default tseslint.config(
       "src/modules/findings/validation.ts",
       "src/modules/webhooks/issue-comment.ts",
       "src/observability/alerts.ts",
+      "src/modules/publishing/summary.ts",
       "src/modules/review/retrieval.ts",
       "src/modules/review/tools.ts",
-      "src/publishing/summary.ts",
       "src/worker.ts",
     ],
     rules: {

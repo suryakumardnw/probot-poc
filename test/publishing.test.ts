@@ -13,12 +13,9 @@ import {
   supersedeFindingsForReview,
 } from "../src/modules/findings/index.js";
 import type { ReviewJobPayload } from "../src/modules/ingestion/queue.js";
-import type { Finding, FindingEvidence, ReviewResult } from "../src/modules/review/index.js";
-import type { ReviewRunMetadata } from "../src/modules/review/types.js";
-import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
-import { parseUnifiedDiff, resolveInlinePosition } from "../src/publishing/diff-positions.js";
-import { finalizeReview, type ReviewPipelineDeps } from "../src/publishing/pipeline.js";
-import { createPublishingRepositories } from "../src/publishing/prisma-publishing.repository.js";
+import { parseUnifiedDiff, resolveInlinePosition } from "../src/modules/publishing/diff-positions.js";
+import { finalizeReview, type ReviewPipelineDeps } from "../src/modules/publishing/pipeline.js";
+import { createPublishingRepositories } from "../src/modules/publishing/prisma-publishing.repository.js";
 import {
   DEFAULT_RETRY,
   StaleHeadError,
@@ -29,13 +26,16 @@ import {
   withRetry,
   type PublisherOctokit,
   type ReviewCommentParams,
-} from "../src/publishing/publisher.js";
+} from "../src/modules/publishing/publisher.js";
 import {
   buildInlineCommentBody,
   buildReviewBody,
   extractFingerprint,
   fingerprintMarker,
-} from "../src/publishing/summary.js";
+} from "../src/modules/publishing/summary.js";
+import type { Finding, FindingEvidence, ReviewResult } from "../src/modules/review/index.js";
+import type { ReviewRunMetadata } from "../src/modules/review/types.js";
+import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { createTestReviewState } from "./helpers/ingestion.js";
 

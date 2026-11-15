@@ -26,10 +26,9 @@ export type {
   CreatedReviewResponse,
   PublisherOctokit,
   ReviewCommentParams,
-} from "../ports/github-publisher.js";
+} from "../../ports/github-publisher.js";
 export {
   StaleHeadError,
-  createGitHubOctokit,
   publishReview,
   recordPublicationFailure,
   withRetry,

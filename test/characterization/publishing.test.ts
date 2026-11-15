@@ -1,13 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { StoredFinding } from "../../src/modules/findings/index.js";
-import { createPublishingRepositories } from "../../src/publishing/prisma-publishing.repository.js";
+import { createPublishingRepositories } from "../../src/modules/publishing/prisma-publishing.repository.js";
 import {
   StaleHeadError,
   publishReview,
   type PublisherOctokit,
   type ReviewCommentParams,
-} from "../../src/publishing/publisher.js";
-import type { ReviewCommentRepository } from "../../src/publishing/publishing.repository.js";
+} from "../../src/modules/publishing/publisher.js";
+import type { ReviewCommentRepository } from "../../src/modules/publishing/publishing.repository.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogger } from "./support.js";
 
 /**

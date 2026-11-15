@@ -15,6 +15,7 @@ import { checkRedis, disconnectRedis, waitRedisReady } from "../lib/redis.js";
 import { registerGracefulShutdown, runShutdownSteps, type ShutdownStep } from "../lib/shutdown.js";
 import { reconcileIncompleteReviews } from "../modules/ingestion/index.js";
 import { createWorkerConnection } from "../modules/ingestion/queue.js";
+import { createReviewPipelineHook } from "../modules/publishing/index.js";
 import {
   ReviewWorkspaceService,
   createDefaultTokenProvider,
@@ -27,7 +28,7 @@ import { AlertManager } from "../observability/alerts.js";
 import { startMetricsServer, metricsServerPort } from "../observability/metrics-endpoint.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
 import { retryPolicyConfigFromReviewConfig } from "../observability/retry.js";
-import { createReviewPipelineHook } from "../publishing/index.js";
+import { createGitHubOctokit } from "../platform/github/octokit.js";
 import { createConfigStore, createIngestionModule, createPlatformClients, createReviewModule } from "./clients.js";
 
 /**
@@ -118,6 +119,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
       persistMetrics: (input) => persistKnowledgeMetrics(clients.prisma, input.reviewId, input.profile, input.metrics),
     },
     tokenProvider: createDefaultTokenProvider(),
+    octokitFactory: (token) => createGitHubOctokit(token, process.env.GITHUB_BASE_URL),
   });
 
   let reviewWorker: Worker | undefined;

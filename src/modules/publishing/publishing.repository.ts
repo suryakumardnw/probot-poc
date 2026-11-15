@@ -1,4 +1,4 @@
-import type { ReviewTypeValue } from "../contracts/queue.js";
+import type { ReviewTypeValue } from "../../contracts/queue.js";
 
 /**
  * Publishing repository ports (ARCHITECTURE.md §7.4, §13.1).

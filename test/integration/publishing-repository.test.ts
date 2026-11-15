@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { createPublishingRepositories } from "../../src/publishing/prisma-publishing.repository.js";
+import { createPublishingRepositories } from "../../src/modules/publishing/prisma-publishing.repository.js";
 import {
   cleanDatabase,
   disconnectDatabase,
