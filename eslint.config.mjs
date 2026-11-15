@@ -266,8 +266,9 @@ export default tseslint.config(
               allow: { to: { element: { type: "module", path: "src/modules/review" } } },
             },
             {
-              // TODO(PR 3.12): delete with LEGACY_ELEMENT_PATHS. Until each
-              // directory moves, legacy code keeps its current imports.
+              // TODO(PR 3.12): delete with LEGACY_ELEMENT_PATHS. Only
+              // `src/eval` is legacy now; it keeps its current imports until
+              // PR 3.11 moves it under scripts.
               from: { element: { type: "legacy" } },
               allow: { to: { element: { type: "*" } } },
             },

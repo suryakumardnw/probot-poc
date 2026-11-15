@@ -7,9 +7,8 @@ import type { ReviewJobPayload } from "../contracts/queue.js";
  * of truth. Callers pass the durable `ReviewJob.id` as the job identity so a
  * repeated publish can never create a second logical job.
  *
- * BullMQ is the only adapter today (`src/platform/queue/review-queue.ts`); the port keeps
- * module code from importing the client library before the platform move in
- * PR 3.10.
+ * BullMQ is the only adapter today (`src/platform/queue/review-queue.ts`); the
+ * port keeps module code independent of the BullMQ client.
  */
 
 export interface ReviewQueueBackoff {

@@ -57,6 +57,20 @@ except the explicit temporary admin allowance listed below.
 
 `import/no-cycle` remains enabled for every source file.
 
+## PR 3.10 placement rulings
+
+- `src/observability/retry.ts` moved to `src/shared/retry.ts`, and
+  `src/observability/correlation.ts` moved to
+  `src/ports/review-logging.ts`. Both are dependency-free, module-facing
+  helpers: placing them under `src/platform` would force a
+  `module -> platform` import, which the active policy rejects. Behavior is
+  unchanged.
+- The `/review` webhook now loads configuration through the injected
+  `ReviewConfigStore` built by the composition root, instead of reading
+  `process.env` on every delivery. That store is a boot-time snapshot of the
+  static deployment environment; the shipped `config/review.json` resolves
+  identically, and static deployment env is the intended contract.
+
 ## Vendor and environment rules
 
 The rules apply to TypeScript (`**/*.{ts,mts,cts}`), root tooling

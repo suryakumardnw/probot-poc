@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-import { CURRENT_SCHEMA_VERSION as shimSchemaVersion, reviewConfigSchema as shimReviewConfigSchema } from "./config.js";
 import { CURRENT_SCHEMA_VERSION, envSchema, reviewConfigSchema } from "./config.js";
 import * as contracts from "./index.js";
 
@@ -149,15 +148,11 @@ describe("reviewConfigSchema", () => {
 });
 
 describe("compatibility re-exports", () => {
-  test("review-schema keeps pointing at the same schema object", () => {
-    expect(shimReviewConfigSchema).toBe(reviewConfigSchema);
-    expect(shimSchemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(CURRENT_SCHEMA_VERSION).toBe(1);
-  });
-
   test("the public barrel exposes the same contract objects", () => {
     expect(contracts.reviewConfigSchema).toBe(reviewConfigSchema);
     expect(contracts.envSchema).toBe(envSchema);
+    expect(contracts.CURRENT_SCHEMA_VERSION).toBe(CURRENT_SCHEMA_VERSION);
+    expect(contracts.CURRENT_SCHEMA_VERSION).toBe(1);
     expect(contracts.knowledgeManifestSchema).toBeDefined();
     expect(contracts.benchmarkSuiteSchema).toBeDefined();
   });

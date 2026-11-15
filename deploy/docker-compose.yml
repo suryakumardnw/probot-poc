@@ -61,7 +61,7 @@ services:
   probot:
     <<: [*app-build, *restart]
     # node is PID 1 => SIGTERM reaches the app for graceful shutdown
-    # (src/lib/shutdown.ts). stop_grace_period gives in-flight requests and
+    # (src/platform/shutdown.ts). stop_grace_period gives in-flight requests and
     # queue cleanup time to finish.
     stop_grace_period: 30s
     # Container port only — no host binding. On Dokploy, Traefik reaches

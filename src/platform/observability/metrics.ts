@@ -1,5 +1,7 @@
 import type { FindingSeverityValue } from "../../contracts/review.js";
 
+import type { ProviderCallRecord, ReviewFindingsRecord } from "../../ports/observability.js";
+
 /**
  * Minimal hand-rolled Prometheus-compatible metrics registry (§16.2).
  *
@@ -243,12 +245,7 @@ export function setMetricsRegistry(r: MetricsRegistry | undefined): void {
   registry = r;
 }
 
-export type ProviderCallRecord = {
-  durationMs: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  errorCode?: string;
-};
+export type { ProviderCallRecord };
 
 /** Record one model/agent provider call: latency + token usage + errors. */
 export function recordProviderCall(call: ProviderCallRecord): void {
@@ -265,10 +262,7 @@ export function recordProviderCall(call: ProviderCallRecord): void {
   }
 }
 
-export function recordReviewFindings(result: {
-  findings: Array<{ severity: string; category: string }>;
-  uncertainCount: number;
-}): void {
+export function recordReviewFindings(result: ReviewFindingsRecord): void {
   const m = getMetricsRegistry();
   for (const finding of result.findings) {
     const severity = (SEVERITIES as readonly string[]).includes(finding.severity) ? finding.severity : "unknown";
