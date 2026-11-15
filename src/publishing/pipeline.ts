@@ -21,7 +21,7 @@ import type pino from "pino";
 import { resolveModelId } from "../agent/index.js";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
-import { persistReviewFindings } from "../findings/index.js";
+import { createFindingsDependencies, persistReviewFindings } from "../findings/index.js";
 import { transitionReviewState } from "../ingestion/index.js";
 import type { ReviewJobPayload } from "../ingestion/queue.js";
 import { getKnowledgeSnapshot, materializeReviewKnowledge, persistKnowledgeMetrics } from "../knowledge/index.js";
@@ -187,7 +187,7 @@ export async function finalizeReview(
       findings: output.result.findings,
       uncertainFindings: output.result.uncertainFindings,
       config: deps.config,
-      prisma,
+      dependencies: createFindingsDependencies(prisma),
       logger,
     });
   } catch (error) {

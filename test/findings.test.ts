@@ -173,7 +173,6 @@ async function persist(
     findings,
     uncertainFindings,
     config,
-    prisma,
   });
 }
 
@@ -370,10 +369,9 @@ describe("persistence: store-only-valid contract", () => {
       findings: [valid],
       uncertainFindings: [bad],
       config: makeConfig(),
-      prisma,
     });
     expect(result.rejected.map((r) => r.reason)).toEqual(["invalid_file"]);
-    const rows = await getFindingsForReview(prisma, reviewId);
+    const rows = await getFindingsForReview(reviewId);
     expect(rows).toHaveLength(1);
     expect(rows[0].title).toBe(valid.title);
     expect(result.stored).toHaveLength(1);
@@ -389,7 +387,7 @@ describe("persistence: store-only-valid contract", () => {
       evidence: evidence({ line: 6, excerpt: "function unused() {" }),
     });
     const result = await persist(reviewId, [verified], [unsure]);
-    const rows = await getFindingsForReview(prisma, reviewId);
+    const rows = await getFindingsForReview(reviewId);
     expect(rows).toHaveLength(2);
     const unsureRow = rows.find((r) => r.title === "Unsure");
     expect(unsureRow?.status).toBe("uncertain");
@@ -486,7 +484,7 @@ describe("lifecycle across commits (§7.2)", () => {
     const result = await persist(reviewId, [first, twin]);
     expect(result.stored).toHaveLength(1);
     expect(result.stored[0].title).toBe("dup-2"); // highest confidence wins
-    const rows = await getFindingsForReview(prisma, reviewId);
+    const rows = await getFindingsForReview(reviewId);
     expect(rows).toHaveLength(1);
     expect(result.transitions).toBe(1);
   });
@@ -545,7 +543,7 @@ describe("supersession (ticket 03 integration)", () => {
     const review1 = await seedReview("sup1");
     await persist(review1, [bugRiskFinding({ title: "A" })]);
     const review2 = await seedReview("sup2");
-    const count = await supersedeFindingsForReview(prisma, review1, review2);
+    const count = await supersedeFindingsForReview(review1, review2);
     expect(count).toBe(1);
     const row = await prisma.finding.findFirstOrThrow({ where: { title: "A", reviewId: review1 } });
     expect(row.status).toBe("superseded");
@@ -559,7 +557,7 @@ describe("supersession (ticket 03 integration)", () => {
 
   test("superseding a review without active findings is a no-op", async () => {
     const reviewId = await seedReview("sup3");
-    expect(await supersedeFindingsForReview(prisma, reviewId, reviewId)).toBe(0);
+    expect(await supersedeFindingsForReview(reviewId, reviewId)).toBe(0);
   });
 });
 
@@ -575,7 +573,7 @@ describe("query surface for the publishing layer (ticket 09)", () => {
       evidence: evidence({ line: 6, excerpt: "function unused() {" }),
     });
     await persist(review2, [bugRiskFinding({ title: "A" })], [unsure]);
-    const rows2 = await getFindingsForReview(prisma, review2);
+    const rows2 = await getFindingsForReview(review2);
     expect(rows2).toHaveLength(2);
     expect(rows2[0].verified).toBe(true);
     expect(rows2.every((r) => r.reviewId === review2)).toBe(true);

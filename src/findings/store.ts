@@ -17,16 +17,26 @@
  *  - Every lifecycle status change is persisted in finding_status_transitions.
  *  - Superseded reviews (ticket 03) have their active findings transitioned
  *    to `superseded` via `supersedeFindingsForReview`.
+ *
+ * Persistence goes through the findings repository and unit of work: row
+ * creation, resolution, supersession, and their transitions commit together or
+ * roll back together. Fingerprinting and validation stay pure.
  */
 
-import type { PrismaClient } from "@prisma/client";
 import type { ReviewConfig } from "../config/review-schema.js";
 import type { Finding } from "../review-engine/index.js";
+import {
+  ACTIVE_FINDING_STATUSES,
+  isActiveFindingStatus,
+  type ActiveFindingStatus,
+  type CreatedFindingRecord,
+  type FindingRecord,
+  type PriorFindingRecord,
+} from "./findings.repository.js";
+import type { FindingsRepositories } from "./findings.unit-of-work.js";
 import { computeFindingFingerprint } from "./fingerprint.js";
+import { getDefaultFindingsDependencies, type FindingsServiceDependencies } from "./prisma-findings.unit-of-work.js";
 import { validateFindings, type FindingRejectionReason } from "./validation.js";
-
-/** Lifecycle statuses describing an issue that is (or may be) present. */
-const ACTIVE_STATUSES = ["new", "existing", "updated", "uncertain"] as const;
 
 export interface PersistReviewFindingsInput {
   repositoryId: string;
@@ -40,7 +50,8 @@ export interface PersistReviewFindingsInput {
   /** Engine result: low-confidence findings. */
   uncertainFindings: Finding[];
   config: ReviewConfig;
-  prisma: PrismaClient;
+  /** Persistence boundary override; defaults to the module-edge wiring. */
+  dependencies?: FindingsServiceDependencies;
   logger?: { info: (obj: unknown, msg: string) => void; warn: (obj: unknown, msg: string) => void };
 }
 
@@ -82,47 +93,50 @@ export interface PersistReviewFindingsResult {
 // Historical lookup
 // ---------------------------------------------------------------------------
 
-interface PriorOccurrence {
-  id: string;
-  fingerprint: string;
-  status: string;
-  severity: string;
-  lineNumber: number;
-  createdAt: Date;
-}
-
 /**
  * Latest occurrence per fingerprint for one repository, across all reviews
  * except the current one (§7.3: compare previous findings per commit).
  */
 async function loadPriorFindings(
-  prisma: PrismaClient,
+  repositories: FindingsRepositories,
   repositoryId: string,
   excludeReviewId: string,
-): Promise<Map<string, PriorOccurrence>> {
-  const rows = await prisma.finding.findMany({
-    where: { repositoryId, reviewId: { not: excludeReviewId } },
-    orderBy: { createdAt: "desc" },
-  });
-  const latest = new Map<string, PriorOccurrence>();
+): Promise<Map<string, PriorFindingRecord>> {
+  const rows = await repositories.findings.findPriorOccurrences({ repositoryId, excludeReviewId });
+  const latest = new Map<string, PriorFindingRecord>();
   for (const row of rows) {
     if (!latest.has(row.fingerprint)) {
-      latest.set(row.fingerprint, {
-        id: row.id,
-        fingerprint: row.fingerprint,
-        status: row.status,
-        severity: row.severity,
-        lineNumber: row.lineNumber,
-        createdAt: row.createdAt,
-      });
+      latest.set(row.fingerprint, row);
     }
   }
   return latest;
 }
 
 /** Did the issue materially change compared with the prior occurrence? */
-function materiallyChanged(finding: Finding, prior: PriorOccurrence): boolean {
+function materiallyChanged(finding: Finding, prior: PriorFindingRecord): boolean {
   return finding.severity !== prior.severity || finding.line !== prior.lineNumber;
+}
+
+/** Map a freshly persisted row into the publishing-layer shape. */
+function mapStoredFinding(row: CreatedFindingRecord, reopened: boolean): StoredFinding {
+  return {
+    id: row.id,
+    fingerprint: row.fingerprint,
+    category: row.category,
+    severity: row.severity,
+    confidence: row.confidence,
+    title: row.title,
+    filePath: row.filePath,
+    lineNumber: row.lineNumber,
+    description: row.description,
+    ...(row.impact ? { impact: row.impact } : {}),
+    ...(row.recommendation ? { recommendation: row.recommendation } : {}),
+    ...(row.guideline ? { guideline: row.guideline } : {}),
+    ...(row.evidence ? { evidence: row.evidence } : {}),
+    verified: row.verified,
+    status: row.status,
+    reopened,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +144,8 @@ function materiallyChanged(finding: Finding, prior: PriorOccurrence): boolean {
 // ---------------------------------------------------------------------------
 
 export async function persistReviewFindings(input: PersistReviewFindingsInput): Promise<PersistReviewFindingsResult> {
-  const { prisma, config, reviewId, repositoryId, repositoryFullName, workspacePath, logger } = input;
+  const { config, reviewId, repositoryId, repositoryFullName, workspacePath, logger } = input;
+  const dependencies = input.dependencies ?? getDefaultFindingsDependencies();
 
   // 1+2. Fingerprint everything, then validate/verify against the workspace.
   const candidates = [...input.findings, ...input.uncertainFindings].map((finding) => ({
@@ -167,14 +182,14 @@ export async function persistReviewFindings(input: PersistReviewFindingsInput): 
   // 4. Historical comparison (same repository + fingerprint, prior reviews).
   const trackHistory = config.review.findings.trackAcrossCommits && config.review.findings.lifecycleManagement;
   const priors = trackHistory
-    ? await loadPriorFindings(prisma, repositoryId, reviewId)
-    : new Map<string, PriorOccurrence>();
+    ? await loadPriorFindings(dependencies.repositories, repositoryId, reviewId)
+    : new Map<string, PriorFindingRecord>();
 
   interface Planned {
     finding: Finding;
     fingerprint: string;
     verified: boolean;
-    status: "new" | "existing" | "updated" | "uncertain";
+    status: ActiveFindingStatus;
     reopenedFromId: string | null;
     priorStatusForTransition: string | null;
   }
@@ -217,97 +232,59 @@ export async function persistReviewFindings(input: PersistReviewFindingsInput): 
   }
 
   // 6. Historical findings not observed in this review are resolved (§7.2).
-  const resolvedPriors: PriorOccurrence[] = trackHistory
+  const resolvedPriors: PriorFindingRecord[] = trackHistory
     ? [...priors.values()].filter(
-        (p) =>
-          (ACTIVE_STATUSES as readonly string[]).includes(p.status) &&
-          !seenFingerprints.has(p.fingerprint) &&
-          p.status !== "uncertain",
+        (p) => isActiveFindingStatus(p.status) && !seenFingerprints.has(p.fingerprint) && p.status !== "uncertain",
       )
     : [];
   // Uncertain priors that were never confirmed stay open — they are neither
   // verified nor resolved; only supersede/dismiss touches them.
 
   // 7. Persist rows + transitions in one transaction.
-  await prisma.$transaction(async (tx) => {
+  await dependencies.unitOfWork.execute(async (repositories) => {
     for (const item of planned) {
-      const row = await tx.finding.create({
-        data: {
-          reviewId,
-          repositoryId,
-          fingerprint: item.fingerprint,
-          category: item.finding.category,
-          severity: item.finding.severity,
-          confidence: item.finding.confidence,
-          title: item.finding.title,
-          filePath: item.finding.file,
-          lineNumber: item.finding.line,
-          description: item.finding.description,
-          impact: item.finding.impact ?? null,
-          recommendation: item.finding.recommendation ?? null,
-          guideline: item.finding.guideline ?? null,
-          evidence: item.finding.evidence as unknown as import("@prisma/client").Prisma.InputJsonValue,
-          verified: item.verified,
-          status: item.status,
-          reopenedFromFindingId: item.reopenedFromId,
-        },
+      const row = await repositories.findings.create({
+        reviewId,
+        repositoryId,
+        fingerprint: item.fingerprint,
+        category: item.finding.category,
+        severity: item.finding.severity,
+        confidence: item.finding.confidence,
+        title: item.finding.title,
+        filePath: item.finding.file,
+        lineNumber: item.finding.line,
+        description: item.finding.description,
+        impact: item.finding.impact ?? null,
+        recommendation: item.finding.recommendation ?? null,
+        guideline: item.finding.guideline ?? null,
+        evidence: item.finding.evidence,
+        verified: item.verified,
+        status: item.status,
+        reopenedFromFindingId: item.reopenedFromId,
       });
-      result.stored.push({
-        id: row.id,
-        fingerprint: row.fingerprint,
-        category: row.category,
-        severity: row.severity,
-        confidence: row.confidence,
-        title: row.title,
-        filePath: row.filePath,
-        lineNumber: row.lineNumber,
-        description: row.description,
-        ...(row.impact ? { impact: row.impact } : {}),
-        ...(row.recommendation ? { recommendation: row.recommendation } : {}),
-        ...(row.guideline ? { guideline: row.guideline } : {}),
-        ...(row.evidence
-          ? {
-              evidence: row.evidence as unknown as Array<{
-                file: string;
-                line?: number;
-                excerpt: string;
-                reason: string;
-              }>,
-            }
-          : {}),
-        verified: row.verified,
-        status: row.status as StoredFinding["status"],
-        reopened: item.reopenedFromId !== null,
-      });
-      await tx.findingStatusTransition.create({
-        data: {
-          findingId: row.id,
-          reviewId,
-          fromStatus: null,
-          toStatus: item.status,
-          reason: item.reopenedFromId
-            ? `reopened: reintroduced after resolution of ${item.reopenedFromId}`
-            : item.priorStatusForTransition
-              ? `promoted from prior ${item.priorStatusForTransition} occurrence`
-              : "recorded by review",
-        },
+      result.stored.push(mapStoredFinding(row, item.reopenedFromId !== null));
+      await repositories.statusTransitions.create({
+        findingId: row.id,
+        reviewId,
+        fromStatus: null,
+        toStatus: item.status,
+        reason: item.reopenedFromId
+          ? `reopened: reintroduced after resolution of ${item.reopenedFromId}`
+          : item.priorStatusForTransition
+            ? `promoted from prior ${item.priorStatusForTransition} occurrence`
+            : "recorded by review",
       });
       result.transitions += 1;
     }
 
     for (const prior of resolvedPriors) {
-      await tx.finding.update({
-        where: { id: prior.id },
-        data: { status: "resolved", resolvedAt: new Date() },
-      });
-      await tx.findingStatusTransition.create({
-        data: {
-          findingId: prior.id,
-          reviewId,
-          fromStatus: prior.status as "new" | "existing" | "updated" | "uncertain",
-          toStatus: "resolved",
-          reason: "not observed in the latest reviewed commit",
-        },
+      await repositories.findings.markResolved({ findingId: prior.id, resolvedAt: new Date() });
+      await repositories.statusTransitions.create({
+        findingId: prior.id,
+        reviewId,
+        fromStatus: prior.status,
+        toStatus: "resolved",
+        reason: "not observed in the latest reviewed commit",
       });
       result.transitions += 1;
       result.resolved.push(prior.fingerprint);
@@ -337,41 +314,33 @@ export async function persistReviewFindings(input: PersistReviewFindingsInput): 
  * findings never reach publication: they transition to `superseded`.
  */
 export async function supersedeFindingsForReview(
-  prisma: PrismaClient,
   reviewId: string,
   supersededByReviewId: string,
+  dependencies: FindingsServiceDependencies = getDefaultFindingsDependencies(),
 ): Promise<number> {
-  const active = await prisma.finding.findMany({
-    where: { reviewId, status: { in: [...ACTIVE_STATUSES] } },
-    select: { id: true, status: true },
-  });
-  if (active.length === 0) {
-    return 0;
-  }
-  await prisma.$transaction(async (tx) => {
+  return dependencies.unitOfWork.execute(async (repositories) => {
+    const active = await repositories.findings.findActiveByReview({
+      reviewId,
+      statuses: ACTIVE_FINDING_STATUSES,
+    });
     for (const finding of active) {
-      await tx.finding.update({
-        where: { id: finding.id },
-        data: { status: "superseded", supersededByReviewId },
-      });
-      await tx.findingStatusTransition.create({
-        data: {
-          findingId: finding.id,
-          reviewId,
-          fromStatus: finding.status as (typeof ACTIVE_STATUSES)[number],
-          toStatus: "superseded",
-          reason: `review superseded by ${supersededByReviewId}`,
-        },
+      await repositories.findings.markSuperseded({ findingId: finding.id, supersededByReviewId });
+      await repositories.statusTransitions.create({
+        findingId: finding.id,
+        reviewId,
+        fromStatus: finding.status,
+        toStatus: "superseded",
+        reason: `review superseded by ${supersededByReviewId}`,
       });
     }
+    return active.length;
   });
-  return active.length;
 }
 
 /** All persisted findings for one review, for the publishing layer (ticket 09). */
-export async function getFindingsForReview(prisma: PrismaClient, reviewId: string) {
-  return prisma.finding.findMany({
-    where: { reviewId },
-    orderBy: [{ verified: "desc" }, { severity: "asc" }, { createdAt: "asc" }],
-  });
+export async function getFindingsForReview(
+  reviewId: string,
+  dependencies: FindingsServiceDependencies = getDefaultFindingsDependencies(),
+): Promise<FindingRecord[]> {
+  return dependencies.repositories.findings.findByReview(reviewId);
 }

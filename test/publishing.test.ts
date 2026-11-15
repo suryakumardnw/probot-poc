@@ -1090,7 +1090,7 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
     expect(review.completedAt).not.toBeNull();
 
     // Findings persisted (ticket 08) and publication rows recorded (ticket 09).
-    const findings = await getFindingsForReview(prisma, seed.reviewId);
+    const findings = await getFindingsForReview(seed.reviewId);
     expect(findings).toHaveLength(1);
     expect(findings[0].status).toBe("new");
     const rows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId } });
