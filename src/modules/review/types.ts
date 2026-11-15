@@ -7,7 +7,7 @@
  * inline/uncertain split and the summary.
  */
 
-import type { ChangedFile, WorkspaceResult } from "../modules/workspace/index.js";
+import type { ChangedFile, WorkspaceResult } from "../workspace/index.js";
 
 // ---------------------------------------------------------------------------
 // Structured review result (§7.1 finding schema)

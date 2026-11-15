@@ -11,18 +11,18 @@ import {
 } from "../src/agent/types.js";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
 import { reviewResultSchema, analysisOutputSchema } from "../src/contracts/review.js";
-import type { ChangedFile } from "../src/modules/workspace/files.js";
-import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
-import { scoreComplexity, parseDiffStats } from "../src/review-engine/complexity.js";
-import { runReview } from "../src/review-engine/engine.js";
-import { createReviewPlan, skippedStageIds } from "../src/review-engine/plan.js";
+import { scoreComplexity, parseDiffStats } from "../src/modules/review/complexity.js";
+import { runReview } from "../src/modules/review/engine.js";
+import { createReviewPlan, skippedStageIds } from "../src/modules/review/plan.js";
 import {
   RetrievalBudget,
   fulfillToolRequests,
   parseToolRequests,
   renderToolContext,
-} from "../src/review-engine/tools.js";
-import { ReviewEngineError } from "../src/review-engine/types.js";
+} from "../src/modules/review/tools.js";
+import { ReviewEngineError } from "../src/modules/review/types.js";
+import type { ChangedFile } from "../src/modules/workspace/files.js";
+import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
 
 /**
  * Ticket 07 unit tests: adaptive repository-aware review engine.

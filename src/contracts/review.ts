@@ -13,7 +13,7 @@
  */
 
 import { z } from "zod";
-import { FINDING_CATEGORIES } from "../review-engine/types.js";
+import { FINDING_CATEGORIES } from "../modules/review/types.js";
 
 const findingEvidenceSchema = z.object({
   file: z.string().min(1).max(512),

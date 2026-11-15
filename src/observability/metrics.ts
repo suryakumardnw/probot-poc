@@ -1,4 +1,4 @@
-import type { FindingSeverity } from "../review-engine/types.js";
+import type { FindingSeverity } from "../modules/review/index.js";
 
 /**
  * Minimal hand-rolled Prometheus-compatible metrics registry (§16.2).

@@ -5,7 +5,7 @@
  * reviews (decision 3: reviewMode/strategy is independent of reviewType);
  * the only difference is extra methodology text injected into the review
  * instructions, composed with the trusted instruction profiles in
- * `src/review-engine/prompts/`:
+ * `src/modules/review/prompts/`:
  *
  * - `skill`   — a code-review playbook, taken ONLY from the review's own
  *               knowledge snapshot copy (knowledge/skill/ inside the review
@@ -33,10 +33,9 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type { ReviewConfig } from "../config/review-schema.js";
-import { handbookVariantDir } from "../knowledge/materialize.js";
-import type { KnowledgeHandbookVariant, KnowledgeSnapshot } from "../knowledge/types.js";
-import type { Logger } from "../ports/logger.js";
+import type { ReviewConfig } from "../../config/review-schema.js";
+import { handbookVariantDir, type KnowledgeHandbookVariant, type KnowledgeSnapshot } from "../../knowledge/index.js";
+import type { Logger } from "../../ports/logger.js";
 import { HANDBOOK_REFERENCE_INSTRUCTIONS } from "./prompts/index.js";
 import {
   CHARS_PER_TOKEN,

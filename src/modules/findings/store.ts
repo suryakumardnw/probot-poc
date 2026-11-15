@@ -24,8 +24,8 @@
  */
 
 import type { ReviewConfig } from "../../config/review-schema.js";
+import type { Finding } from "../../modules/review/index.js";
 import type { Logger } from "../../ports/logger.js";
-import type { Finding } from "../../review-engine/index.js";
 import {
   ACTIVE_FINDING_STATUSES,
   isActiveFindingStatus,

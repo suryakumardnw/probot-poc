@@ -11,9 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
+import { runReview, type RunReviewOutput } from "../modules/review/index.js";
 import type { WorkspaceResult } from "../modules/workspace/index.js";
-import { runReview } from "../review-engine/index.js";
-import type { RunReviewOutput } from "../review-engine/types.js";
 import { aggregateScores, scoreCase } from "./scoring.js";
 import type { BenchmarkCase, BenchmarkSuite, CaseScore, BenchmarkScore } from "./types.js";
 

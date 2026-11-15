@@ -2,8 +2,8 @@
  * Temporary compatibility re-export.
  *
  * The structured review result schemas moved to `src/contracts/review.ts`.
- * Import from there in new code; this shim keeps existing review-engine
- * consumers working until PR 3.4 removes the review-engine-local module.
+ * Import from there in new code; this shim keeps existing consumers working
+ * until PR 3.12 removes the review-module-local compatibility module.
  */
 
 export {
@@ -12,4 +12,4 @@ export {
   reviewResultSchema,
   type ParsedAnalysisOutput,
   type ParsedReviewResult,
-} from "../contracts/review.js";
+} from "../../contracts/review.js";

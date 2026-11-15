@@ -1,5 +1,5 @@
 import type { Finding, Prisma, PrismaClient } from "@prisma/client";
-import type { FindingEvidence } from "../../review-engine/index.js";
+import type { FindingEvidence } from "../../modules/review/index.js";
 import type {
   CreateFindingInput,
   CreateFindingStatusTransitionInput,

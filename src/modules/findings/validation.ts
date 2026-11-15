@@ -18,7 +18,7 @@
  */
 
 import type { ReviewConfig } from "../../config/review-schema.js";
-import { FINDING_CATEGORIES, type Finding, type FindingSeverity } from "../../review-engine/index.js";
+import { FINDING_CATEGORIES, type Finding, type FindingSeverity } from "../../modules/review/index.js";
 import { readWorkspaceFile } from "../workspace/index.js";
 
 export type FindingRejectionReason =

@@ -1,4 +1,4 @@
-import type { FindingEvidence } from "../../review-engine/index.js";
+import type { FindingEvidence } from "../../modules/review/index.js";
 
 /**
  * Finding persistence ports and domain records (ARCHITECTURE.md §6.3, §7.2,

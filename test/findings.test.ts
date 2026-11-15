@@ -13,7 +13,7 @@ import {
   getFindingsForReview,
   createFindingsDependencies,
 } from "../src/modules/findings/index.js";
-import type { Finding, FindingEvidence } from "../src/review-engine/index.js";
+import type { Finding, FindingEvidence } from "../src/modules/review/index.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 const findingsDependencies = createFindingsDependencies(prisma);

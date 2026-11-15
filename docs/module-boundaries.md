@@ -25,7 +25,7 @@ descriptor and are therefore `bootstrap`.
 | `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | `src/{admin,agent,config,controllers,eval,execution,knowledge,lib,models,observability,publishing,review-engine,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
+| `legacy` | `src/{admin,agent,config,controllers,eval,execution,knowledge,lib,models,observability,publishing,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -89,7 +89,6 @@ removal.
 
 | Path | Removed by |
 |---|---|
-| `src/review-engine` | PR 3.4 |
 | `src/publishing` | PR 3.5 |
 | `src/admin` | PR 3.6 |
 | `src/controllers`, `src/services`, `src/views` | PR 3.7 (triage moves out of the MVC layout) |
@@ -103,12 +102,12 @@ removal.
 
 | Allowance | Why it exists | Removed by |
 |---|---|---|
-| `module` -> `src/review-engine` | Modules use the review engine's public barrel before it becomes `modules/review`. | PR 3.4 |
-| `module` -> `src/agent` | Workspace processors use the agent runtime types before agent becomes a platform adapter. | PR 3.9 |
+| `module` -> `src/agent` | Workspace processors and the review engine use the agent runtime types before agent becomes a platform adapter. | PR 3.9 |
+| `module` -> `src/knowledge` | The review engine reads the boot-time knowledge snapshot and handbook paths before knowledge becomes a module. | PR 3.8 |
 | `module` -> `src/config` | Modules use the review schema/loader before config becomes `platform/config`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `module` -> `src/observability` | Modules emit metrics before observability becomes `platform/observability`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `ports` -> `src/config` | `ports/review-config.ts` re-exports `ConfigValidationError` and the `ReviewConfig` type from the concrete loader. | PR 3.10 |
-| `contracts/review.ts` -> `src/review-engine` | `FINDING_CATEGORIES` still lives in `review-engine/types.ts`. PR 3.4 is the intended owner; if the move does not relocate the constant, PR 3.12 moves it into `contracts/review.ts`. | PR 3.4 / PR 3.12 |
+| `contracts/review.ts` -> `src/modules/review` | `FINDING_CATEGORIES` still lives in the review module's `types.ts`. The move PR is move-only, so PR 3.12 moves the constant into `contracts/review.ts`. | PR 3.12 |
 
 ### `process.env` allowances
 

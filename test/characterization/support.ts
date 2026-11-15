@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { JobStatus, OutboxStatus, ReviewState, ReviewTrigger, ReviewType } from "@prisma/client";
 import { reviewConfigSchema, type ReviewConfig } from "../../src/config/review-schema.js";
-import type { Finding, FindingEvidence } from "../../src/review-engine/index.js";
+import type { Finding, FindingEvidence } from "../../src/modules/review/index.js";
 import { disconnectDatabase, prisma } from "../helpers/db.js";
 import { silentLogger } from "../helpers/ingestion.js";
 

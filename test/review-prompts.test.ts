@@ -23,20 +23,20 @@ import type pino from "pino";
 import { describe, expect, test } from "vitest";
 import { reviewConfigSchema } from "../src/config/review-schema.js";
 import type { KnowledgeSnapshot } from "../src/knowledge/types.js";
-import { composeInjectionStage1, composeInjectionLaterStages } from "../src/review-engine/engine.js";
-import { resolveReviewInjection } from "../src/review-engine/injection.js";
+import { composeInjectionStage1, composeInjectionLaterStages } from "../src/modules/review/engine.js";
+import { resolveReviewInjection } from "../src/modules/review/injection.js";
 import {
   COMMON_REVIEW_INSTRUCTIONS,
   HANDBOOK_MODE_INSTRUCTIONS,
   HANDBOOK_REFERENCE_INSTRUCTIONS,
-} from "../src/review-engine/prompts/index.js";
+} from "../src/modules/review/prompts/index.js";
 import {
   CHARS_PER_TOKEN,
   detectTechnologies,
   rankHandbookFiles,
   selectHandbookUnderBudget,
-} from "../src/review-engine/retrieval.js";
-import type { PromptInjection } from "../src/review-engine/types.js";
+} from "../src/modules/review/retrieval.js";
+import type { PromptInjection } from "../src/modules/review/types.js";
 
 const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as pino.Logger;
 void fakeLogger;

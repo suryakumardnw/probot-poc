@@ -13,6 +13,8 @@ import {
   supersedeFindingsForReview,
 } from "../src/modules/findings/index.js";
 import type { ReviewJobPayload } from "../src/modules/ingestion/queue.js";
+import type { Finding, FindingEvidence, ReviewResult } from "../src/modules/review/index.js";
+import type { ReviewRunMetadata } from "../src/modules/review/types.js";
 import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
 import { parseUnifiedDiff, resolveInlinePosition } from "../src/publishing/diff-positions.js";
 import { finalizeReview, type ReviewPipelineDeps } from "../src/publishing/pipeline.js";
@@ -34,8 +36,6 @@ import {
   extractFingerprint,
   fingerprintMarker,
 } from "../src/publishing/summary.js";
-import type { Finding, FindingEvidence, ReviewResult } from "../src/review-engine/index.js";
-import type { ReviewRunMetadata } from "../src/review-engine/types.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { createTestReviewState } from "./helpers/ingestion.js";
 

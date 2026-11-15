@@ -17,7 +17,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { Finding } from "../../review-engine/index.js";
+import type { Finding } from "../../modules/review/index.js";
 
 /** Tokens too common to help distinguish two descriptions about the same code. */
 const STOPWORDS = new Set([

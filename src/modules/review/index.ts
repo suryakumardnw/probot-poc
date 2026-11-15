@@ -25,8 +25,14 @@ export {
   reviewResultSchema,
   type ParsedAnalysisOutput,
   type ParsedReviewResult,
-} from "../contracts/review.js";
+} from "../../contracts/review.js";
 export { createReviewEngineHook, type ReviewEngineHook, type ReviewEngineHookDeps } from "./hook.js";
+export {
+  resolveReviewInjection,
+  selectHandbookSections,
+  selectHandbookVariant,
+  type ResolveInjectionInput,
+} from "./injection.js";
 export type {
   ComplexityFactor,
   ComplexityFactorName,

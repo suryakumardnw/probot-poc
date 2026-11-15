@@ -9,7 +9,7 @@ import { runBenchmarkSuite } from "../src/eval/runner.js";
 import { scoreCase, aggregateScores, percentile, DEFAULT_LINE_TOLERANCE } from "../src/eval/scoring.js";
 import { loadBenchmarkSuites } from "../src/eval/suite-loader.js";
 import type { BenchmarkCase, BenchmarkSuite, CaseScore } from "../src/eval/types.js";
-import type { Finding, RunReviewOutput } from "../src/review-engine/types.js";
+import type { Finding, RunReviewOutput } from "../src/modules/review/types.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 /**

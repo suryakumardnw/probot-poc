@@ -31,10 +31,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentRuntime, AgentSession, AgentTask } from "../agent/types.js";
-import type { ReviewConfig } from "../config/review-schema.js";
-import { analysisOutputSchema, findingSchema, reviewResultSchema } from "../contracts/review.js";
-import type { ParsedAnalysisOutput } from "../contracts/review.js";
+import type { AgentRuntime, AgentSession, AgentTask } from "../../agent/types.js";
+import type { ReviewConfig } from "../../config/review-schema.js";
+import { analysisOutputSchema, findingSchema, reviewResultSchema } from "../../contracts/review.js";
+import type { ParsedAnalysisOutput } from "../../contracts/review.js";
 import { scoreComplexity } from "./complexity.js";
 import { createReviewPlan, skippedStageIds } from "./plan.js";
 import { COMMON_REVIEW_INSTRUCTIONS, CONVENTIONS_INSTRUCTIONS, HANDBOOK_MODE_INSTRUCTIONS } from "./prompts/index.js";
@@ -71,7 +71,7 @@ function truncate(text: string, max: number, note: string): string {
 }
 
 // The security/scope rules live in the shared trusted instruction profile
-// (src/review-engine/prompts/common.ts) so standard, skill and handbook
+// (src/modules/review/prompts/common.ts) so standard, skill and handbook
 // reviews are all composed from the same base (§4.1).
 const COMMON_RULES = COMMON_REVIEW_INSTRUCTIONS;
 const CONVENTIONS_BLOCK = CONVENTIONS_INSTRUCTIONS;
@@ -642,7 +642,11 @@ function countParseRejections(budget: RetrievalBudget): number {
   ).length;
 }
 
-function recordUsage(accounting: TokenAccounting, stage: string, run: import("../agent/types.js").AgentResult): void {
+function recordUsage(
+  accounting: TokenAccounting,
+  stage: string,
+  run: import("../../agent/types.js").AgentResult,
+): void {
   accounting.inputTokens += run.usage?.inputTokens ?? 0;
   accounting.outputTokens += run.usage?.outputTokens ?? 0;
   accounting.calls.push({

@@ -22,7 +22,6 @@ const LEGACY_ELEMENT_PATHS = [
   "src/models",
   "src/observability",
   "src/publishing",
-  "src/review-engine",
   "src/services",
   "src/views",
 ];
@@ -252,7 +251,7 @@ export default tseslint.config(
               allow: { to: { element: { type: "module", fileInternalPath: "index.ts" } } },
             },
             {
-              // TODO(PR 3.4/3.9/3.10): modules still reach un-moved top-level
+              // TODO(PR 3.8/3.9/3.10): modules still reach un-moved top-level
               // directories directly. Each path is removed when its directory
               // moves (or becomes a port-backed platform adapter).
               from: { element: { type: "module" } },
@@ -260,7 +259,7 @@ export default tseslint.config(
                 to: {
                   element: {
                     type: "legacy",
-                    path: ["src/agent", "src/config", "src/observability", "src/review-engine"],
+                    path: ["src/agent", "src/config", "src/knowledge", "src/observability"],
                   },
                 },
               },
@@ -287,10 +286,11 @@ export default tseslint.config(
               allow: { to: { element: { type: "contracts" } } },
             },
             {
-              // TODO(PR 3.4): contracts/review.ts still reads the finding
-              // categories from review-engine/types.ts.
+              // TODO(PR 3.12): contracts/review.ts still reads the finding
+              // categories from the review module; the constant moves into
+              // contracts when the temporary allowances are removed.
               from: { element: { type: "contracts", fileInternalPath: "review.ts" } },
-              allow: { to: { element: { type: "legacy", path: "src/review-engine" } } },
+              allow: { to: { element: { type: "module", path: "src/modules/review" } } },
             },
             {
               // TODO(PR 3.12): delete with LEGACY_ELEMENT_PATHS. Until each
@@ -413,9 +413,9 @@ export default tseslint.config(
       "src/modules/findings/validation.ts",
       "src/modules/webhooks/issue-comment.ts",
       "src/observability/alerts.ts",
+      "src/modules/review/retrieval.ts",
+      "src/modules/review/tools.ts",
       "src/publishing/summary.ts",
-      "src/review-engine/retrieval.ts",
-      "src/review-engine/tools.ts",
       "src/worker.ts",
     ],
     rules: {

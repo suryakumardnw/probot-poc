@@ -30,7 +30,7 @@ import {
   KnowledgeSnapshotError,
 } from "../src/knowledge/index.js";
 import type { KnowledgeFetcher } from "../src/knowledge/types.js";
-import { resolveReviewInjection, selectHandbookSections } from "../src/review-engine/injection.js";
+import { resolveReviewInjection, selectHandbookSections } from "../src/modules/review/injection.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";

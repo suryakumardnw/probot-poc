@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   analysisOutputSchema as analysisOutputSchemaFromEngine,
   reviewResultSchema as reviewResultSchemaFromEngine,
-} from "../review-engine/result-schema.js";
+} from "../modules/review/result-schema.js";
 import { analysisOutputSchema, findingSchema, reviewResultSchema } from "./review.js";
 
 const finding = (overrides: Record<string, unknown> = {}) => ({
@@ -151,8 +151,8 @@ describe("analysisOutputSchema", () => {
   });
 });
 
-describe("temporary review-engine re-export", () => {
-  test("keeps the moved schemas identical until PR 3.4 removes the shim", () => {
+describe("temporary review module re-export", () => {
+  test("keeps the moved schemas identical until PR 3.12 removes the shim", () => {
     expect(reviewResultSchemaFromEngine).toBe(reviewResultSchema);
     expect(analysisOutputSchemaFromEngine).toBe(analysisOutputSchema);
   });

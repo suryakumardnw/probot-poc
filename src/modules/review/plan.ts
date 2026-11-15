@@ -6,7 +6,7 @@
  * engine must enforce (model calls, retrievals, tokens, timeout).
  */
 
-import type { ReviewConfig } from "../config/review-schema.js";
+import type { ReviewConfig } from "../../config/review-schema.js";
 import type { ComplexityScore, PlannedStage, ReviewPlan, ReviewPlanBudgets, StageId } from "./types.js";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));

@@ -8,7 +8,7 @@ import {
 } from "../../src/modules/findings/index.js";
 import { createFindingsRepositories } from "../../src/modules/findings/prisma-findings.repository.js";
 import { createFindingsDependencies } from "../../src/modules/findings/prisma-findings.unit-of-work.js";
-import type { Finding } from "../../src/review-engine/index.js";
+import type { Finding } from "../../src/modules/review/index.js";
 import {
   cleanDatabase,
   disconnectDatabase,

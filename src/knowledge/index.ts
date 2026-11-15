@@ -10,6 +10,7 @@ import type { KnowledgeSnapshot } from "./types.js";
 export type {
   KnowledgeFetcher,
   KnowledgeFileRecord,
+  KnowledgeHandbookVariant,
   KnowledgeSnapshot,
   KnowledgeSourceSnapshot,
   KnowledgeSourceStatus,
@@ -22,7 +23,12 @@ export {
   computeContentHash,
   validateRelativePath,
 } from "./ensure-skills.js";
-export { materializeReviewKnowledge, KnowledgeSnapshotError, persistKnowledgeMetrics } from "./materialize.js";
+export {
+  materializeReviewKnowledge,
+  handbookVariantDir,
+  KnowledgeSnapshotError,
+  persistKnowledgeMetrics,
+} from "./materialize.js";
 export type { MaterializeKnowledgeInput, MaterializeKnowledgeResult } from "./materialize.js";
 export { summarizeKnowledgeSnapshot, summarizeKnowledgeMetrics } from "./summarize.js";
 

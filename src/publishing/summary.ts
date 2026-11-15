@@ -20,7 +20,7 @@
  */
 
 import type { StoredFinding } from "../modules/findings/index.js";
-import { FINDING_CATEGORIES, type FindingCategory, type FindingSeverity } from "../review-engine/types.js";
+import { FINDING_CATEGORIES, type FindingCategory, type FindingSeverity } from "../modules/review/index.js";
 
 const MAX_BODY_CHARS = 60_000; // GitHub hard cap is 65,536.
 const SUMMARY_SENTENCES = 2;
