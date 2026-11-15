@@ -3,6 +3,7 @@ import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentRuntimeError } from "../src/agent/types.js";
 import { reviewConfigSchema } from "../src/config/review-schema.js";
+import { ReviewRetrievalError } from "../src/modules/workspace/workspace.js";
 import { AlertManager, loadAlertThresholds, type AlertSignal } from "../src/observability/alerts.js";
 import {
   createReviewLogger,
@@ -32,7 +33,6 @@ import {
 } from "../src/observability/retry.js";
 import { startSpan, endSpan, reviewSpanAttributes, withSpanSync } from "../src/observability/tracing.js";
 import { ProviderError, RateLimitError, ValidationError } from "../src/shared/errors/index.js";
-import { ReviewRetrievalError } from "../src/workspace/workspace.js";
 
 /**
  * Ticket 12 unit tests: metrics registry, correlation logging, tracing,

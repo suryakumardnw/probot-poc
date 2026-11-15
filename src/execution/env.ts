@@ -27,7 +27,7 @@ export const EXECUTION_ENV_ALLOWLIST = Object.freeze([
   "GIT_COMMITTER_EMAIL",
 ]);
 
-/** Hardened git variables set for every execution (see src/workspace/git.ts). */
+/** Hardened git variables set for every execution (see src/modules/workspace/git.ts). */
 const GIT_HARDENING: Record<string, string> = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_CONFIG_NOSYSTEM: "1",

@@ -11,7 +11,7 @@
  */
 
 import type { ReviewConfig } from "../config/review-schema.js";
-import type { WorkspaceResult } from "../workspace/workspace.js";
+import type { WorkspaceResult } from "../modules/workspace/index.js";
 import type { ComplexityFactor, ComplexityFactorName, ComplexityScore, ComplexityTier } from "./types.js";
 
 /** Lines added/removed beyond which the diff-size subscore saturates. */

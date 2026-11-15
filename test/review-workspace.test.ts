@@ -8,7 +8,7 @@ import { UnrecoverableError } from "bullmq";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { AgentRuntimeError } from "../src/agent/types.js";
 import { createIngestionRepositories } from "../src/modules/ingestion/prisma-ingestion.repository.js";
-import type { InstallationTokenProvider } from "../src/workspace/credentials.js";
+import type { InstallationTokenProvider } from "../src/modules/workspace/credentials.js";
 import {
   parseNameStatus,
   readWorkspaceFile,
@@ -16,16 +16,16 @@ import {
   PathEscapeError,
   FileTooLargeError,
   looksBinary,
-} from "../src/workspace/files.js";
-import { createPrismaWorkspaceRepository } from "../src/workspace/prisma-workspace.repository.js";
-import { ReviewJobRetryError, processReviewJob, type ProcessReviewJobDeps } from "../src/workspace/processor.js";
-import { redactCredentials, sanitizeGitUrl } from "../src/workspace/redact.js";
+} from "../src/modules/workspace/files.js";
+import { createPrismaWorkspaceRepository } from "../src/modules/workspace/prisma-workspace.repository.js";
+import { ReviewJobRetryError, processReviewJob, type ProcessReviewJobDeps } from "../src/modules/workspace/processor.js";
+import { redactCredentials, sanitizeGitUrl } from "../src/modules/workspace/redact.js";
 import {
   ReviewWorkspaceService,
   StaleCommitError,
   CloneFailedError,
   DiffFailedError,
-} from "../src/workspace/workspace.js";
+} from "../src/modules/workspace/workspace.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { createTestReviewState } from "./helpers/ingestion.js";
 

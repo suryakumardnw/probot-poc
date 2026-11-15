@@ -8,18 +8,18 @@ import { reconcileIncompleteReviews } from "../../src/modules/ingestion/index.js
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
 import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/modules/ingestion/queue.js";
-import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/observability/retry.js";
 import {
   ReviewJobRetryError,
   processReviewJob,
   startReviewWorker,
   stopReviewWorker,
-} from "../../src/workspace/processor.js";
+} from "../../src/modules/workspace/processor.js";
 import {
   ReviewRetrievalError,
   type ReviewWorkspaceOperations,
   type WorkspaceResult,
-} from "../../src/workspace/workspace.js";
+} from "../../src/modules/workspace/workspace.js";
+import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/observability/retry.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion, createTestReviewState, silentLogger } from "../helpers/ingestion.js";
 import {

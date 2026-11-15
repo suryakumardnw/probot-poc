@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { workspaceDirectorySizeBytes } from "../src/workspace/disk.js";
+import { workspaceDirectorySizeBytes } from "../src/modules/workspace/disk.js";
 
 describe("workspaceDirectorySizeBytes", () => {
   test("sums regular files recursively and skips symlinks", async () => {

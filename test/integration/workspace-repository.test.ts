@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { createPrismaWorkspaceRepository } from "../../src/workspace/prisma-workspace.repository.js";
+import { createPrismaWorkspaceRepository } from "../../src/modules/workspace/prisma-workspace.repository.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "../characterization/support.js";
 
 /**

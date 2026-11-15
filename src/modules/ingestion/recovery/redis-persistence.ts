@@ -25,7 +25,7 @@
  *   1. Set REDIS_URL for both the Probot server and the worker.
  *   2. Enable AOF as above (or a managed Redis with persistence enabled).
  *   3. Keep `maxRetriesPerRequest: null` on worker connections (already set in
- *      src/workspace/processor.ts) so brief Redis outages don't kill in-flight
+ *      src/modules/workspace/processor.ts) so brief Redis outages don't kill in-flight
  *      jobs.
  *   4. On Redis restart: outbox recovery republishes pending events and
  *      reconciliation re-enqueues stale processing jobs — no operator action.

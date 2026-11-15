@@ -15,15 +15,19 @@ import { checkRedis, disconnectRedis, waitRedisReady } from "../lib/redis.js";
 import { registerGracefulShutdown, runShutdownSteps, type ShutdownStep } from "../lib/shutdown.js";
 import { reconcileIncompleteReviews } from "../modules/ingestion/index.js";
 import { createWorkerConnection } from "../modules/ingestion/queue.js";
+import {
+  ReviewWorkspaceService,
+  createDefaultTokenProvider,
+  createPrismaWorkspaceRepository,
+  startReviewWorker,
+  stopReviewWorker,
+  workspaceDirectorySizeBytes,
+} from "../modules/workspace/index.js";
 import { AlertManager } from "../observability/alerts.js";
 import { startMetricsServer, metricsServerPort } from "../observability/metrics-endpoint.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
 import { retryPolicyConfigFromReviewConfig } from "../observability/retry.js";
 import { createReviewPipelineHook } from "../publishing/index.js";
-import { workspaceDirectorySizeBytes } from "../workspace/disk.js";
-import { createPrismaWorkspaceRepository } from "../workspace/prisma-workspace.repository.js";
-import { createDefaultTokenProvider, startReviewWorker, stopReviewWorker } from "../workspace/processor.js";
-import { ReviewWorkspaceService } from "../workspace/workspace.js";
 import { createConfigStore, createIngestionModule, createPlatformClients, createReviewModule } from "./clients.js";
 
 /**

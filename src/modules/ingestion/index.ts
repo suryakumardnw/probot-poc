@@ -35,6 +35,7 @@ import { createReviewStateService, type ReviewStateService } from "./review-stat
 
 export { REVIEW_TYPES } from "../../contracts/queue.js";
 export type { IngestOutcome, ReviewTypeValue } from "../../contracts/queue.js";
+export { REVIEW_QUEUE_NAME, parseReviewJobPayload, type ReviewJobPayload } from "./queue.js";
 export type { ReviewState } from "./ingestion.repository.js";
 export {
   createIngestionReadService,

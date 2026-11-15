@@ -1,26 +1,28 @@
 import fs from "node:fs";
 import { UnrecoverableError, Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { AgentRuntimeError } from "../agent/types.js";
-import {
-  isTerminalReviewState,
-  type IngestionRepositories,
-  type ReviewState,
-  type ReviewStateService,
-} from "../modules/ingestion/index.js";
-import { parseReviewJobPayload, REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../modules/ingestion/queue.js";
+import { AgentRuntimeError } from "../../agent/types.js";
 import {
   createReviewLogger,
   startStage,
   type ReviewCorrelation,
   type StageTracker,
-} from "../observability/correlation.js";
-import { getMetricsRegistry } from "../observability/metrics.js";
-import { classifyQueueFailure, type FailureClass, type RetryPolicyConfig } from "../observability/retry.js";
-import { DEFAULT_RETRY_POLICY_CONFIG } from "../observability/retry.js";
-import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
-import type { Logger } from "../ports/logger.js";
-import { AppError } from "../shared/errors/index.js";
+} from "../../observability/correlation.js";
+import { getMetricsRegistry } from "../../observability/metrics.js";
+import { classifyQueueFailure, type FailureClass, type RetryPolicyConfig } from "../../observability/retry.js";
+import { DEFAULT_RETRY_POLICY_CONFIG } from "../../observability/retry.js";
+import { endSpan, reviewSpanAttributes, startSpan } from "../../observability/tracing.js";
+import type { Logger } from "../../ports/logger.js";
+import { AppError } from "../../shared/errors/index.js";
+import {
+  isTerminalReviewState,
+  parseReviewJobPayload,
+  REVIEW_QUEUE_NAME,
+  type IngestionRepositories,
+  type ReviewJobPayload,
+  type ReviewState,
+  type ReviewStateService,
+} from "../ingestion/index.js";
 import { AppInstallationTokenProvider, NullTokenProvider, type InstallationTokenProvider } from "./credentials.js";
 import { redactCredentials } from "./redact.js";
 import {

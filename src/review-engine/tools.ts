@@ -20,7 +20,7 @@ import {
   PathEscapeError,
   readWorkspaceFile,
   resolveWorkspacePath,
-} from "../workspace/files.js";
+} from "../modules/workspace/index.js";
 
 export type ToolName = "read_file" | "list_files" | "get_diff" | "search_code";
 

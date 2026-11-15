@@ -25,7 +25,7 @@ descriptor and are therefore `bootstrap`.
 | `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | `src/{admin,agent,config,controllers,eval,execution,knowledge,lib,models,observability,publishing,review-engine,services,views,workspace}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
+| `legacy` | `src/{admin,agent,config,controllers,eval,execution,knowledge,lib,models,observability,publishing,review-engine,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -89,7 +89,6 @@ removal.
 
 | Path | Removed by |
 |---|---|
-| `src/workspace` | PR 3.3 |
 | `src/review-engine` | PR 3.4 |
 | `src/publishing` | PR 3.5 |
 | `src/admin` | PR 3.6 |
@@ -105,7 +104,7 @@ removal.
 | Allowance | Why it exists | Removed by |
 |---|---|---|
 | `module` -> `src/review-engine` | Modules use the review engine's public barrel before it becomes `modules/review`. | PR 3.4 |
-| `module` -> `src/workspace` | Ingestion still imports workspace file helpers. | PR 3.3 |
+| `module` -> `src/agent` | Workspace processors use the agent runtime types before agent becomes a platform adapter. | PR 3.9 |
 | `module` -> `src/config` | Modules use the review schema/loader before config becomes `platform/config`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `module` -> `src/observability` | Modules emit metrics before observability becomes `platform/observability`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `ports` -> `src/config` | `ports/review-config.ts` re-exports `ConfigValidationError` and the `ReviewConfig` type from the concrete loader. | PR 3.10 |
@@ -130,7 +129,7 @@ the allowance.
 | `src/observability/**` | PR 3.10; PR 3.12 final |
 | `src/publishing/**` | PR 3.5; PR 3.12 final |
 | `src/services/**` | PR 3.7; PR 3.12 final |
-| `src/workspace/**` | PR 3.3; PR 3.12 final |
+| `src/modules/workspace/**` | PR 3.12 final (token provider reads environment) |
 | `src/scripts/**` | PR 3.11; PR 3.12 final |
 
 ### Prisma allowances

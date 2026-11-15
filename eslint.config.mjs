@@ -25,7 +25,6 @@ const LEGACY_ELEMENT_PATHS = [
   "src/review-engine",
   "src/services",
   "src/views",
-  "src/workspace",
 ];
 
 /**
@@ -61,8 +60,9 @@ const PROCESS_ENV_ALLOWED_FILES = [
   "src/publishing/**/*.ts",
   // TODO(PR 3.7; PR 3.12 final): triage services move into a module.
   "src/services/**/*.ts",
-  // TODO(PR 3.3; PR 3.12 final): workspace moves into a module.
-  "src/workspace/**/*.ts",
+  // TODO(PR 3.12): the workspace module still reads GitHub App credentials
+  // from the environment in its token provider.
+  "src/modules/workspace/**/*.ts",
 ];
 
 /**
@@ -252,7 +252,7 @@ export default tseslint.config(
               allow: { to: { element: { type: "module", fileInternalPath: "index.ts" } } },
             },
             {
-              // TODO(PR 3.3/3.4/3.10): modules still reach un-moved top-level
+              // TODO(PR 3.4/3.9/3.10): modules still reach un-moved top-level
               // directories directly. Each path is removed when its directory
               // moves (or becomes a port-backed platform adapter).
               from: { element: { type: "module" } },
@@ -260,7 +260,7 @@ export default tseslint.config(
                 to: {
                   element: {
                     type: "legacy",
-                    path: ["src/config", "src/observability", "src/review-engine", "src/workspace"],
+                    path: ["src/agent", "src/config", "src/observability", "src/review-engine"],
                   },
                 },
               },

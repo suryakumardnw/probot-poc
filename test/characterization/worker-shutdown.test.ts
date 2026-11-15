@@ -10,14 +10,14 @@ import { disconnectRedis } from "../../src/lib/redis.js";
 import { orderShutdownSteps } from "../../src/lib/shutdown.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
 import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/modules/ingestion/queue.js";
-import { NullTokenProvider } from "../../src/workspace/credentials.js";
-import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
+import { NullTokenProvider } from "../../src/modules/workspace/credentials.js";
+import { startReviewWorker, stopReviewWorker } from "../../src/modules/workspace/processor.js";
 import {
   ReviewRetrievalError,
   ReviewWorkspaceService,
   type ReviewWorkspaceOperations,
   type WorkspaceResult,
-} from "../../src/workspace/workspace.js";
+} from "../../src/modules/workspace/workspace.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestReviewState, silentLogger } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, jobIdentity, prisma, seedReviewChain } from "./support.js";

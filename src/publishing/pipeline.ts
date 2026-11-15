@@ -30,15 +30,13 @@ import {
 } from "../modules/findings/index.js";
 import type { ReviewStateService } from "../modules/ingestion/index.js";
 import type { ReviewJobPayload } from "../modules/ingestion/queue.js";
+import { redactCredentials, type InstallationTokenProvider, type WorkspaceResult } from "../modules/workspace/index.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 import type { PublisherOctokit } from "../ports/github-publisher.js";
 import type { Logger } from "../ports/logger.js";
 import { createReviewEngineHook } from "../review-engine/hook.js";
 import { resolveReviewInjection } from "../review-engine/injection.js";
 import type { KnowledgeInjectionMetrics, PromptInjection, RunReviewOutput } from "../review-engine/types.js";
-import type { InstallationTokenProvider } from "../workspace/credentials.js";
-import { redactCredentials } from "../workspace/redact.js";
-import type { WorkspaceResult } from "../workspace/workspace.js";
 import { StaleHeadError, createGitHubOctokit, publishReview, recordPublicationFailure } from "./publisher.js";
 import type { PublishingRepositories, ReviewPublicationRepository } from "./publishing.repository.js";
 
