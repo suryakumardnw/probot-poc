@@ -12,7 +12,8 @@ import { createReviewStateService, type ReviewStateService } from "../../src/ing
 import { systemClock, type Clock } from "../../src/ports/clock.js";
 import type { Logger } from "../../src/ports/logger.js";
 import type { ReviewConfigStore } from "../../src/ports/review-config.js";
-import { prisma, testEnv } from "./db.js";
+import { prisma } from "./db.js";
+import { testEnv } from "./env.js";
 
 /**
  * Build an ingestion module against test-owned clients.

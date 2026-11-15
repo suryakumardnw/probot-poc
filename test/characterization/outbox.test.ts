@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createReviewQueue } from "../../src/ingestion/queue.js";
-import { testEnv } from "../helpers/db.js";
+import { testEnv } from "../helpers/env.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
 

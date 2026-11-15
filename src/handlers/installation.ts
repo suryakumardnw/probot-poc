@@ -31,7 +31,7 @@ export function registerInstallationHandlers(app: Probot, deps: InstallationHand
         });
 
         for (const repo of repositories ?? []) {
-          await repos.repositories.upsertActive({
+          await repos.repositories.upsertFromInstallation({
             githubRepositoryId: BigInt(repo.id),
             installationId: record.id,
             fullName: repo.full_name,

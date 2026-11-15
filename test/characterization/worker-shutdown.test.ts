@@ -12,7 +12,7 @@ import { disconnectRedis } from "../../src/lib/redis.js";
 import { NullTokenProvider } from "../../src/workspace/credentials.js";
 import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
 import { ReviewWorkspaceService, type WorkspaceResult } from "../../src/workspace/workspace.js";
-import { testEnv } from "../helpers/db.js";
+import { testEnv } from "../helpers/env.js";
 import { createTestReviewState, silentLogger } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
 

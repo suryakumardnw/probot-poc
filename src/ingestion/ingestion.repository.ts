@@ -337,6 +337,11 @@ export interface InstallationRepository {
 
 export interface RepositoryRepository {
   upsertActive(input: UpsertRepositoryInput): Promise<RepositoryRecord>;
+  /**
+   * Installation lifecycle upsert: writes the payload's default branch
+   * verbatim (a null clears a previously stored branch).
+   */
+  upsertFromInstallation(input: UpsertRepositoryInput): Promise<RepositoryRecord>;
   /** Internal lookup by GitHub's numeric repository id. */
   findByGithubId(githubRepositoryId: bigint): Promise<RepositoryRecord | null>;
   /** Disable every repository belonging to one installation. Returns the count. */

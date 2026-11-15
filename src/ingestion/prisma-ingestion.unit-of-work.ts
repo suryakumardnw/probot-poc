@@ -1,4 +1,3 @@
-import type { ReviewConfigStore } from "../ports/review-config.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 import { createIngestionRepositories, type PrismaRootClient } from "./prisma-ingestion.repository.js";
 
@@ -18,23 +17,5 @@ export function createIngestionUnitOfWork(prisma: PrismaRootClient): IngestionUn
     execute<T>(work: (repos: IngestionRepositories) => Promise<T>): Promise<T> {
       return prisma.$transaction((tx) => work(createIngestionRepositories(tx)));
     },
-  };
-}
-
-export type IngestionServiceDependencies = {
-  repositories: IngestionRepositories;
-  unitOfWork: IngestionUnitOfWork;
-  config: ReviewConfigStore;
-};
-
-/** Build the service dependencies for one Prisma client and config store. */
-export function createIngestionDependencies(
-  prisma: PrismaRootClient,
-  config: ReviewConfigStore,
-): IngestionServiceDependencies {
-  return {
-    repositories: createIngestionRepositories(prisma),
-    unitOfWork: createIngestionUnitOfWork(prisma),
-    config,
   };
 }

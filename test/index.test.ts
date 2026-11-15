@@ -3,9 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Probot, ProbotOctokit } from "probot";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApp } from "../src/index.js";
 import issueOpenedPayload from "./fixtures/issues.opened.json" with { type: "json" };
+import { disconnectDatabase } from "./helpers/db.js";
 import { createTestIngestion } from "./helpers/ingestion.js";
 // Requiring our fixtures
 
@@ -75,6 +76,10 @@ function createServer() {
 
 describe("probot-poc app", () => {
   let probot: any;
+
+  afterAll(async () => {
+    await disconnectDatabase();
+  });
 
   beforeEach(() => {
     probot = new Probot({

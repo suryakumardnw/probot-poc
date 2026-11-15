@@ -3,8 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { Probot, ProbotOctokit } from "probot";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApp } from "../../src/index.js";
+import { disconnectDatabase } from "../helpers/db.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
 
 /**
@@ -129,6 +130,10 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.GROQ_API_KEY;
+});
+
+afterAll(async () => {
+  await disconnectDatabase();
 });
 
 describe("issues.opened triage", () => {

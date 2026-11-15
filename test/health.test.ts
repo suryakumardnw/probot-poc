@@ -1,7 +1,8 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { checkDependencies } from "../src/lib/health.js";
 import { createRedis, disconnectRedis } from "../src/lib/redis.js";
-import { prisma, testEnv } from "./helpers/db.js";
+import { prisma, disconnectDatabase } from "./helpers/db.js";
+import { testEnv } from "./helpers/env.js";
 
 /**
  * These tests run against localhost where Postgres/Redis are typically not
@@ -13,6 +14,7 @@ const healthRedis = createRedis(testEnv);
 
 afterAll(async () => {
   await disconnectRedis(healthRedis);
+  await disconnectDatabase();
 });
 
 describe("checkDependencies (degraded path)", () => {

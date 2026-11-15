@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createServerRuntime } from "../src/bootstrap/server.js";
 import { createWorkerRuntime } from "../src/bootstrap/worker.js";
-import { testEnv } from "./helpers/db.js";
+import { testEnv } from "./helpers/env.js";
 
 /**
  * Bootstrap smoke tests.
@@ -9,6 +9,13 @@ import { testEnv } from "./helpers/db.js";
  * Both composition roots build the full object graph without starting work:
  * the server does not listen, the worker does not consume jobs. Teardown
  * closes every client so the suite leaves nothing running.
+ *
+ * The thin `src/server.ts` / `src/worker.ts` entry points immediately call
+ * `bootstrapServer()` / `bootstrapWorker()`, which listen / start consuming
+ * jobs and exit the process on failure. Invoking those wrappers in-process is
+ * therefore not safe; these runtime factories are exactly the graphs the
+ * wrappers build, minus those side effects, so this is the closest safe
+ * smoke test.
  */
 
 const saved = {

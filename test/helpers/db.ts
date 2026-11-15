@@ -1,15 +1,14 @@
-import { loadEnv } from "../../src/config/env.js";
 import { createPrisma, disconnectPrisma } from "../../src/lib/prisma.js";
+import { testEnv } from "./env.js";
 
 /**
  * Shared test database client.
  *
  * Tests construct their own Prisma client instead of reaching for a production
- * singleton, and close it in their teardown. Postgres is expected to be up for
- * the suites that import this module.
+ * singleton, and close it in their teardown. Suites that only need environment
+ * settings import `testEnv` from `./env.js` instead, so they do not create an
+ * unused client.
  */
-
-export const testEnv = loadEnv();
 
 export const prisma = createPrisma(testEnv);
 

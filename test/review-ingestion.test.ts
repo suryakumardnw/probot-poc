@@ -8,7 +8,8 @@ import { createApp } from "../src/index.js";
 import { InvalidStateTransitionError } from "../src/ingestion/index.js";
 import { createReviewQueue, type ReviewJobPayload } from "../src/ingestion/queue.js";
 import { createRedis, checkRedis, disconnectRedis } from "../src/lib/redis.js";
-import { disconnectDatabase, prisma, testEnv } from "./helpers/db.js";
+import { disconnectDatabase, prisma } from "./helpers/db.js";
+import { testEnv } from "./helpers/env.js";
 import { createTestIngestion } from "./helpers/ingestion.js";
 
 /**
@@ -122,12 +123,17 @@ function commentPayload(body: string, overrides: Record<string, unknown> = {}) {
 function installationPayload(
   installationId: number,
   accountLogin: string,
-  repos: Array<{ id: number; full_name: string }>,
+  repos: Array<{ id: number; full_name: string; default_branch?: string }>,
 ) {
   return {
     action: "created",
     installation: { id: installationId, account: { login: accountLogin } },
-    repositories: repos.map((r) => ({ id: r.id, full_name: r.full_name, name: r.full_name.split("/")[1] })),
+    repositories: repos.map((r) => ({
+      id: r.id,
+      full_name: r.full_name,
+      name: r.full_name.split("/")[1],
+      default_branch: r.default_branch,
+    })),
   };
 }
 
@@ -591,6 +597,33 @@ describe("review ingestion", () => {
     expect(deleted.status).toBe("deleted");
     const disabled = await prisma.repository.findMany({ where: { installationId: installation.id } });
     expect(disabled.every((r) => r.status === "disabled")).toBe(true);
+  });
+
+  test("installation.created writes the payload default branch verbatim (null clears it)", async () => {
+    await receiveDelivery(
+      probot,
+      "installation",
+      "created",
+      installationPayload(9904, "octo-org", [{ id: 6604, full_name: "octo-org/delta", default_branch: "main" }]),
+      "delivery-install-branch-1",
+    );
+
+    let repository = await prisma.repository.findUniqueOrThrow({ where: { githubRepositoryId: BigInt(6604) } });
+    expect(repository.defaultBranch).toBe("main");
+
+    // GitHub installation payloads are authoritative: a missing branch must
+    // overwrite the stored value with null, exactly like the pre-refactor
+    // handler.
+    await receiveDelivery(
+      probot,
+      "installation",
+      "created",
+      installationPayload(9904, "octo-org", [{ id: 6604, full_name: "octo-org/delta" }]),
+      "delivery-install-branch-2",
+    );
+
+    repository = await prisma.repository.findUniqueOrThrow({ where: { githubRepositoryId: BigInt(6604) } });
+    expect(repository.defaultBranch).toBeNull();
   });
 
   test("manual ingestion creates a manual review and status lookup reports job + transitions", async () => {

@@ -326,6 +326,28 @@ export function createRepositoryRepository(client: PrismaDatabaseClient): Reposi
       return mapRepository(row);
     },
 
+    async upsertFromInstallation(input: UpsertRepositoryInput): Promise<RepositoryRecord> {
+      const row = await client.repository.upsert({
+        where: { githubRepositoryId: input.githubRepositoryId },
+        create: {
+          githubRepositoryId: input.githubRepositoryId,
+          installationId: input.installationId,
+          fullName: input.fullName,
+          defaultBranch: input.defaultBranch,
+          status: "active",
+        },
+        update: {
+          fullName: input.fullName,
+          // Installation payloads are authoritative: a missing branch is
+          // written as null, matching the original handler behaviour.
+          defaultBranch: input.defaultBranch,
+          installationId: input.installationId,
+          status: "active",
+        },
+      });
+      return mapRepository(row);
+    },
+
     async findByGithubId(githubRepositoryId: bigint): Promise<RepositoryRecord | null> {
       const row = await client.repository.findUnique({ where: { githubRepositoryId } });
       return row ? mapRepository(row) : null;
