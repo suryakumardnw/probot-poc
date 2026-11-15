@@ -8,6 +8,7 @@ import {
   probeSdkHost,
   type SdkHostClientOptions,
 } from "../src/platform/agents/sdk/client.js";
+import { defined } from "./helpers/assert.js";
 
 // ---------------------------------------------------------------------------
 // Fake child process
@@ -77,8 +78,7 @@ function makeClient(child: FakeChild, overrides: Partial<SdkHostClientOptions> =
 }
 
 function startRequest(child: FakeChild): { id: number; method: string; params: unknown } {
-  const line = child.stdin.writes[0];
-  expect(line).toBeTruthy();
+  const line = defined(child.stdin.writes[0], "start request line");
   return JSON.parse(line) as { id: number; method: string; params: unknown };
 }
 

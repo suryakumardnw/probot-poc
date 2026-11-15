@@ -4,15 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, test } from "vitest";
-import { DockerSandboxExecutor, DEFAULT_SANDBOX_IMAGE } from "../src/modules/execution/docker-executor.js";
-import { ExecutionService, createPrismaExecutionAuditRepository } from "../src/modules/execution/index.js";
-import { evaluateCommand } from "../src/modules/execution/policy.js";
+import { DockerSandboxExecutor, DEFAULT_SANDBOX_IMAGE } from "../../src/modules/execution/docker-executor.js";
+import { ExecutionService, createPrismaExecutionAuditRepository } from "../../src/modules/execution/index.js";
+import { evaluateCommand } from "../../src/modules/execution/policy.js";
 import {
   ExecutionPolicyError,
   type CommandRequest,
   type ReviewExecutionConfig,
-} from "../src/modules/execution/types.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
+} from "../../src/modules/execution/types.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 /**
  * Ticket 11 integration tests: secure execution and resource isolation.

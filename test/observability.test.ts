@@ -33,6 +33,7 @@ import {
   DEFAULT_RETRY_POLICY_CONFIG,
   retryPolicyConfigFromReviewConfig,
 } from "../src/shared/retry.js";
+import { defined } from "./helpers/assert.js";
 
 /**
  * Ticket 12 unit tests: metrics registry, correlation logging, tracing,
@@ -237,7 +238,7 @@ describe("correlation logging", () => {
       stage: "clone",
       msg: "Review stage completed: clone",
     });
-    expect(lines[1].duration_ms).toBeTypeOf("number");
+    expect(defined(lines[1]).duration_ms).toBeTypeOf("number");
   });
 
   test("startStage.fail emits a stage failure and only logs caller-sanitized error text", () => {
@@ -335,7 +336,7 @@ describe("AlertManager", () => {
 
     const raised = manager.evaluate(signals({ queueDepth: 10 }));
     expect(raised.map((e) => `${e.alert}:${e.action}`)).toEqual(["queue_backlog:raised"]);
-    expect(lines[0].msg).toBe("Alert raised");
+    expect(defined(lines[0]).msg).toBe("Alert raised");
     expect(events).toEqual(["queue_backlog:raised"]);
 
     const stillActive = manager.evaluate(signals({ queueDepth: 10 }));
@@ -570,12 +571,13 @@ describe("metrics endpoint", () => {
   });
 
   test("rejects non-GET methods with 405", () => {
+    const headers: Record<string, string> = {};
     const res = {
       statusCode: 0,
-      headers: {} as Record<string, string>,
+      headers,
       end: () => {},
       setHeader(name: string, value: string) {
-        this.headers[name] = value;
+        headers[name] = value;
       },
     } as unknown as http.ServerResponse;
     const req = { method: "POST" } as http.IncomingMessage;

@@ -43,7 +43,7 @@ Key properties (enforced by the compose file and asserted by
 - **Resource limits** on every service (`deploy.resources.limits`).
 - **Graceful shutdown**: PID 1 is `node` (SIGTERM reaches it); the worker
   drains in-flight reviews and reconciles incomplete reviews on restart
-  (`test/recovery.test.ts`).
+  (`test/integration/recovery.test.ts`).
 - **No Docker socket mounted anywhere.** The worker talks to the sandbox
   daemon via `SANDBOX_DOCKER_HOST` (remote endpoint over TCP/SSH) — see §5.
 - **Secrets** come from `deploy/.env` (gitignored) and
@@ -492,7 +492,7 @@ is **not** a backup against host loss. Copy archives off-host (e.g. nightly
   worker ready`); AOF persistence (`redis-data` volume) preserves queued
   work.
 - Worker crash recovery is covered by unit/integration tests
-  (`test/recovery.test.ts`): on startup the worker reconciles incomplete
+  (`test/integration/recovery.test.ts`): on startup the worker reconciles incomplete
   reviews (marks orphaned reviews failed and re-enqueues where appropriate),
   so a killed worker never loses review state.
 
@@ -750,7 +750,7 @@ Scenarios from architecture §10.4, with local verification status:
    (`worker_failures_total`). *Live outage drill is user-environment.*
 7. **Worker failure** — verified: worker container exits non-zero on config
    error and Docker restarts it (`unless-stopped`); restart reconciliation
-   covered by `test/recovery.test.ts`.
+   covered by `test/integration/recovery.test.ts`.
 8. **Config rollback** — `config/review.json` is baked into the image;
    validate with the schema (`config/schemas`) before deploy; rollback =
    redeploy previous image. *Rollback drill is user-environment.*

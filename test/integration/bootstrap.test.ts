@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createServerRuntime, isAdminDevLoginEnabled } from "../src/bootstrap/server.js";
-import { createWorkerRuntime } from "../src/bootstrap/worker.js";
-import type { Env } from "../src/platform/config/env.js";
-import { testEnv } from "./helpers/env.js";
+import { createServerRuntime, isAdminDevLoginEnabled } from "../../src/bootstrap/server.js";
+import { createWorkerRuntime } from "../../src/bootstrap/worker.js";
+import type { Env } from "../../src/platform/config/env.js";
+import { testEnv } from "../helpers/env.js";
 
 /**
  * Bootstrap smoke tests.

@@ -3,16 +3,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ReviewState } from "@prisma/client";
 import { Probot, ProbotOctokit } from "probot";
-import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { ReviewJobPayload } from "../src/contracts/queue.js";
-import { createApp } from "../src/index.js";
-import { InvalidStateTransitionError } from "../src/modules/ingestion/index.js";
-import { createReviewQueue } from "../src/platform/queue/review-queue.js";
-import { createRedis, checkRedis, disconnectRedis } from "../src/platform/redis.js";
-import { disconnectDatabase, prisma } from "./helpers/db.js";
-import { testEnv } from "./helpers/env.js";
-import { createTestIngestion } from "./helpers/ingestion.js";
-import { createTestTriage } from "./helpers/triage.js";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
+import type { ReviewJobPayload } from "../../src/contracts/queue.js";
+import { createApp } from "../../src/index.js";
+import { InvalidStateTransitionError } from "../../src/modules/ingestion/index.js";
+import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
+import { createRedis, checkRedis, disconnectRedis } from "../../src/platform/redis.js";
+import { at, first } from "../helpers/assert.js";
+import { disconnectDatabase, prisma } from "../helpers/db.js";
+import { testEnv } from "../helpers/env.js";
+import { webhookReceiver } from "../helpers/events.js";
+import { createTestIngestion } from "../helpers/ingestion.js";
+import { createTestTriage } from "../helpers/triage.js";
 
 /**
  * Ticket 03 integration tests: durable review ingestion.
@@ -23,7 +25,7 @@ import { createTestTriage } from "./helpers/triage.js";
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const privateKey = fs.readFileSync(path.join(__dirname, "fixtures/mock-cert.pem"), "utf-8");
+const privateKey = fs.readFileSync(path.join(__dirname, "../fixtures/mock-cert.pem"), "utf-8");
 
 // Integration tests run against the local docker-compose dependencies.
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
@@ -40,8 +42,8 @@ process.env.MODEL_BASE_URL ??= "http://localhost:8000";
  * the rest of the time so all other tests exercise the real configuration.
  */
 const configPathHolder = vi.hoisted(() => ({ path: undefined as string | undefined }));
-vi.mock("../src/platform/config/review-loader.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/platform/config/review-loader.js")>();
+vi.mock("../../src/platform/config/review-loader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/platform/config/review-loader.js")>();
   return {
     ...actual,
     loadReviewConfig: ((path: string, ...rest: unknown[]) =>
@@ -170,7 +172,7 @@ async function receiveDelivery(
   payload: Record<string, unknown>,
   deliveryId: string,
 ): Promise<void> {
-  await probot.receive({
+  await webhookReceiver(probot).receive({
     id: deliveryId,
     name: event,
     payload: { ...payload, ...(action ? { action } : {}) },
@@ -252,10 +254,6 @@ describe("review ingestion", () => {
     probot.load(testApp);
   });
 
-  afterEach(async () => {
-    await probot?.teardown?.();
-  });
-
   test("pull_request.opened persists installation, repository, PR, review (queued) and enqueues the job", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-opened-1");
 
@@ -289,8 +287,8 @@ describe("review ingestion", () => {
     // Initial state transition persisted.
     const transitions = await prisma.reviewStateTransition.findMany({ where: { reviewId: review!.id } });
     expect(transitions).toHaveLength(1);
-    expect(transitions[0].fromState).toBeNull();
-    expect(transitions[0].toState).toBe("queued");
+    expect(first(transitions).fromState).toBeNull();
+    expect(first(transitions).toState).toBe("queued");
   });
 
   test("duplicate webhook delivery is ignored", async () => {
@@ -323,11 +321,11 @@ describe("review ingestion", () => {
 
   test("synchronize supersedes the in-flight review of the previous commit (§4.4)", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-sync-1");
-    const first = await prisma.review.findFirstOrThrow();
+    const firstReview = await prisma.review.findFirstOrThrow();
     // Push the first review into an in-flight stage so superseding is observable.
-    await prisma.review.update({ where: { id: first.id }, data: { state: "analyzing" } });
+    await prisma.review.update({ where: { id: firstReview.id }, data: { state: "analyzing" } });
     await prisma.reviewStateTransition.create({
-      data: { reviewId: first.id, fromState: "queued", toState: "analyzing" },
+      data: { reviewId: firstReview.id, fromState: "queued", toState: "analyzing" },
     });
 
     const newSha = "cccc3333cccc3333cccc3333cccc3333cccc3333";
@@ -341,12 +339,14 @@ describe("review ingestion", () => {
 
     const reviews = await prisma.review.findMany({ orderBy: { createdAt: "asc" } });
     expect(reviews).toHaveLength(2);
-    expect(reviews[0].state).toBe("superseded");
-    expect(reviews[0].supersededByReviewId).toBe(reviews[1].id);
-    expect(reviews[1].headSha).toBe(newSha);
-    expect(reviews[1].state).toBe("queued");
+    const superseded = first(reviews);
+    const replacement = at(reviews, 1);
+    expect(superseded.state).toBe("superseded");
+    expect(superseded.supersededByReviewId).toBe(replacement.id);
+    expect(replacement.headSha).toBe(newSha);
+    expect(replacement.state).toBe("queued");
 
-    const firstJob = await prisma.reviewJob.findFirstOrThrow({ where: { reviewId: reviews[0].id } });
+    const firstJob = await prisma.reviewJob.findFirstOrThrow({ where: { reviewId: superseded.id } });
     expect(firstJob.status).toBe("superseded");
     const firstOutbox = await prisma.outboxEvent.findMany({ where: { reviewJobId: firstJob.id } });
     // Pending events of a superseded job are discarded; events already
@@ -356,7 +356,7 @@ describe("review ingestion", () => {
 
     // Transitions for the superseded review were persisted.
     const transitions = await prisma.reviewStateTransition.findMany({
-      where: { reviewId: reviews[0].id },
+      where: { reviewId: superseded.id },
       orderBy: { createdAt: "asc" },
     });
     expect(transitions.map((t) => t.toState)).toEqual(["queued", "analyzing", "superseded"]);
@@ -424,7 +424,7 @@ describe("review ingestion", () => {
 
     const reviews = await prisma.review.findMany({ orderBy: { createdAt: "asc" } });
     expect(reviews).toHaveLength(2);
-    const manual = reviews[1];
+    const manual = at(reviews, 1);
     expect(manual.trigger).toBe("manual");
     expect(manual.state).toBe("queued");
     expect(manual.attempt).toBe(1);
@@ -764,8 +764,6 @@ describe("transactional outbox recovery (§12.2)", () => {
         pullRequestPayload("opened", { headSha: "abab7777abab7777abab7777abab7777abab7777" }),
         "delivery-outbox-1",
       );
-      await offlineProbot.teardown?.();
-
       const review = await prisma1.review.findFirstOrThrow();
       expect(review.state).toBe("queued");
       const job = await prisma1.reviewJob.findFirstOrThrow({ where: { reviewId: review.id } });

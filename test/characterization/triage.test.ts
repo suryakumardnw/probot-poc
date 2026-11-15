@@ -6,6 +6,7 @@ import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApp } from "../../src/index.js";
 import { disconnectDatabase } from "../helpers/db.js";
+import { webhookReceiver } from "../helpers/events.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
 import { createTestTriage } from "../helpers/triage.js";
 
@@ -157,8 +158,7 @@ afterAll(async () => {
 describe("issues.opened triage", () => {
   test("posts the rendered triage comment for a human-authored issue", async () => {
     const probot = makeProbot(pino({ level: "silent" }));
-    await probot.receive({ name: "issues", payload: issuePayload() });
-    await probot.teardown?.();
+    await webhookReceiver(probot).receive({ name: "issues", payload: issuePayload() });
 
     const providerCall = captured.find(isGroqProviderCall);
     expect(providerCall).toBeDefined();
@@ -186,8 +186,7 @@ describe("issues.opened triage", () => {
   test("uses GROQ_MODEL when configured", async () => {
     process.env.GROQ_MODEL = "custom-groq-model";
     const probot = makeProbot(pino({ level: "silent" }));
-    await probot.receive({ name: "issues", payload: issuePayload() });
-    await probot.teardown?.();
+    await webhookReceiver(probot).receive({ name: "issues", payload: issuePayload() });
 
     const providerCall = captured.find(isGroqProviderCall);
     expect(providerCall).toBeDefined();
@@ -199,8 +198,7 @@ describe("issues.opened triage", () => {
 
   test("bot-authored issues are skipped without calling the provider", async () => {
     const probot = makeProbot(pino({ level: "silent" }));
-    await probot.receive({ name: "issues", payload: issuePayload({ userType: "Bot" }) });
-    await probot.teardown?.();
+    await webhookReceiver(probot).receive({ name: "issues", payload: issuePayload({ userType: "Bot" }) });
 
     expect(captured).toHaveLength(0);
     expect(commentPosts()).toHaveLength(0);
@@ -208,8 +206,7 @@ describe("issues.opened triage", () => {
 
   test("pull request issues are skipped without calling the provider", async () => {
     const probot = makeProbot(pino({ level: "silent" }));
-    await probot.receive({ name: "issues", payload: issuePayload({ pullRequest: true }) });
-    await probot.teardown?.();
+    await webhookReceiver(probot).receive({ name: "issues", payload: issuePayload({ pullRequest: true }) });
 
     expect(captured).toHaveLength(0);
     expect(commentPosts()).toHaveLength(0);
@@ -229,8 +226,7 @@ describe("issues.opened triage", () => {
       ),
     );
 
-    await expect(probot.receive({ name: "issues", payload: issuePayload() })).resolves.toBeUndefined();
-    await probot.teardown?.();
+    await expect(webhookReceiver(probot).receive({ name: "issues", payload: issuePayload() })).resolves.toBeUndefined();
 
     expect(captured.some(isGroqProviderCall)).toBe(true);
     expect(commentPosts()).toHaveLength(0);
@@ -251,8 +247,7 @@ describe("issues.opened triage", () => {
       ),
     );
 
-    await expect(probot.receive({ name: "issues", payload: issuePayload() })).resolves.toBeUndefined();
-    await probot.teardown?.();
+    await expect(webhookReceiver(probot).receive({ name: "issues", payload: issuePayload() })).resolves.toBeUndefined();
 
     expect(captured).toHaveLength(0);
     expect(commentPosts()).toHaveLength(0);

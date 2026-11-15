@@ -23,7 +23,7 @@ Prerequisites:
 - PostgreSQL and Redis for the integration suites. The tests default to
   `postgres://postgres:postgres@localhost:5432/reviewer` and
   `redis://localhost:6379`; override them with `DATABASE_URL` and `REDIS_URL`.
-- Docker for the sandbox tests in `test/execution-security.test.ts`.
+- Docker for the sandbox tests in `test/integration/execution-security.test.ts`.
 
 ```bash
 npm ci
@@ -38,21 +38,26 @@ npm test
 
 Run the same commands locally that CI runs. Everything must pass before review.
 
-| Command                                | Purpose                                                    |
-| -------------------------------------- | ---------------------------------------------------------- |
-| `npm run format`                       | Write Prettier formatting.                                 |
-| `npm run format:check`                 | Verify formatting without writing.                         |
-| `npm run lint`                         | Run ESLint over the repository.                            |
-| `npm run lint:fix`                     | Apply ESLint autofixes (import order, type imports).       |
-| `npm run typecheck`                    | Run `tsc --noEmit`.                                        |
-| `npm test`                             | Run every Vitest suite; needs Postgres, Redis, and Docker. |
-| `npm run build`                        | Compile `src/` to `lib/`.                                  |
-| `npm run security:audit`               | Fail on new high/critical dependency advisories.           |
-| `npm run metrics:quality`              | Print quality metrics (informational; CI runs this too).   |
-| `npm run metrics:quality -- --details` | List every metric match site.                              |
-| `npm run db:generate`                  | Regenerate the Prisma client.                              |
-| `npm run db:migrate`                   | Apply migrations (`prisma migrate deploy`).                |
-| `npm run db:migrate:dev`               | Create and apply a migration during development.           |
+| Command                                | Purpose                                                   |
+| -------------------------------------- | --------------------------------------------------------- |
+| `npm run format`                       | Write Prettier formatting.                                |
+| `npm run format:check`                 | Verify formatting without writing.                        |
+| `npm run lint`                         | Run ESLint over the repository.                           |
+| `npm run lint:fix`                     | Apply ESLint autofixes (import order, type imports).      |
+| `npm run typecheck`                    | Run `tsc --noEmit`.                                       |
+| `npm run typecheck:tests`              | Typecheck `src/`, `test/`, and `scripts/` tests.          |
+| `npm run test:unit`                    | Pure tests; no Postgres, Redis, or network.               |
+| `npm run test:contract`                | Zod contract tests in `src/contracts/`.                   |
+| `npm run test:integration`             | Postgres/Redis/Docker integration tests.                  |
+| `npm run test:characterization`        | Behavioural baseline; needs Postgres and Redis.           |
+| `npm test`                             | Run every Vitest tier; needs Postgres, Redis, and Docker. |
+| `npm run build`                        | Compile `src/` to `lib/`.                                 |
+| `npm run security:audit`               | Fail on new high/critical dependency advisories.          |
+| `npm run metrics:quality`              | Print quality metrics (informational; CI runs this too).  |
+| `npm run metrics:quality -- --details` | List every metric match site.                             |
+| `npm run db:generate`                  | Regenerate the Prisma client.                             |
+| `npm run db:migrate`                   | Apply migrations (`prisma migrate deploy`).               |
+| `npm run db:migrate:dev`               | Create and apply a migration during development.          |
 
 The full local gate is:
 

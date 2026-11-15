@@ -1,18 +1,19 @@
 import type { Queue } from "bullmq";
 import pino from "pino";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { reviewJobPayloadSchema } from "../src/contracts/queue.js";
-import type { ReviewJobPayload } from "../src/contracts/queue.js";
+import { reviewJobPayloadSchema } from "../../src/contracts/queue.js";
+import type { ReviewJobPayload } from "../../src/contracts/queue.js";
 import {
   REDIS_PERSISTENCE_COMMANDLINE,
   reconcileIncompleteReviews,
   resetReviewForRecovery,
-} from "../src/modules/ingestion/index.js";
-import { createIngestionRepositories } from "../src/modules/ingestion/prisma-ingestion.repository.js";
-import { createIngestionUnitOfWork } from "../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
-import { createObservability } from "../src/platform/observability/index.js";
-import { getMetricsRegistry } from "../src/platform/observability/metrics.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
+} from "../../src/modules/ingestion/index.js";
+import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
+import { createObservability } from "../../src/platform/observability/index.js";
+import { getMetricsRegistry } from "../../src/platform/observability/metrics.js";
+import { first } from "../helpers/assert.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 /**
  * Ticket 12 integration tests: startup reconciliation and recovery.
@@ -69,7 +70,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Delete in FK-safe order for anything this spec created.
-  await prisma.outboxEvent.deleteMany({ where: { ReviewJob: { review: { pullRequestId } } } }).catch(() => {});
+  await prisma.outboxEvent.deleteMany({ where: { reviewJob: { review: { pullRequestId } } } }).catch(() => {});
   await prisma.reviewJob.deleteMany({ where: { review: { pullRequestId } } }).catch(() => {});
   await prisma.reviewStateTransition.deleteMany({ where: { review: { pullRequestId } } }).catch(() => {});
   await prisma.review.deleteMany({ where: { pullRequestId } }).catch(() => {});
@@ -163,9 +164,10 @@ describe("reconciliation", () => {
     expect(summary.staleSessions).toBe(1);
     expect(added).toHaveLength(1);
     // Ticket 03 identity contract: the BullMQ job id IS the ReviewJob id.
-    expect(added[0].opts.jobId).toBe(jobId);
-    expect(added[0].payload.reviewId).toBe(reviewId);
-    expect(added[0].payload.repositoryFullName).toBe("recovery-fixture-org/widget");
+    const enqueued = first(added);
+    expect(enqueued.opts.jobId).toBe(jobId);
+    expect(enqueued.payload.reviewId).toBe(reviewId);
+    expect(enqueued.payload.repositoryFullName).toBe("recovery-fixture-org/widget");
 
     const review = await prisma.review.findUnique({ where: { id: reviewId } });
     expect(review?.state).toBe("queued");
@@ -279,7 +281,7 @@ describe("reconciliation", () => {
     expect(summary.requeued).toBe(1);
     expect(events).toEqual(["remove", "add"]);
     expect(added).toHaveLength(1);
-    expect(added[0].opts.jobId).toBe(jobId);
+    expect(first(added).opts.jobId).toBe(jobId);
   });
 
   test("does not remove an active job still owned by a worker", async () => {

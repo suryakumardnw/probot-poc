@@ -9,6 +9,7 @@ import {
 import { ProviderConfigError } from "../src/platform/models/provider-config-error.js";
 import type { ModelCapabilities, ProviderHealth } from "../src/ports/model-provider.js";
 import { ModelProviderError } from "../src/shared/errors/index.js";
+import { first } from "./helpers/assert.js";
 
 // ---------------------------------------------------------------------------
 // Mock HTTP server (no external network — all failure/success modes are
@@ -119,8 +120,8 @@ describe("OpenAI-compatible model provider", () => {
     const provider = createOpenAICompatibleProvider(providerConfig(url), { env: ENV_WITH_KEY });
     await provider.chat({ messages: baseMessage });
     expect(requests).toHaveLength(1);
-    expect(requests[0].authorization).toBe("Bearer test-key-value-xyz");
-    expect(requests[0].url).toBe("/v1/chat/completions");
+    expect(first(requests).authorization).toBe("Bearer test-key-value-xyz");
+    expect(first(requests).url).toBe("/v1/chat/completions");
   });
 
   it("rejects non-http baseURLs at construction", () => {
@@ -144,7 +145,7 @@ describe("OpenAI-compatible model provider", () => {
     expect(response.usage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15 });
     expect(response.latencyMs).toBeGreaterThanOrEqual(0);
     // Request shape normalization: model, stream:false, max_tokens.
-    const sent = requests[0].body as Record<string, unknown>;
+    const sent = first(requests).body as Record<string, unknown>;
     expect(sent.model).toBe("glm-4.7-flash");
     expect(sent.stream).toBe(false);
     expect(sent.max_tokens).toBe(256);
@@ -176,7 +177,7 @@ describe("OpenAI-compatible model provider", () => {
     const provider = createOpenAICompatibleProvider(providerConfig(url), { env: ENV_WITH_KEY });
     const response = await provider.chat({ messages: baseMessage, responseFormat: "json" });
     expect(response.json).toEqual({ verdict: "ok" });
-    expect((requests[0].body as Record<string, unknown>).response_format).toEqual({ type: "json_object" });
+    expect((first(requests).body as Record<string, unknown>).response_format).toEqual({ type: "json_object" });
   });
 
   it("falls back to reasoning_content when content is empty (reasoning models)", async () => {
@@ -410,7 +411,7 @@ describe("OpenAI-compatible model provider", () => {
     expect(health.healthy).toBe(true);
     expect(typeof health.latencyMs).toBe("number");
     expect(health.checkedAt).toBeTruthy();
-    expect(requests[0].authorization).toBe("Bearer test-key-value-xyz");
+    expect(first(requests).authorization).toBe("Bearer test-key-value-xyz");
   });
 
   it("healthCheck treats auth failures as unhealthy and missing /models as reachable", async () => {

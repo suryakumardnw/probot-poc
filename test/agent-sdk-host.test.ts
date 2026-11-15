@@ -12,6 +12,7 @@ import type {
   SdkModule,
   SdkSessionRef,
 } from "../src/platform/agents/sdk/types.js";
+import { first } from "./helpers/assert.js";
 
 // ---------------------------------------------------------------------------
 // Fake SDK module (same shape as the reference adapter test's fake)
@@ -126,7 +127,7 @@ describe("SDK host dispatcher", () => {
 
     expect(harness.loader).toHaveBeenCalledTimes(1);
     expect(harness.state.hostOptions).toHaveLength(1);
-    const options = harness.state.hostOptions[0];
+    const options = first(harness.state.hostOptions, "host options");
     expect(options.config).toEqual({
       content: '{"model":"reviewer/glm"}',
       project: false,
@@ -295,8 +296,8 @@ describe("runHostProcess", () => {
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatchObject({ id: 1, ok: true });
-    expect(lines[0].result).toMatchObject({ version: expect.any(String) });
+    expect(first(lines)).toMatchObject({ id: 1, ok: true });
+    expect(first(lines).result).toMatchObject({ version: expect.any(String) });
   });
 
   it("a malformed request line produces an error response rather than crashing", async () => {
@@ -323,7 +324,7 @@ describe("runHostProcess", () => {
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatchObject({ id: 0, ok: false });
-    expect(lines[0].error).toMatchObject({ message: expect.stringContaining("malformed") });
+    expect(first(lines)).toMatchObject({ id: 0, ok: false });
+    expect(first(lines).error).toMatchObject({ message: expect.stringContaining("malformed") });
   });
 });

@@ -14,13 +14,9 @@ import {
 import { loadEnv, type Env } from "../../src/platform/config/env.js";
 import { createReviewConfigStore } from "../../src/platform/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH } from "../../src/platform/config/review-loader.js";
-import {
-  createGithubOAuthClient,
-  resetGithubFetch,
-  setGithubFetch,
-  type GithubFetch,
-} from "../../src/platform/github/oauth-client.js";
+import { createGithubOAuthClient, resetGithubFetch, setGithubFetch } from "../../src/platform/github/oauth-client.js";
 import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
+import type { GithubFetch } from "../../src/ports/github-oauth.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";

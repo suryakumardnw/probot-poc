@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import type { ReviewConfig } from "../src/contracts/config.js";
-import { reviewConfigSchema } from "../src/contracts/config.js";
-import type { Finding, RunReviewOutput } from "../src/modules/review/types.js";
-import { createPrismaEvaluationRunRepository } from "../src/platform/db/evaluation-run.repository.js";
+import type { ReviewConfig } from "../../src/contracts/config.js";
+import { reviewConfigSchema } from "../../src/contracts/config.js";
+import type { Finding, RunReviewOutput } from "../../src/modules/review/types.js";
+import { createPrismaEvaluationRunRepository } from "../../src/platform/db/evaluation-run.repository.js";
 import {
   aggregateScores,
   configurationHashFrom,
@@ -18,8 +18,9 @@ import {
   type BenchmarkCase,
   type BenchmarkSuite,
   type CaseScore,
-} from "../src/scripts/eval/index.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
+} from "../../src/scripts/eval/index.js";
+import { first } from "../helpers/assert.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 /**
  * Ticket 12 unit/integration tests: benchmark scoring math, benchmark runner
@@ -363,8 +364,8 @@ describe("runBenchmarkSuite", () => {
       throw new Error("engine exploded");
     });
     expect(run.cases).toHaveLength(1);
-    expect(run.cases[0].score.truePositives).toBe(0);
-    expect(run.cases[0].score.falseNegatives).toBe(1);
+    expect(first(run.cases).score.truePositives).toBe(0);
+    expect(first(run.cases).score.falseNegatives).toBe(1);
     expect(run.score.recall).toBe(0);
     expect(run.score.passed).toBe(false);
   });

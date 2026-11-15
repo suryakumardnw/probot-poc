@@ -1,9 +1,9 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { checkPrisma } from "../src/platform/db/prisma.js";
-import { checkDependencies } from "../src/platform/health.js";
-import { createRedis, disconnectRedis } from "../src/platform/redis.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
-import { testEnv } from "./helpers/env.js";
+import { checkPrisma } from "../../src/platform/db/prisma.js";
+import { checkDependencies } from "../../src/platform/health.js";
+import { createRedis, disconnectRedis } from "../../src/platform/redis.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
+import { testEnv } from "../helpers/env.js";
 
 /**
  * These tests run against localhost where Postgres/Redis are typically not

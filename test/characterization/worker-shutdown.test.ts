@@ -436,10 +436,7 @@ describe("real BullMQ worker permanent payload failure", () => {
       state: "queued",
       job: { status: "enqueued" },
     });
-    if (!chain.jobId) {
-      throw new Error("seeded review chain is missing its job id");
-    }
-    const jobId = chain.jobId;
+    const { jobId, jobKey } = jobIdentity(chain);
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-malformed-"));
     const service = new ReviewWorkspaceService({
       policy: {
@@ -469,11 +466,26 @@ describe("real BullMQ worker permanent payload failure", () => {
         resolve({ attemptsMade: job?.attemptsMade, message: error.message });
       });
     });
-    const queueJob = await queue.add(
-      "review",
-      { reviewId: chain.reviewId, reviewMode: "adaptive" },
-      { jobId, attempts: 3, backoff: { type: "exponential", delay: 10 } },
-    );
+    // A valid payload with one invalid enum value: mutate after construction
+    // so the deliberately malformed fixture needs no boundary cast.
+    const invalidPayload: ReviewJobPayload = {
+      reviewId: chain.reviewId,
+      jobKey,
+      githubInstallationId: chain.githubInstallationId.toString(),
+      githubRepositoryId: chain.githubRepositoryId.toString(),
+      repositoryFullName: chain.repositoryFullName,
+      pullRequestNumber: 101,
+      headSha: chain.headSha,
+      reviewMode: "adaptive",
+      reviewType: "standard",
+      trigger: "opened",
+    };
+    Object.assign(invalidPayload, { reviewMode: "not-a-mode" });
+    const queueJob = await queue.add("review", invalidPayload, {
+      jobId,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 10 },
+    });
 
     try {
       const failure = await failed;

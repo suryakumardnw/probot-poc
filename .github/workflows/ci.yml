@@ -36,6 +36,14 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
+      - name: Typecheck tests
+        run: npm run typecheck:tests
+      # Unit and contract tiers need no Postgres, Redis, or Docker. Running
+      # them in the service-free job proves that boundary stays intact.
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Contract tests
+        run: npm run test:contract
       - name: Quality metrics
         run: npm run metrics:quality
 
@@ -83,8 +91,13 @@ jobs:
         run: npm run db:generate
       - name: Apply database migrations
         run: npx prisma migrate deploy
-      - name: Test
-        run: npm test
+      # The infrastructure tiers share one Postgres/Redis instance and run
+      # with a single worker each; keep them in separate steps so a failure
+      # names the tier.
+      - name: Integration tests
+        run: npm run test:integration
+      - name: Characterization tests
+        run: npm run test:characterization
       - name: Build
         run: npm run build
 

@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vit
 import { createApp } from "../../src/index.js";
 import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
 import { testEnv } from "../helpers/env.js";
+import { webhookReceiver } from "../helpers/events.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
 import { createTestTriage } from "../helpers/triage.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
@@ -148,7 +149,7 @@ async function receive(
   payload: Record<string, unknown>,
   deliveryId: string,
 ): Promise<void> {
-  await probot.receive({
+  await webhookReceiver(probot).receive({
     id: deliveryId,
     name: event,
     payload: { ...payload, action },
@@ -198,9 +199,7 @@ describe("pull_request ingestion", () => {
     probot = makeProbot();
   });
 
-  afterEach(async () => {
-    await probot.teardown?.();
-  });
+  afterEach(async () => {});
 
   test("opened persists the installation/repository/PR/review and enqueues one job", async () => {
     await receive(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-opened-1");
@@ -322,9 +321,7 @@ describe("duplicate delivery and review identity (§12.1, §12.3)", () => {
     probot = makeProbot();
   });
 
-  afterEach(async () => {
-    await probot.teardown?.();
-  });
+  afterEach(async () => {});
 
   test("the same deliveryId twice creates one review and one delivery row", async () => {
     const deliveryId = "delivery-duplicate-1";
@@ -355,9 +352,7 @@ describe("manual /review trigger", () => {
     probot = makeProbot();
   });
 
-  afterEach(async () => {
-    await probot.teardown?.();
-  });
+  afterEach(async () => {});
 
   test("a /review comment creates a manual review and posts an acknowledgment", async () => {
     await receive(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-manual-open-1");

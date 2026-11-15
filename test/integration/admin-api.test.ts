@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
-import { ADMIN_REVIEW_STATES, adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../src/contracts/admin.js";
+import { ADMIN_REVIEW_STATES, adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../../src/contracts/admin.js";
 import {
   authorizeAdmin,
   clearRateLimitBuckets,
@@ -11,21 +11,17 @@ import {
   createAdminApi,
   createPrismaAuditRepository,
   isAdminConfigured,
-} from "../src/modules/admin/index.js";
-import { REVIEW_STATES } from "../src/modules/ingestion/index.js";
-import { loadEnv, type Env } from "../src/platform/config/env.js";
-import { createReviewConfigStore } from "../src/platform/config/review-config-store.js";
-import { DEFAULT_CONFIG_PATH } from "../src/platform/config/review-loader.js";
-import {
-  createGithubOAuthClient,
-  resetGithubFetch,
-  setGithubFetch,
-  type GithubFetch,
-} from "../src/platform/github/oauth-client.js";
-import { createReviewQueue } from "../src/platform/queue/review-queue.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
-import { testEnv } from "./helpers/env.js";
-import { createTestIngestion } from "./helpers/ingestion.js";
+} from "../../src/modules/admin/index.js";
+import { REVIEW_STATES } from "../../src/modules/ingestion/index.js";
+import { loadEnv, type Env } from "../../src/platform/config/env.js";
+import { createReviewConfigStore } from "../../src/platform/config/review-config-store.js";
+import { DEFAULT_CONFIG_PATH } from "../../src/platform/config/review-loader.js";
+import { createGithubOAuthClient, resetGithubFetch, setGithubFetch } from "../../src/platform/github/oauth-client.js";
+import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
+import type { GithubFetch } from "../../src/ports/github-oauth.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
+import { testEnv } from "../helpers/env.js";
+import { createTestIngestion } from "../helpers/ingestion.js";
 
 /**
  * Ticket 10 integration tests: admin authentication + configuration API.
@@ -45,6 +41,22 @@ process.env.MODEL_NAME ??= "glm-4.7-flash";
 const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 
 // Environment -----------------------------------------------------------------
+
+/**
+ * Re-validate a parsed Env with raw string overrides.
+ *
+ * `Env` is the parsed shape (PORT/TTLs are numbers), so it cannot be passed
+ * back to `loadEnv` directly; stringify the known values first.
+ */
+function reloadEnv(base: Env, overrides: Record<string, string> = {}): Env {
+  const source: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined) {
+      source[key] = String(value);
+    }
+  }
+  return loadEnv({ ...source, ...overrides });
+}
 
 const ADMIN_ENV: Env = loadEnv({
   NODE_ENV: "test",
@@ -410,10 +422,7 @@ describe("admin api (ticket 10)", () => {
   });
 
   test("expired session is rejected", async () => {
-    const shortTtlEnv: Env = loadEnv({
-      ...ADMIN_ENV,
-      SESSION_TTL_SECONDS: "60",
-    });
+    const shortTtlEnv: Env = reloadEnv(ADMIN_ENV, { SESSION_TTL_SECONDS: "60" });
     const { handler: shortHandler } = makeHandler(shortTtlEnv, path.join(configDir, "review.json"));
     githubUsers = { login: "octoadmin", membership: { role: "admin", state: "active" } };
     const login1 = await login(shortHandler);
@@ -643,7 +652,7 @@ describe("admin api (ticket 10)", () => {
   });
 
   test("rate limiting returns 429 with Retry-After", async () => {
-    const tightEnv: Env = loadEnv({ ...ADMIN_ENV, ADMIN_RATE_LIMIT_PER_MINUTE: "3" });
+    const tightEnv: Env = reloadEnv(ADMIN_ENV, { ADMIN_RATE_LIMIT_PER_MINUTE: "3" });
     const { handler: tight } = makeHandler(tightEnv, path.join(configDir, "review.json"));
     const responses = [];
     for (let i = 0; i < 5; i += 1) {
@@ -740,10 +749,10 @@ describe("admin api (ticket 10)", () => {
     expect(authorizeAdmin(ADMIN_ENV, base, { role: "member", state: "active" }).allowed).toBe(false);
     expect(authorizeAdmin(ADMIN_ENV, base, { role: "admin", state: "active" }).allowed).toBe(true);
     expect(authorizeAdmin(ADMIN_ENV, base, { role: "admin", state: "pending" }).allowed).toBe(false);
-    const allowlist: Env = loadEnv({ ...ADMIN_ENV, ADMIN_GITHUB_LOGINS: "u" });
+    const allowlist: Env = reloadEnv(ADMIN_ENV, { ADMIN_GITHUB_LOGINS: "u" });
     expect(authorizeAdmin(allowlist, base, { role: "member", state: "active" }).allowed).toBe(true);
     expect(authorizeAdmin(allowlist, { login: "v" }, { role: "admin", state: "active" }).allowed).toBe(false);
-    const multiRole: Env = loadEnv({ ...ADMIN_ENV, ADMIN_ORG_ADMIN_ROLES: "admin, billing-manager" });
+    const multiRole: Env = reloadEnv(ADMIN_ENV, { ADMIN_ORG_ADMIN_ROLES: "admin, billing-manager" });
     expect(authorizeAdmin(multiRole, base, { role: "member", state: "active" }).allowed).toBe(false);
   });
 

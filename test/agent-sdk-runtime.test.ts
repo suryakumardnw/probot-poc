@@ -20,6 +20,7 @@ import type {
 } from "../src/platform/agents/sdk/types.js";
 import type { AgentSession } from "../src/ports/agent-runtime.js";
 import { AgentRuntimeError } from "../src/shared/errors/index.js";
+import { defined, first, instanceOf, rejectionOf } from "./helpers/assert.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -185,7 +186,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const sleepImpl = vi.fn(async (ms: number) => {
     clock += ms;
   });
-  const rmImpl = vi.fn(async () => undefined);
+  const rmImpl = vi.fn(async (_path: string) => undefined);
 
   const clients: FakeHostClient[] = [];
   const clientOptions: SdkHostClientOptions[] = [];
@@ -318,7 +319,7 @@ describe("SDK session lifecycle", () => {
     const result = await runtime.execute(session, { instruction: "review this diff", output: "text" });
 
     expect(harness.createHostClient).toHaveBeenCalledTimes(1);
-    const client = harness.state.clients[0];
+    const client = first(harness.state.clients);
     expect(client.startCalls).toBe(1);
     expect(client.createSessionCalls).toHaveLength(1);
     expect(client.prompts).toEqual([{ sessionID: "sdksess_1", text: "review this diff" }]);
@@ -329,7 +330,7 @@ describe("SDK session lifecycle", () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
 
     // The child env is buildChildEnv plus XDG roots inside the session dir.
-    const opts = harness.state.clientOptions[0];
+    const opts = first(harness.state.clientOptions);
     expect(opts.env.XDG_CONFIG_HOME).toContain("opencode-sdk-sessions");
     expect(opts.env.XDG_CONFIG_HOME).toContain("config");
     expect(opts.env.XDG_DATA_HOME).toContain("data");
@@ -349,12 +350,12 @@ describe("SDK session lifecycle", () => {
     await runtime.execute(session, { instruction: "x", output: "text" });
 
     await runtime.terminate(session);
-    const client = harness.state.clients[0];
+    const client = first(harness.state.clients);
     expect(client.removeSessionCalls).toEqual([{ sessionID: "sdksess_1" }]);
     expect(client.closeCalls).toBe(1);
     expect(client.killCalls).toBe(1);
     expect(harness.state.rmImpl).toHaveBeenCalledTimes(1);
-    const cleanupPath = harness.state.rmImpl.mock.calls[0][0] as unknown as string;
+    const cleanupPath = defined(first(harness.state.rmImpl.mock.calls)[0], "cleanup path");
     expect(cleanupPath).toContain("opencode-sdk-sessions");
 
     await runtime.terminate(session);
@@ -387,9 +388,11 @@ describe("SDK session lifecycle", () => {
     expect(resultA.text).toBe("alpha");
     expect(resultB.text).toBe("beta");
     expect(harness.state.clients).toHaveLength(2);
-    expect(harness.state.clients[0]).not.toBe(harness.state.clients[1]);
-    expect(harness.state.clients[0].prompts.map((p) => p.text)).toEqual(["a"]);
-    expect(harness.state.clients[1].prompts.map((p) => p.text)).toEqual(["b"]);
+    const clientA = first(harness.state.clients);
+    const clientB = defined(harness.state.clients[1], "second client");
+    expect(clientA).not.toBe(clientB);
+    expect(clientA.prompts.map((p) => p.text)).toEqual(["a"]);
+    expect(clientB.prompts.map((p) => p.text)).toEqual(["b"]);
 
     await runtime.terminate(a);
     await runtime.terminate(b);
@@ -462,7 +465,7 @@ describe("SDK execute", () => {
     const session = await started(runtime);
     await runtime.execute(session, { instruction: "review", output: "json" });
 
-    const prompt = harness.state.clients[0].prompts[0].text;
+    const prompt = first(first(harness.state.clients).prompts).text;
     expect(prompt).toBe(buildPrompt({ instruction: "review", output: "json" }));
     expect(prompt).toContain("exactly one JSON object");
     await runtime.terminate(session);
@@ -523,7 +526,7 @@ describe("SDK execute", () => {
     // The client was registered before start() was awaited, so the deadline
     // timer can kill the child that is stuck in the create handshake.
     expect(harness.state.clients).toHaveLength(1);
-    expect(harness.state.clients[0].killCalls).toBeGreaterThanOrEqual(1);
+    expect(first(harness.state.clients).killCalls).toBeGreaterThanOrEqual(1);
     await runtime.terminate(session);
   });
 
@@ -536,7 +539,7 @@ describe("SDK execute", () => {
       code: "timeout",
     });
     expect(harness.state.clients).toHaveLength(1);
-    expect(harness.state.clients[0].killCalls).toBeGreaterThanOrEqual(1);
+    expect(first(harness.state.clients).killCalls).toBeGreaterThanOrEqual(1);
     await runtime.terminate(session);
   });
 
@@ -548,8 +551,8 @@ describe("SDK execute", () => {
     await expect(runtime.execute(session, { instruction: "x", output: "text" })).rejects.toMatchObject({
       code: "timeout",
     });
-    expect(harness.state.clients[0].getCalls).toBeGreaterThanOrEqual(1);
-    expect(harness.state.clients[0].killCalls).toBeGreaterThanOrEqual(1);
+    expect(first(harness.state.clients).getCalls).toBeGreaterThanOrEqual(1);
+    expect(first(harness.state.clients).killCalls).toBeGreaterThanOrEqual(1);
     await runtime.terminate(session);
   });
 
@@ -561,10 +564,10 @@ describe("SDK execute", () => {
     await expect(runtime.execute(session, { instruction: "x", output: "text" })).rejects.toMatchObject({
       code: "timeout",
     });
-    expect(harness.state.clients[0].closeCalls).toBe(1);
+    expect(first(harness.state.clients).closeCalls).toBe(1);
     // terminate must not double-close the client the timeout path detached.
     await runtime.terminate(session);
-    expect(harness.state.clients[0].closeCalls).toBe(1);
+    expect(first(harness.state.clients).closeCalls).toBe(1);
   });
 });
 
@@ -669,9 +672,10 @@ describe("SDK secret hygiene", () => {
       const runtime = makeRuntime(harness, { logger });
       const session = await started(runtime);
 
-      const error = await runtime
-        .execute(session, { instruction: "secret prompt contents", output: "text" })
-        .catch((cause: unknown) => cause as { code?: string; detail?: string });
+      const error = instanceOf(
+        await rejectionOf(runtime.execute(session, { instruction: "secret prompt contents", output: "text" })),
+        AgentRuntimeError,
+      );
 
       expect(error.code).toBe("crash");
       expect(error.detail).toBeDefined();
@@ -705,9 +709,10 @@ describe("SDK secret hygiene", () => {
       const runtime = makeRuntime(harness, { logger });
       const session = await started(runtime);
 
-      const error = await runtime
-        .execute(session, { instruction: "x", output: "text" })
-        .catch((cause: unknown) => cause as { code?: string; detail?: string });
+      const error = instanceOf(
+        await rejectionOf(runtime.execute(session, { instruction: "x", output: "text" })),
+        AgentRuntimeError,
+      );
 
       expect(error.code).toBe("crash");
       expect(error.detail).toBeDefined();
@@ -715,7 +720,7 @@ describe("SDK secret hygiene", () => {
       expect(error.detail).toContain("[redacted]");
       expect(JSON.stringify(lines)).not.toContain(secret);
       // A failed start must clean up the child handle before dropping it.
-      expect(harness.state.clients[0]?.killCalls).toBeGreaterThanOrEqual(1);
+      expect(first(harness.state.clients).killCalls).toBeGreaterThanOrEqual(1);
 
       await runtime.terminate(session);
     } finally {

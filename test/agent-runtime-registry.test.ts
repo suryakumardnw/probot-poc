@@ -88,13 +88,17 @@ describe("agent runtime plugin registry", () => {
       create: vi.fn(() => fakeRuntime),
     };
     registerAgentRuntimePlugin(fake);
-    const runtime = createAgentRuntime({
+    // The plugin's runtime type is deliberately outside the built-in union;
+    // mutate a copy so the fixture stays typed without a boundary cast.
+    const config: AgentRuntimeConfigSource = {
       ...baseConfig,
       agent: {
         ...baseConfig.agent,
-        runtime: { ...baseConfig.agent.runtime, type: "test-runtime" },
+        runtime: { ...baseConfig.agent.runtime },
       },
-    } as AgentRuntimeConfigSource);
+    };
+    Object.assign(config.agent.runtime, { type: "test-runtime" });
+    const runtime = createAgentRuntime(config);
     expect(runtime).toBe(fakeRuntime);
     expect(fake.create).toHaveBeenCalledWith("test-runtime", expect.any(Object), expect.any(Object));
   });

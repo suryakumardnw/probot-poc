@@ -18,6 +18,7 @@ import type { ChangedFile } from "../src/modules/workspace/files.js";
 import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
 import type { AgentRuntime, AgentSession, AgentSessionOptions, AgentTask } from "../src/ports/agent-runtime.js";
 import { AgentRuntimeError } from "../src/shared/errors/index.js";
+import { first } from "./helpers/assert.js";
 
 /**
  * Ticket 07 unit tests: adaptive repository-aware review engine.
@@ -608,7 +609,7 @@ describe("review result schema", () => {
     const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [withNullLine] });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
+      expect(first(first(parsed.data.findings).evidence).line).toBeUndefined();
     }
   });
 
@@ -619,7 +620,7 @@ describe("review result schema", () => {
     const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [withZeroLine] });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.findings[0].evidence[0].line).toBeUndefined();
+      expect(first(first(parsed.data.findings).evidence).line).toBeUndefined();
     }
   });
 
@@ -637,11 +638,11 @@ describe("review result schema", () => {
     });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.findings[0].guideline).toBeUndefined();
-      expect(parsed.data.findings[0].impact).toBeUndefined();
-      expect(parsed.data.findings[0].recommendation).toBeUndefined();
-      expect(parsed.data.findings[0].verified).toBeUndefined();
-      expect(parsed.data.uncertainFindings[0].guideline).toBeUndefined();
+      expect(first(parsed.data.findings).guideline).toBeUndefined();
+      expect(first(parsed.data.findings).impact).toBeUndefined();
+      expect(first(parsed.data.findings).recommendation).toBeUndefined();
+      expect(first(parsed.data.findings).verified).toBeUndefined();
+      expect(first(parsed.data.uncertainFindings).guideline).toBeUndefined();
     }
   });
 
@@ -654,9 +655,9 @@ describe("review result schema", () => {
     const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [drift] });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.findings[0].impact).toBeUndefined();
-      expect(parsed.data.findings[0].recommendation).toBeUndefined();
-      expect(parsed.data.findings[0].guideline).toBeUndefined();
+      expect(first(parsed.data.findings).impact).toBeUndefined();
+      expect(first(parsed.data.findings).recommendation).toBeUndefined();
+      expect(first(parsed.data.findings).guideline).toBeUndefined();
     }
   });
 
@@ -734,9 +735,9 @@ describe("review result schema", () => {
     const parsed = reviewResultSchema.safeParse({ ...reportingResponse(), findings: [withDetails] });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.findings[0].impact).toBe("Clients get wrong totals.");
-      expect(parsed.data.findings[0].recommendation).toBe("Filter in the repository query.");
-      expect(parsed.data.findings[0].guideline).toBe("03_contracts-schemas.md §3");
+      expect(first(parsed.data.findings).impact).toBe("Clients get wrong totals.");
+      expect(first(parsed.data.findings).recommendation).toBe("Filter in the repository query.");
+      expect(first(parsed.data.findings).guideline).toBe("03_contracts-schemas.md §3");
     }
     expect(reviewResultSchema.safeParse({ ...reportingResponse(), findings: [finding()] }).success).toBe(true);
   });

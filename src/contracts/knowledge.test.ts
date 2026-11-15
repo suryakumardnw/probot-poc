@@ -11,7 +11,7 @@ import {
 /**
  * Contract tests for GitHub response envelopes and the knowledge cache
  * manifest. The fetcher and cache behavior are covered in
- * `test/knowledge.test.ts`; these tests pin the wire/disk shapes.
+ * `test/integration/knowledge.test.ts`; these tests pin the wire/disk shapes.
  */
 
 const FILE = {

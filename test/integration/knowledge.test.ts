@@ -18,8 +18,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { reviewConfigSchema, type ReviewConfig } from "../src/contracts/config.js";
-import { fetchFileContent, fetchRepoTree, resolveCommitSha, sha256Hex } from "../src/modules/knowledge/fetch.js";
+import { reviewConfigSchema, type ReviewConfig } from "../../src/contracts/config.js";
+import { fetchFileContent, fetchRepoTree, resolveCommitSha, sha256Hex } from "../../src/modules/knowledge/fetch.js";
 import {
   createPrismaReviewKnowledgeStore,
   ensureKnowledgeSources,
@@ -30,10 +30,11 @@ import {
   setKnowledgeSnapshot,
   KnowledgeSnapshotError,
   type PersistedKnowledgeSnapshot,
-} from "../src/modules/knowledge/index.js";
-import type { KnowledgeFetcher } from "../src/modules/knowledge/types.js";
-import { resolveReviewInjection, selectHandbookSections } from "../src/modules/review/injection.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
+} from "../../src/modules/knowledge/index.js";
+import type { KnowledgeFetcher } from "../../src/modules/knowledge/types.js";
+import { resolveReviewInjection, selectHandbookSections } from "../../src/modules/review/injection.js";
+import { first } from "../helpers/assert.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
@@ -587,7 +588,7 @@ describe("per-review knowledge snapshot (§4)", () => {
 
     const workspacePath = mkdtempSync(join(tmpdir(), "ws-handbook-"));
     tempDirs.push(workspacePath);
-    let captured: PersistedKnowledgeSnapshot | null = null;
+    const captured: PersistedKnowledgeSnapshot[] = [];
     const materialized = await materializeReviewKnowledge({
       reviewId: "materialize-only-no-row",
       reviewType: "handbook",
@@ -597,13 +598,13 @@ describe("per-review knowledge snapshot (§4)", () => {
         findSnapshot: async () => ({ knowledgeSnapshot: null }),
         saveSnapshot: async (_reviewId, snapshot) => {
           // Materialize-only: just capture the would-be persistence.
-          captured = snapshot;
+          captured.push(snapshot);
         },
       },
       logger: fakeLogger,
     });
     expect(materialized.knowledgeDir).toBe(join(workspacePath, "knowledge"));
-    const capturedSnapshot = captured as { handbook?: { ref: string; contentHash: string } };
+    const capturedSnapshot = first(captured);
     expect(capturedSnapshot.handbook!.ref).toBe(HANDBOOK_SHA);
     const injection = await resolveReviewInjection({
       reviewType: "handbook",

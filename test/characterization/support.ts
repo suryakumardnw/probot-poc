@@ -1,7 +1,7 @@
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { JobStatus, OutboxStatus, ReviewState, ReviewTrigger, ReviewType } from "@prisma/client";
+import type { JobStatus, OutboxStatus, Prisma, ReviewState, ReviewTrigger, ReviewType } from "@prisma/client";
 import { reviewConfigSchema, type ReviewConfig } from "../../src/contracts/config.js";
 import type { Finding, FindingEvidence } from "../../src/modules/review/index.js";
 import { disconnectDatabase, prisma } from "../helpers/db.js";
@@ -39,7 +39,7 @@ export interface SeedReviewChainOptions {
   attempt?: number;
   headSha?: string;
   job?: { status: JobStatus; attempts?: number; jobKey?: string };
-  outbox?: { status?: OutboxStatus; payload?: Record<string, unknown> };
+  outbox?: { status?: OutboxStatus; payload?: Prisma.InputJsonValue };
 }
 
 export interface SeededReviewChain {

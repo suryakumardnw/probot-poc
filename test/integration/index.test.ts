@@ -5,16 +5,17 @@ import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createApp } from "../src/index.js";
-import issueOpenedPayload from "./fixtures/issues.opened.json" with { type: "json" };
-import { disconnectDatabase } from "./helpers/db.js";
-import { createTestIngestion } from "./helpers/ingestion.js";
-import { createTestTriage } from "./helpers/triage.js";
+import { createApp } from "../../src/index.js";
+import issueOpenedPayload from "../fixtures/issues.opened.json" with { type: "json" };
+import { disconnectDatabase } from "../helpers/db.js";
+import { webhookReceiver } from "../helpers/events.js";
+import { createTestIngestion } from "../helpers/ingestion.js";
+import { createTestTriage } from "../helpers/triage.js";
 // Requiring our fixtures
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const privateKey = fs.readFileSync(path.join(__dirname, "fixtures/mock-cert.pem"), "utf-8");
+const privateKey = fs.readFileSync(path.join(__dirname, "../fixtures/mock-cert.pem"), "utf-8");
 
 const testIngestion = createTestIngestion({
   queue: {
@@ -116,7 +117,7 @@ describe("probot-poc app", () => {
     process.env.GROQ_API_KEY = "test-key";
     const { captured } = createServer();
 
-    await probot.receive({
+    await webhookReceiver(probot).receive({
       name: "issues",
       payload: issueOpenedPayload,
     });
@@ -136,7 +137,7 @@ describe("probot-poc app", () => {
     process.env.GROQ_API_KEY = "test-key";
     const { captured } = createServer();
 
-    await probot.receive({
+    await webhookReceiver(probot).receive({
       name: "issues",
       payload: {
         ...issueOpenedPayload,
@@ -156,7 +157,7 @@ describe("probot-poc app", () => {
     // The triage module's failure boundary logs the provider config error;
     // the delivery still succeeds and no GitHub comment is posted.
     await expect(
-      probot.receive({
+      webhookReceiver(probot).receive({
         name: "issues",
         payload: issueOpenedPayload,
       }),

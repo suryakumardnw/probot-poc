@@ -54,6 +54,7 @@ async function ingestInput(
     owner: "supersede-org",
     defaultBranch: "main",
     pullRequestNumber: pullRequest.githubPrNumber,
+    headSha: seed.headSha,
     baseSha: "base-supersede",
     draft: false,
     ...overrides,

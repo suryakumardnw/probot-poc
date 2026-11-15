@@ -395,7 +395,7 @@ describe("loadReviewConfig", () => {
     const snapshot = createConfigurationSnapshot(
       validateRawConfig({ ...validConfig(), ...{ provider: { baseURL: "https://x", apiKeyEnv: "K", model: "m" } } }),
     );
-    expect(Object.isFrozen(snapshot.config)).toBe(true);
+    expect(Object.isFrozen(snapshot.configuration)).toBe(true);
     const again = createConfigurationSnapshot(
       validateRawConfig({ ...validConfig(), ...{ provider: { baseURL: "https://x", apiKeyEnv: "K", model: "m" } } }),
     );

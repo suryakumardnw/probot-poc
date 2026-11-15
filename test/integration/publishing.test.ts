@@ -3,18 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import type pino from "pino";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { reviewConfigSchema, type ReviewConfig } from "../src/contracts/config.js";
-import type { ReviewJobPayload } from "../src/contracts/queue.js";
-import type { StoredFinding } from "../src/modules/findings/index.js";
+import { reviewConfigSchema, type ReviewConfig } from "../../src/contracts/config.js";
+import type { ReviewJobPayload } from "../../src/contracts/queue.js";
+import type { StoredFinding } from "../../src/modules/findings/index.js";
 import {
   createFindingsDependencies,
   getFindingsForReview,
   persistReviewFindings,
   supersedeFindingsForReview,
-} from "../src/modules/findings/index.js";
-import { parseUnifiedDiff, resolveInlinePosition } from "../src/modules/publishing/diff-positions.js";
-import { finalizeReview, type ReviewPipelineDeps } from "../src/modules/publishing/pipeline.js";
-import { createPublishingRepositories } from "../src/modules/publishing/prisma-publishing.repository.js";
+} from "../../src/modules/findings/index.js";
+import { parseUnifiedDiff, resolveInlinePosition } from "../../src/modules/publishing/diff-positions.js";
+import { finalizeReview, type ReviewPipelineDeps } from "../../src/modules/publishing/pipeline.js";
+import { createPublishingRepositories } from "../../src/modules/publishing/prisma-publishing.repository.js";
 import {
   DEFAULT_RETRY,
   StaleHeadError,
@@ -25,20 +25,21 @@ import {
   withRetry,
   type PublisherOctokit,
   type ReviewCommentParams,
-} from "../src/modules/publishing/publisher.js";
+} from "../../src/modules/publishing/publisher.js";
 import {
   buildInlineCommentBody,
   buildReviewBody,
   extractFingerprint,
   fingerprintMarker,
-} from "../src/modules/publishing/summary.js";
-import type { Finding, FindingEvidence, ReviewResult } from "../src/modules/review/index.js";
-import type { ReviewRunMetadata } from "../src/modules/review/types.js";
-import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
-import { createObservability } from "../src/platform/observability/index.js";
-import type { AgentRuntime } from "../src/ports/agent-runtime.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
-import { createTestReviewState } from "./helpers/ingestion.js";
+} from "../../src/modules/publishing/summary.js";
+import type { Finding, FindingEvidence, ReviewResult } from "../../src/modules/review/index.js";
+import type { ReviewRunMetadata } from "../../src/modules/review/types.js";
+import type { WorkspaceResult } from "../../src/modules/workspace/workspace.js";
+import { createObservability } from "../../src/platform/observability/index.js";
+import type { AgentRuntime } from "../../src/ports/agent-runtime.js";
+import { at, first } from "../helpers/assert.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
+import { createTestReviewState } from "../helpers/ingestion.js";
 
 /**
  * Ticket 09 tests: diff position resolution, review body generation,
@@ -50,8 +51,8 @@ import { createTestReviewState } from "./helpers/ingestion.js";
 // persistReviewFindings is mocked so the persistence-failure path of
 // finalizeReview can be exercised deterministically; every other export of
 // the findings module stays real.
-vi.mock("../src/modules/findings/index.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/modules/findings/index.js")>();
+vi.mock("../../src/modules/findings/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/modules/findings/index.js")>();
   return { ...actual, persistReviewFindings: vi.fn(actual.persistReviewFindings) };
 });
 
@@ -381,6 +382,7 @@ function makePayload(reviewId: string, headSha: string): ReviewJobPayload {
     pullRequestNumber: PR_NUMBER,
     headSha,
     reviewMode: "adaptive",
+    reviewType: "standard",
     trigger: "synchronized",
   };
 }
@@ -443,7 +445,7 @@ function makeDeps(state: FakeState, overrides: Partial<ReviewPipelineDeps> = {})
     tokenProvider: {
       getInstallationToken: async () => ({
         token: "fake-installation-token",
-        expiresAt: new Date(Date.now() + 60_000),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
       }),
     },
     env: process.env,
@@ -834,15 +836,15 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(result.summaryOnlyFindings).toBe(1);
     expect(state.createReviewCalls).toHaveLength(1);
 
-    const call = state.createReviewCalls[0];
+    const call = first(state.createReviewCalls);
     // §23: the review event is ALWAYS COMMENT — never APPROVE / REQUEST_CHANGES.
     expect(call.event).toBe("COMMENT");
     expect(call.event === "APPROVE" || call.event === "REQUEST_CHANGES").toBe(false);
     expect(call.body).toContain("Stored issue");
     expect(call.body).toContain("ai-pr-reviewer:summary");
     expect(call.comments).toHaveLength(1);
-    expect(call.comments[0]).toMatchObject({ path: "src/app.js", line: 4, side: "RIGHT" });
-    expect(extractFingerprint(call.comments[0].body)).toBe(anchored.fingerprint);
+    expect(first(call.comments)).toMatchObject({ path: "src/app.js", line: 4, side: "RIGHT" });
+    expect(extractFingerprint(first(call.comments).body)).toBe(anchored.fingerprint);
 
     // §13.1: publication rows are persisted with the GitHub ids.
     const rows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId } });
@@ -878,10 +880,10 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(result.summaryOnlyFindings).toBe(1);
     expect(state.createReviewCalls).toHaveLength(1);
 
-    const call = state.createReviewCalls[0];
+    const call = first(state.createReviewCalls);
     expect(call.body).toBe("");
     expect(call.comments).toHaveLength(1);
-    expect(extractFingerprint(call.comments[0].body)).toBe(anchored.fingerprint);
+    expect(extractFingerprint(first(call.comments).body)).toBe(anchored.fingerprint);
 
     const rows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId } });
     expect(rows.some((row) => row.commentType === "summary")).toBe(false);
@@ -924,8 +926,8 @@ describe("publishReview (fake octokit + Postgres)", () => {
     const result = await publishReview({ ...makePublishInput(seed.reviewId, state, [uncertain]) });
 
     expect(result.inlineCreated).toBe(0);
-    expect(state.createReviewCalls[0].comments).toHaveLength(0);
-    expect(state.createReviewCalls[0].body).toContain("Additional observation (1, unverified)");
+    expect(first(state.createReviewCalls).comments).toHaveLength(0);
+    expect(first(state.createReviewCalls).body).toContain("Additional observation (1, unverified)");
     // Uncertain findings are not recorded as published inline comments.
     const inlineRows = await prisma.reviewComment.findMany({
       where: { reviewId: seed.reviewId, commentType: "inline" },
@@ -978,8 +980,8 @@ describe("publishReview (fake octokit + Postgres)", () => {
     const seed = await seedReview("pub4");
     const a = await insertStoredFinding(seed.reviewId, seed.repositoryId, { title: "First", lineNumber: 4 });
     const state = makeState(seed.headSha);
-    const first = await publishReview({ ...makePublishInput(seed.reviewId, state, [a]) });
-    expect(first.inlineCreated).toBe(1);
+    const firstPublish = await publishReview({ ...makePublishInput(seed.reviewId, state, [a]) });
+    expect(firstPublish.inlineCreated).toBe(1);
 
     // A brand-new finding on the same file: summary is deduped, inline is new.
     const b = await insertStoredFinding(seed.reviewId, seed.repositoryId, {
@@ -992,7 +994,7 @@ describe("publishReview (fake octokit + Postgres)", () => {
     expect(second.inlineCreated).toBe(1);
     expect(second.inlineDeduped).toBe(1);
     expect(state.createReviewCalls).toHaveLength(2);
-    expect(state.createReviewCalls[1].comments[0].body).toContain("Second");
+    expect(first(at(state.createReviewCalls, 1).comments).body).toContain("Second");
     // Two published inline rows now exist, each with its own comment id.
     const inlineRows = await prisma.reviewComment.findMany({
       where: { reviewId: seed.reviewId, commentType: "inline" },
@@ -1057,9 +1059,9 @@ describe("publishReview (fake octokit + Postgres)", () => {
 
     // The 422 is not retried three times; one summary-only retry is made.
     expect(state.createReviewCalls).toHaveLength(2);
-    expect(state.createReviewCalls[0]!.comments).toHaveLength(1);
-    expect(state.createReviewCalls[1]!.comments).toHaveLength(0);
-    expect(state.createReviewCalls[1]!.body).toContain("Stored issue");
+    expect(first(state.createReviewCalls).comments).toHaveLength(1);
+    expect(at(state.createReviewCalls, 1).comments).toHaveLength(0);
+    expect(at(state.createReviewCalls, 1).body).toContain("Stored issue");
     expect(result.outcome).toBe("published");
     expect(result.inlineCreated).toBe(0);
     expect(result.summaryOnlyFindings).toBe(1);
@@ -1101,9 +1103,9 @@ describe("publishReview (fake octokit + Postgres)", () => {
     const state = makeState(seed.headSha);
     const result = await publishReview({ ...makePublishInput(seed.reviewId, state, []) });
     expect(result.outcome).toBe("clean_review_published");
-    expect(state.createReviewCalls[0].event).toBe("COMMENT");
-    expect(state.createReviewCalls[0].comments).toHaveLength(0);
-    expect(state.createReviewCalls[0].body).toContain("No confirmed findings");
+    expect(first(state.createReviewCalls).event).toBe("COMMENT");
+    expect(first(state.createReviewCalls).comments).toHaveLength(0);
+    expect(first(state.createReviewCalls).body).toContain("No confirmed findings");
   });
 });
 
@@ -1126,10 +1128,10 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
     // Findings persisted (ticket 08) and publication rows recorded (ticket 09).
     const findings = await getFindingsForReview(seed.reviewId, makeDeps(state).findings);
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("new");
+    expect(first(findings).status).toBe("new");
     const rows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId } });
     expect(rows.some((r) => r.commentType === "summary" && r.status === "published")).toBe(true);
-    expect(state.createReviewCalls[0].event).toBe("COMMENT");
+    expect(first(state.createReviewCalls).event).toBe("COMMENT");
 
     // State transitions are auditable: validating → publishing → completed.
     const transitions = await prisma.reviewStateTransition.findMany({
@@ -1177,10 +1179,10 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
     );
 
     expect(state.createReviewCalls).toHaveLength(1);
-    const call = state.createReviewCalls[0];
+    const call = first(state.createReviewCalls);
     expect(call.comments).toHaveLength(2);
     // Severity-ascending repository order, not the persist order.
-    expect(call.comments[0]?.body).toContain("Critical issue");
+    expect(first(call.comments)?.body).toContain("Critical issue");
     expect(call.comments[1]?.body).toContain("Medium issue");
     expect(call.body).not.toContain("Superseded issue");
 

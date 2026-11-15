@@ -18,6 +18,7 @@ import {
 } from "../src/platform/agents/opencode-runtime.js";
 import type { AgentSession } from "../src/ports/agent-runtime.js";
 import { AgentRuntimeError } from "../src/shared/errors/index.js";
+import { defined, first, instanceOf, rejectionOf } from "./helpers/assert.js";
 
 // ---------------------------------------------------------------------------
 // Test configuration fixture (mirrors the parsed review config shape)
@@ -60,9 +61,9 @@ class FakeChild extends EventEmitter {
   stderr = new EventEmitter();
   exitCode: number | null = null;
   killed = false;
-  signals: string[] = [];
+  signals: NodeJS.Signals[] = [];
   /** When set, kill() closes the process with this signal after a tick. */
-  closeOnKill: string | null = "SIGTERM";
+  closeOnKill: NodeJS.Signals | null = "SIGTERM";
 
   kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
     this.killed = true;
@@ -88,7 +89,7 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function makeSpawnStub(child: FakeChild) {
+function makeSpawnStub(child: object) {
   const calls: SpawnArgs[] = [];
   const stub = ((_path: string, args: readonly string[], opts: SpawnArgs[2]) => {
     calls.push([_path, args, opts]);
@@ -512,7 +513,7 @@ describe("execute: successful tasks", () => {
 
     const resultPromise = runtime.execute(session, { instruction: "summarize the diff", output: "text" });
     await vi.waitFor(() => expect(calls).toHaveLength(1));
-    const [binaryPath, args, opts] = calls[0];
+    const [binaryPath, args, opts] = first(calls);
     expect(binaryPath).toContain("opencode");
     // argv array — no shell interpolation ever.
     expect(opts.shell).toBe(false);
@@ -595,7 +596,7 @@ describe("execute: successful tasks", () => {
     expect(result.json).toEqual(payload);
     expect(result.value).toEqual(payload);
     // The JSON format requirement must travel inside the prompt.
-    expect(calls[0][1].join(" ")).toContain("JSON");
+    expect(first(calls)[1].join(" ")).toContain("JSON");
   });
 
   it("recovers the complete JSON when an earlier step was truncated at the output cap", async () => {
@@ -724,10 +725,11 @@ describe("execute: failure normalization", () => {
     const noise = `${"startup banner ".repeat(2_000)}provider rejected request: model not found`;
     child.stderr.emit("data", Buffer.from(noise));
     child.close(1);
-    const err = await resultPromise.catch((e: unknown) => e as { code: string; detail: string });
+    const err = instanceOf(await rejectionOf(resultPromise), AgentRuntimeError);
+    const detail = defined(err.detail, "error detail");
     expect(err.code).toBe("crash");
-    expect(err.detail).toContain("model not found");
-    expect(err.detail.length).toBeLessThanOrEqual(4_100);
+    expect(detail).toContain("model not found");
+    expect(detail.length).toBeLessThanOrEqual(4_100);
   });
 
   it("crash: spawn ENOENT is reported as a spawn error", async () => {
@@ -778,7 +780,7 @@ describe("execute: failure normalization", () => {
         ),
       5,
     );
-    const err = await promise.catch((e: unknown) => e as AgentRuntimeError);
+    const err = instanceOf(await rejectionOf(promise), AgentRuntimeError);
     expect(err.code).toBe("spawn");
     expect(err.detail).toContain("E2BIG");
     expect(err.detail).toContain("spawn /usr/local/bin/opencode");
@@ -790,9 +792,10 @@ describe("execute: failure normalization", () => {
     }) as unknown as typeof import("node:child_process").spawn;
     const runtime = new OpenCodeAgentRuntime(baseConfig, { spawnImpl: stub });
     const { session } = await startedSession(runtime);
-    const err = await runtime
-      .execute(session, { instruction: "x", output: "text" })
-      .catch((e: unknown) => e as AgentRuntimeError);
+    const err = instanceOf(
+      await rejectionOf(runtime.execute(session, { instruction: "x", output: "text" })),
+      AgentRuntimeError,
+    );
     expect(err.code).toBe("spawn");
     expect(err.detail).toContain("EINVAL");
   });
@@ -913,7 +916,7 @@ describe("execute: failure normalization", () => {
       Buffer.from("fatal: key sk-live-abcdef123456 rejected; authorization: Bearer sk-live-abcdef123456"),
     );
     child.close(1);
-    const err = await resultPromise.catch((e: AgentRuntimeError) => e);
+    const err = instanceOf(await rejectionOf(resultPromise), AgentRuntimeError);
     expect(err.code).toBe("crash");
     expect(err.detail).toBeDefined();
     expect(err.detail).not.toContain("sk-live-abcdef123456");

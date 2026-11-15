@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { reviewConfigSchema, type ReviewConfig } from "../src/contracts/config.js";
+import { reviewConfigSchema, type ReviewConfig } from "../../src/contracts/config.js";
 import {
   computeFindingFingerprint,
   normalizeTextSignature,
@@ -12,9 +12,10 @@ import {
   supersedeFindingsForReview,
   getFindingsForReview,
   createFindingsDependencies,
-} from "../src/modules/findings/index.js";
-import type { Finding, FindingEvidence } from "../src/modules/review/index.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
+} from "../../src/modules/findings/index.js";
+import type { Finding, FindingEvidence } from "../../src/modules/review/index.js";
+import { first } from "../helpers/assert.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 const findingsDependencies = createFindingsDependencies(prisma);
 
@@ -267,9 +268,9 @@ describe("validation and independent verification (§6.4, §7.1)", () => {
     );
     expect(outcome.rejected).toHaveLength(0);
     expect(outcome.verified).toHaveLength(1);
-    expect(outcome.verified[0].finding.title).toBe(good.title);
+    expect(first(outcome.verified).finding.title).toBe(good.title);
     expect(outcome.uncertain).toHaveLength(1);
-    expect(outcome.uncertain[0].finding.title).toBe(unsure.title);
+    expect(first(outcome.uncertain).finding.title).toBe(unsure.title);
   });
 
   test("confidence below minimumVerified but above anchoring is uncertain, not verified", async () => {
@@ -286,7 +287,7 @@ describe("validation and independent verification (§6.4, §7.1)", () => {
     expect(outcome.rejected).toHaveLength(0);
     expect(outcome.verified).toHaveLength(0);
     expect(outcome.uncertain).toHaveLength(1);
-    expect(outcome.uncertain[0].verified).toBe(true);
+    expect(first(outcome.uncertain).verified).toBe(true);
   });
 
   test("the agent's self-reported verified flag and confidence are ignored", async () => {
@@ -306,7 +307,7 @@ describe("validation and independent verification (§6.4, §7.1)", () => {
     expect(outcome.verified).toHaveLength(0);
     expect(outcome.rejected).toHaveLength(0);
     expect(outcome.uncertain).toHaveLength(1);
-    expect(outcome.uncertain[0].verified).toBe(false);
+    expect(first(outcome.uncertain).verified).toBe(false);
   });
 
   test("invalid findings are rejected with the right reason and never verified", async () => {
@@ -376,7 +377,7 @@ describe("persistence: store-only-valid contract", () => {
     expect(result.rejected.map((r) => r.reason)).toEqual(["invalid_file"]);
     const rows = await getFindingsForReview(reviewId, findingsDependencies);
     expect(rows).toHaveLength(1);
-    expect(rows[0].title).toBe(valid.title);
+    expect(first(rows).title).toBe(valid.title);
     expect(result.stored).toHaveLength(1);
   });
 
@@ -421,7 +422,7 @@ describe("lifecycle across commits (§7.2)", () => {
     const review2 = await seedReview("c2");
     const a2 = bugRiskFinding({ title: "A" });
     const r2 = await persist(review2, [a2]);
-    const aStatus2 = r2.stored[0].status;
+    const aStatus2 = first(r2.stored).status;
     expect(aStatus2).toBe("existing");
     expect(r2.resolved).toHaveLength(1);
     const bRow = await prisma.finding.findFirst({ where: { title: "B" } });
@@ -442,7 +443,7 @@ describe("lifecycle across commits (§7.2)", () => {
       evidence: evidence({ line: 4, excerpt: "function broken(a, b) {" }),
     });
     const r3 = await persist(review3, [a3]);
-    expect(r3.stored[0].status).toBe("updated");
+    expect(first(r3.stored).status).toBe("updated");
 
     // Commit 4: A fixed → resolved.
     await fsp.writeFile(
@@ -470,8 +471,8 @@ describe("lifecycle across commits (§7.2)", () => {
     });
     const r5 = await persist(review5, [a5]);
     expect(r5.stored).toHaveLength(1);
-    expect(r5.stored[0].status).toBe("new");
-    expect(r5.stored[0].reopened).toBe(true);
+    expect(first(r5.stored).status).toBe("new");
+    expect(first(r5.stored).reopened).toBe(true);
     const newA = await prisma.finding.findFirstOrThrow({ where: { title: "A", reviewId: review5 } });
     expect(newA.reopenedFromFindingId).toBe(aRow!.id);
     const reopenTransition = await prisma.findingStatusTransition.findFirst({
@@ -482,11 +483,11 @@ describe("lifecycle across commits (§7.2)", () => {
 
   test("duplicate findings within one review are deduped to the highest-confidence occurrence", async () => {
     const reviewId = await seedReview("dup");
-    const first = bugRiskFinding({ title: "dup-1", confidence: 0.86, line: 2 });
+    const primary = bugRiskFinding({ title: "dup-1", confidence: 0.86, line: 2 });
     const twin = bugRiskFinding({ title: "dup-2", confidence: 0.95, line: 3 });
-    const result = await persist(reviewId, [first, twin]);
+    const result = await persist(reviewId, [primary, twin]);
     expect(result.stored).toHaveLength(1);
-    expect(result.stored[0].title).toBe("dup-2"); // highest confidence wins
+    expect(first(result.stored).title).toBe("dup-2"); // highest confidence wins
     const rows = await getFindingsForReview(reviewId, findingsDependencies);
     expect(rows).toHaveLength(1);
     expect(result.transitions).toBe(1);
@@ -511,7 +512,7 @@ describe("lifecycle across commits (§7.2)", () => {
       evidence: evidence({ line: 6, excerpt: "function unused() {" }),
     });
     const r2 = await persist(review2, [nowSure], [], config);
-    expect(r2.stored[0].status).toBe("new");
+    expect(first(r2.stored).status).toBe("new");
     const transition = await prisma.findingStatusTransition.findFirst({
       where: { reviewId: review2, toStatus: "new" },
     });
@@ -525,7 +526,7 @@ describe("lifecycle across commits (§7.2)", () => {
 
     const review2 = await seedReview("off2");
     const r2 = await persist(review2, [bugRiskFinding({ title: "A" })], [], config);
-    expect(r2.stored[0].status).toBe("new"); // history skipped → always new
+    expect(first(r2.stored).status).toBe("new"); // history skipped → always new
     expect(r2.resolved).toEqual([]);
   });
 
@@ -535,9 +536,9 @@ describe("lifecycle across commits (§7.2)", () => {
     const row = await prisma.finding.findFirstOrThrow({ where: { title: "A" } });
     const transitions = await prisma.findingStatusTransition.findMany({ where: { findingId: row.id } });
     expect(transitions).toHaveLength(1);
-    expect(transitions[0].fromStatus).toBeNull();
-    expect(transitions[0].toStatus).toBe("new");
-    expect(transitions[0].reviewId).toBe(review1);
+    expect(first(transitions).fromStatus).toBeNull();
+    expect(first(transitions).toStatus).toBe("new");
+    expect(first(transitions).reviewId).toBe(review1);
   });
 });
 
@@ -578,7 +579,7 @@ describe("query surface for the publishing layer (ticket 09)", () => {
     await persist(review2, [bugRiskFinding({ title: "A" })], [unsure]);
     const rows2 = await getFindingsForReview(review2, findingsDependencies);
     expect(rows2).toHaveLength(2);
-    expect(rows2[0].verified).toBe(true);
+    expect(first(rows2).verified).toBe(true);
     expect(rows2.every((r) => r.reviewId === review2)).toBe(true);
   });
 });

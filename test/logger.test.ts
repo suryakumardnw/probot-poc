@@ -8,7 +8,7 @@ describe("pino logger", () => {
     const env = loadEnv({ NODE_ENV: "test" } as NodeJS.ProcessEnv);
     const logger = createLogger(env);
     expect(typeof logger.info).toBe("function");
-    expect(logger.level).toBe(env.LOG_LEVEL);
+    expect(logger).toMatchObject({ level: env.LOG_LEVEL });
   });
 
   test("redacts secret-bearing keys", async () => {

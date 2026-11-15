@@ -6,8 +6,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { UnrecoverableError } from "bullmq";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { createIngestionRepositories } from "../src/modules/ingestion/prisma-ingestion.repository.js";
-import type { InstallationTokenProvider } from "../src/modules/workspace/credentials.js";
+import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
+import type { InstallationTokenProvider } from "../../src/modules/workspace/credentials.js";
 import {
   parseNameStatus,
   readWorkspaceFile,
@@ -15,24 +15,25 @@ import {
   PathEscapeError,
   FileTooLargeError,
   looksBinary,
-} from "../src/modules/workspace/files.js";
-import { createPrismaWorkspaceRepository } from "../src/modules/workspace/prisma-workspace.repository.js";
+} from "../../src/modules/workspace/files.js";
+import { createPrismaWorkspaceRepository } from "../../src/modules/workspace/prisma-workspace.repository.js";
 import {
   ReviewJobRetryError,
   processReviewJob,
   type ProcessReviewJobDeps,
-} from "../src/modules/workspace/processor.js";
-import { redactCredentials, sanitizeGitUrl } from "../src/modules/workspace/redact.js";
+} from "../../src/modules/workspace/processor.js";
+import { redactCredentials, sanitizeGitUrl } from "../../src/modules/workspace/redact.js";
 import {
   ReviewWorkspaceService,
   StaleCommitError,
   CloneFailedError,
   DiffFailedError,
-} from "../src/modules/workspace/workspace.js";
-import { createObservability } from "../src/platform/observability/index.js";
-import { AgentRuntimeError } from "../src/shared/errors/index.js";
-import { prisma, disconnectDatabase } from "./helpers/db.js";
-import { createTestReviewState } from "./helpers/ingestion.js";
+} from "../../src/modules/workspace/workspace.js";
+import { createObservability } from "../../src/platform/observability/index.js";
+import type { Logger } from "../../src/ports/logger.js";
+import { AgentRuntimeError } from "../../src/shared/errors/index.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
+import { createTestReviewState } from "../helpers/ingestion.js";
 
 /**
  * Ticket 04 integration tests: repository review workspace.
@@ -538,25 +539,25 @@ describe("workspace prepare", () => {
 });
 
 describe("worker processor", () => {
-  function makeDeps(
-    service: ReviewWorkspaceService,
-    logger: { info(): void; warn(): void; error(): void },
-  ): ProcessReviewJobDeps {
+  function makeDeps(service: ReviewWorkspaceService, logger: Logger = silentLogger): ProcessReviewJobDeps {
     return {
       repositories: createIngestionRepositories(prisma),
       service,
-      logger: logger as unknown as ProcessReviewJobDeps["logger"],
+      logger,
       observability: createObservability(),
       transitionReviewState: createTestReviewState().transitionReviewState,
       concurrency: 1,
     };
   }
 
-  const silentLogger = {
+  const silentLogger: Logger = {
     info: () => {},
     warn: () => {},
     error: () => {},
     debug: () => {},
+    child(): Logger {
+      return this;
+    },
   };
 
   test("superseded job is skipped before any workspace work", async () => {
@@ -574,6 +575,7 @@ describe("worker processor", () => {
         pullRequestNumber: PR_NUMBER,
         headSha,
         reviewMode: "adaptive",
+        reviewType: "standard",
         trigger: "opened",
       },
       makeDeps(service, silentLogger),
@@ -598,6 +600,7 @@ describe("worker processor", () => {
         pullRequestNumber: PR_NUMBER,
         headSha,
         reviewMode: "adaptive",
+        reviewType: "standard",
         trigger: "opened",
       },
       {
@@ -623,9 +626,11 @@ describe("worker processor", () => {
     const { service } = makeService();
     const chain = await createReviewChain();
     const errors: Array<Record<string, unknown>> = [];
-    const capturingLogger = {
+    const capturingLogger: Logger = {
       ...silentLogger,
-      error: (obj: Record<string, unknown>) => errors.push(obj),
+      error: (firstArg: object | string, message?: string) => {
+        errors.push(typeof firstArg === "string" ? { message } : { ...firstArg });
+      },
     };
     await expect(
       processReviewJob(
@@ -639,6 +644,7 @@ describe("worker processor", () => {
           pullRequestNumber: PR_NUMBER,
           headSha,
           reviewMode: "adaptive",
+          reviewType: "standard",
           trigger: "opened",
         },
         {
@@ -679,6 +685,7 @@ describe("worker processor", () => {
         pullRequestNumber: PR_NUMBER,
         headSha,
         reviewMode: "adaptive",
+        reviewType: "standard",
         trigger: "opened",
       },
       {
@@ -711,6 +718,7 @@ describe("worker processor", () => {
         pullRequestNumber: PR_NUMBER,
         headSha,
         reviewMode: "adaptive",
+        reviewType: "standard",
         trigger: "opened",
       },
       makeDeps(service, silentLogger),
@@ -738,6 +746,7 @@ describe("worker processor", () => {
         pullRequestNumber: PR_NUMBER,
         headSha,
         reviewMode: "adaptive",
+        reviewType: "standard",
         trigger: "opened",
       },
       makeDeps(service, silentLogger),
@@ -771,6 +780,7 @@ describe("worker processor", () => {
         headSha,
         baseSha: null,
         reviewMode: "adaptive",
+        reviewType: "standard",
         trigger: "manual",
       },
       {
@@ -803,6 +813,7 @@ describe("worker processor", () => {
           pullRequestNumber: PR_NUMBER,
           headSha,
           reviewMode: "adaptive",
+          reviewType: "standard",
           trigger: "opened",
         },
         makeDeps(service, silentLogger),

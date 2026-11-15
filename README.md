@@ -297,7 +297,7 @@ Create the ingress network once if it does not exist:
 Useful commands:
 
 ```sh
-npm test                 # unit/integration tests
+npm test                 # all test tiers (unit, contract, integration, characterization)
 npm run config:validate  # validate config/review.json
 npm run model:smoke      # check model endpoint connectivity
 ```
