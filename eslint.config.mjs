@@ -29,37 +29,39 @@ const LEGACY_ELEMENT_PATHS = [
 ];
 
 /**
- * Temporary `process.env` allowances. The first two entries are permanent
- * boundaries (`platform/config` owns environment parsing; tests may arrange
- * their own environment). Every other entry names the move PR that removes it,
- * with PR 3.12 as the backstop for any allowance a move-only PR cannot remove.
+ * Temporary `process.env` allowances. `platform/config` owns environment
+ * parsing, tests may arrange their own environment, and the one-off deploy
+ * diagnostic runs outside the application. Every other entry names the move PR
+ * and PR 3.12 as its explicit final removal: the reads survive move-only PRs.
  */
 const PROCESS_ENV_ALLOWED_FILES = [
   "src/platform/config/**/*.ts",
   "test/**/*.ts",
-  // TODO(PR 3.10): config moves to platform/config.
+  // One-off container diagnostic; not application code (permanent exception).
+  "deploy/inspect-key.js",
+  // TODO(PR 3.10; PR 3.12 final): config moves to platform/config.
   "src/config/**/*.ts",
-  // TODO(PR 3.10): composition roots read operational overrides.
+  // TODO(PR 3.10; PR 3.12 final): composition roots read operational overrides.
   "src/bootstrap/**/*.ts",
-  // TODO(PR 3.11): CLI scripts read environment directly.
+  // TODO(PR 3.11; PR 3.12 final): CLI scripts read environment directly.
   "src/scripts/**/*.ts",
-  // TODO(PR 3.6): admin moves into a module.
+  // TODO(PR 3.6; PR 3.12 final): admin moves into a module.
   "src/admin/**/*.ts",
-  // TODO(PR 3.9): agent runtimes move to platform/agents.
+  // TODO(PR 3.9; PR 3.12 final): agent runtimes move to platform/agents.
   "src/agent/**/*.ts",
-  // TODO(PR 3.8): execution moves into a module.
+  // TODO(PR 3.8; PR 3.12 final): execution moves into a module.
   "src/execution/**/*.ts",
-  // TODO(PR 3.8): knowledge moves into a module.
+  // TODO(PR 3.8; PR 3.12 final): knowledge moves into a module.
   "src/knowledge/**/*.ts",
-  // TODO(PR 3.9): model adapters move to platform/models.
+  // TODO(PR 3.9; PR 3.12 final): model adapters move to platform/models.
   "src/models/**/*.ts",
-  // TODO(PR 3.10): observability moves to platform/observability.
+  // TODO(PR 3.10; PR 3.12 final): observability moves to platform/observability.
   "src/observability/**/*.ts",
-  // TODO(PR 3.5): publishing moves into a module.
+  // TODO(PR 3.5; PR 3.12 final): publishing moves into a module.
   "src/publishing/**/*.ts",
-  // TODO(PR 3.7): triage services move into a module.
+  // TODO(PR 3.7; PR 3.12 final): triage services move into a module.
   "src/services/**/*.ts",
-  // TODO(PR 3.3): workspace moves into a module.
+  // TODO(PR 3.3; PR 3.12 final): workspace moves into a module.
   "src/workspace/**/*.ts",
 ];
 
@@ -188,6 +190,9 @@ export default tseslint.config(
       boundaries,
     },
     settings: {
+      // First matching descriptor wins; keep this explicit rather than relying
+      // on the plugin default.
+      "boundaries/elements-single-match": true,
       "boundaries/elements": [
         { type: "module", pattern: "src/modules/*", capture: ["moduleName"], partialMatch: false },
         { type: "bootstrap", pattern: "src/bootstrap", partialMatch: false },
@@ -308,8 +313,10 @@ export default tseslint.config(
   },
   {
     // Vendor and environment boundaries. These are architectural rules too, so
-    // they live with the boundary scaffold instead of a one-off CI grep.
-    files: ["**/*.{ts,mts,cts}"],
+    // they live with the boundary scaffold instead of a one-off CI grep. Root
+    // scripts and the deploy diagnostic are tooling, but still linted; the
+    // deploy process.env exception is documented in docs/module-boundaries.md.
+    files: ["**/*.{ts,mts,cts}", "scripts/**/*.mjs", "deploy/**/*.js"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -317,6 +324,13 @@ export default tseslint.config(
           paths: [
             {
               name: "@prisma/client",
+              message:
+                "Import Prisma only from *.repository.ts adapters or src/platform/db (see docs/module-boundaries.md).",
+            },
+          ],
+          patterns: [
+            {
+              group: ["@prisma/client/*"],
               message:
                 "Import Prisma only from *.repository.ts adapters or src/platform/db (see docs/module-boundaries.md).",
             },

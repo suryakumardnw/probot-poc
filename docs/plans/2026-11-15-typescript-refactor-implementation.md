@@ -84,7 +84,7 @@ The spec implies these failure modes; each gets a test in the task that owns it.
 |---|---|
 | Prisma transaction ownership | Module-owned unit-of-work port; callback receives a transaction-scoped repository bundle; no `Prisma.TransactionClient` in services. Only multi-repository atomic operations use it. |
 | BullMQ idempotency/reliability | PR 2.8 documents and tests logical review identity, job identity, webhook dedupe, retry classification, failed-job recovery, and graceful shutdown. |
-| Mandatory module boundaries | PR 3.1 adds the boundary lint scaffold; PR 3.13 turns on every rule with no exceptions. |
+| Mandatory module boundaries | PR 3.1 adds the boundary lint scaffold; PR 3.12 turns on every rule with no exceptions. |
 | Semantic error consistency | PR 1.1 adds `AppError` + central `classifyFailure`; HTTP status and queue retryability are separate axes, with table-driven tests. |
 | Characterization before migration | PR 0.4 adds the boundary suite before any deletion or move. |
 | Phase ordering | Repositories and composition roots are merged into Phase 2 with two exit gates; Phase 0 contains the behavioral baseline. |
@@ -1098,7 +1098,7 @@ change. Rollback: revert the retry classifier integration; keep the port.
 ## Phase 3 — Module migration and boundary enforcement
 
 > **Phase rule:** PR 3.1 adds the boundary lint scaffold. Every move PR updates
-> the patterns and must leave lint green. PR 3.13 removes every exception.
+> the patterns and must leave lint green. PR 3.12 removes every exception.
 
 ### PR 3.1 — Boundary lint scaffold
 
@@ -1126,7 +1126,7 @@ change. Rollback: revert the retry classifier integration; keep the port.
 - [ ] Document the rules and the allowed exceptions in
       `docs/module-boundaries.md`.
 - [ ] Start with temporary path allowances for the current layout; each move PR
-      removes its allowance. PR 3.13 removes all allowances.
+      removes its allowance. PR 3.12 removes all allowances.
 - [ ] Commit: `chore(lint): add module boundary rules`.
 
 **Tests / verification:**

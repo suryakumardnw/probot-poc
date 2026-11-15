@@ -10,9 +10,10 @@ same commit.
 
 ## Element types
 
-Element patterns are anchored at the repository root. The first matching
-descriptor wins; `src/index.ts`, `src/server.ts`, and `src/worker.ts` fall back
-to the `src` descriptor and are therefore `bootstrap`.
+Element patterns are anchored at the repository root. `boundaries/elements-single-match`
+is explicitly set to `true`, so the first matching descriptor wins;
+`src/index.ts`, `src/server.ts`, and `src/worker.ts` fall back to the `src`
+descriptor and are therefore `bootstrap`.
 
 | Type | Paths | Meaning |
 |---|---|---|
@@ -57,14 +58,25 @@ No module may import another module's internal file or a platform adapter.
 
 ## Vendor and environment rules
 
+The rules apply to TypeScript (`**/*.{ts,mts,cts}`), root tooling
+(`scripts/**/*.mjs`), and the standalone deploy diagnostic (`deploy/**/*.js`).
+
 | Rule | Restriction | Approved exceptions |
 |---|---|---|
-| `no-restricted-imports` | No `@prisma/client` import. | `src/**/*.repository.ts`, `src/platform/db/**`, and `test/**` (permanent). Temporary file allowances below. |
-| `no-restricted-syntax` | No `process.env` reads. | `src/platform/config/**` and `test/**` (permanent). Temporary directory allowances below. |
+| `no-restricted-imports` | No `@prisma/client` import, including deep subpaths via the `@prisma/client/*` pattern. | `src/**/*.repository.ts`, `src/platform/db/**`, and `test/**` (permanent). Temporary file allowances below. |
+| `no-restricted-syntax` | No `process.env` reads. | `src/platform/config/**`, `test/**`, and `deploy/inspect-key.js` (permanent). Temporary directory allowances below. |
 | `no-restricted-globals` | No global `fetch`. | `src/platform/**` (permanent). Temporary directory allowances below. |
 
-Tests may use Prisma row types to assert database state; application code may
-not. Repository adapters and `platform/db` own the vendor client.
+Tests may use `@prisma/client` row types to assert database state and fixture
+shapes. This is an **approved test-tier exception**, not application code:
+repositories and `platform/db` remain the only production owners of the vendor
+client. If the test fakes migration removes those imports, the exception can be
+dropped later.
+
+`deploy/inspect-key.js` is a one-off container diagnostic copied into a running
+worker container; it is CommonJS, outside the package, and never imported by the
+application. It is deliberately linted by these rules, with one permanent
+`process.env` exception because reading the mounted key is its entire purpose.
 
 ## Temporary allowances
 
@@ -101,21 +113,25 @@ removal.
 
 ### `process.env` allowances
 
-Permanent: `src/platform/config/**`, `test/**`.
+Permanent: `src/platform/config/**`, `test/**`, `deploy/inspect-key.js`.
+
+Every temporary row below names the move PR and **PR 3.12 as the explicit final
+removal**. The reads survive move-only PRs, so the move PR alone cannot remove
+the allowance.
 
 | Temporary path | Removed by |
 |---|---|
-| `src/config/**` | PR 3.10 (becomes `platform/config`) |
-| `src/bootstrap/**` | PR 3.10; remaining reads become `platform/config` accessors by PR 3.12 |
-| `src/admin/**` | PR 3.6 |
-| `src/agent/**` | PR 3.9 |
-| `src/execution/**`, `src/knowledge/**` | PR 3.8 |
-| `src/models/**` | PR 3.9 |
-| `src/observability/**` | PR 3.10 |
-| `src/publishing/**` | PR 3.5 |
-| `src/services/**` | PR 3.7 |
-| `src/workspace/**` | PR 3.3 |
-| `src/scripts/**` | PR 3.11; remaining CLI reads move behind `platform/config` by PR 3.12 |
+| `src/config/**` | PR 3.10; PR 3.12 final |
+| `src/bootstrap/**` | PR 3.10; PR 3.12 final |
+| `src/admin/**` | PR 3.6; PR 3.12 final |
+| `src/agent/**` | PR 3.9; PR 3.12 final |
+| `src/execution/**`, `src/knowledge/**` | PR 3.8; PR 3.12 final |
+| `src/models/**` | PR 3.9; PR 3.12 final |
+| `src/observability/**` | PR 3.10; PR 3.12 final |
+| `src/publishing/**` | PR 3.5; PR 3.12 final |
+| `src/services/**` | PR 3.7; PR 3.12 final |
+| `src/workspace/**` | PR 3.3; PR 3.12 final |
+| `src/scripts/**` | PR 3.11; PR 3.12 final |
 
 ### Prisma allowances
 
@@ -152,6 +168,7 @@ on it, and delete it:
 | `src/contracts/...` imports `node:fs` or a non-Zod package. | `boundaries/dependencies` |
 | `src/shared/...` imports `../lib/...`. | `boundaries/dependencies` |
 | A non-repository file imports `@prisma/client`. | `no-restricted-imports` |
+| A non-repository file imports `@prisma/client/runtime/library`. | `no-restricted-imports` (deep-import pattern) |
 | A non-platform file reads `process.env`. | `no-restricted-syntax` |
 | A non-platform file calls global `fetch`. | `no-restricted-globals` |
 
@@ -163,8 +180,9 @@ expected rule error; the probes were then removed.
 1. Delete `LEGACY_ELEMENT_PATHS`, `PROCESS_ENV_ALLOWED_FILES`,
    `PRISMA_ALLOWED_FILES`, and `FETCH_ALLOWED_FILES` from `eslint.config.mjs`.
 2. Delete the `legacy` element descriptor and every policy that references it.
-3. Keep only the permanent exceptions: `*.repository.ts`/`platform/db` for
-   Prisma, `platform/config` for `process.env`, `platform` for `fetch`, and the
-   `test` element/file category.
+3. Keep only the permanent exceptions: `*.repository.ts`/`platform/db` and
+   `test/**` for Prisma (including deep imports), `platform/config`, `test/**`,
+   and `deploy/inspect-key.js` for `process.env`, `platform/**` for `fetch`, and
+   the `test` element/file category.
 4. Update this document in the same commit.
 5. Re-run the negative checks above with no temporary allowances present.
