@@ -8,7 +8,7 @@
 
 import type { Probot } from "probot";
 import type { ReviewConfigStore } from "../../ports/review-config.js";
-import type { IngestionRepositories, IngestionService, IngestionUnitOfWork } from "../ingestion/index.js";
+import type { IngestionServices } from "../ingestion/index.js";
 import { registerInstallationHandlers } from "./installation.js";
 import { registerIssueCommentHandlers } from "./issue-comment.js";
 import { registerPullRequestHandlers } from "./pull-request.js";
@@ -18,9 +18,11 @@ export { registerIssueCommentHandlers, type IssueCommentHandlerDeps } from "./is
 export { registerPullRequestHandlers, type PullRequestHandlerDeps } from "./pull-request.js";
 
 export interface WebhookDependencies {
-  ingestion: IngestionService;
-  repositories: IngestionRepositories;
-  unitOfWork: IngestionUnitOfWork;
+  /** The public ingestion services this adapter needs, and nothing more. */
+  ingestion: Pick<
+    IngestionServices,
+    "ingestReviewRequest" | "findReviewTarget" | "registerInstallation" | "markInstallationDeleted"
+  >;
   config: ReviewConfigStore;
 }
 
@@ -34,8 +36,7 @@ export function registerWebhooks(app: Probot, deps: WebhookDependencies): void {
   registerPullRequestHandlers(app, { ingestion: deps.ingestion });
   registerIssueCommentHandlers(app, {
     ingestion: deps.ingestion,
-    repositories: deps.repositories,
     config: deps.config,
   });
-  registerInstallationHandlers(app, { unitOfWork: deps.unitOfWork });
+  registerInstallationHandlers(app, { installations: deps.ingestion });
 }

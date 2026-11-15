@@ -109,8 +109,6 @@ const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 const ingestion = createTestIngestion({ queue: reviewQueue });
 const testApp = createApp({
   ingestion: ingestion.services,
-  ingestionRepositories: ingestion.repositories,
-  ingestionUnitOfWork: ingestion.unitOfWork,
   triage: createTestTriage(),
   config: ingestion.config,
 });

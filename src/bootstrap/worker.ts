@@ -1,5 +1,4 @@
 import path from "node:path";
-import type { Worker } from "bullmq";
 import { reconcileIncompleteReviews } from "../modules/ingestion/index.js";
 import {
   createPrismaReviewKnowledgeStore,
@@ -12,15 +11,14 @@ import {
 import { createReviewPipelineHook } from "../modules/publishing/index.js";
 import {
   ReviewWorkspaceService,
-  createDefaultTokenProvider,
   createPrismaWorkspaceRepository,
-  startReviewWorker,
-  stopReviewWorker,
+  createReviewJobProcessor,
   workspaceDirectorySizeBytes,
 } from "../modules/workspace/index.js";
 import { createAgentRuntime } from "../platform/agents/index.js";
 import { loadEnv, readEnv, readProcessEnv, type Env } from "../platform/config/env.js";
 import { checkPrisma, disconnectPrisma } from "../platform/db/prisma.js";
+import { createDefaultTokenProvider } from "../platform/github/app-auth.js";
 import { createGitHubOctokit } from "../platform/github/octokit.js";
 import { createDefaultKnowledgeFetcher } from "../platform/knowledge/fetch.js";
 import { createLogger, type PlatformLogger } from "../platform/logger.js";
@@ -29,6 +27,7 @@ import { createObservability } from "../platform/observability/index.js";
 import { startMetricsServer, metricsServerPort } from "../platform/observability/metrics-endpoint.js";
 import { getMetricsRegistry } from "../platform/observability/metrics.js";
 import { createWorkerConnection } from "../platform/queue/review-queue.js";
+import { startReviewWorker, stopReviewWorker } from "../platform/queue/review-worker.js";
 import { checkRedis, disconnectRedis, waitRedisReady } from "../platform/redis.js";
 import { registerGracefulShutdown, runShutdownSteps, type ShutdownStep } from "../platform/shutdown.js";
 import { retryPolicyConfigFromReviewConfig } from "../shared/retry.js";
@@ -133,7 +132,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
     octokitFactory: (token) => createGitHubOctokit(token, readEnv("GITHUB_BASE_URL")),
   });
 
-  let reviewWorker: Worker | undefined;
+  let reviewWorker: ReturnType<typeof startReviewWorker> | undefined;
   let sweepTimer: NodeJS.Timeout | undefined;
   let outboxTimer: NodeJS.Timeout | undefined;
   let reconciliationTimer: NodeJS.Timeout | undefined;
@@ -217,7 +216,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
           unitOfWork: ingestion.unitOfWork,
           logger,
           observability,
-          queue: clients.reviewQueue.queue,
+          queue: clients.reviewQueue,
           staleThresholdMs: Number(readEnv("RECOVERY_STALE_THRESHOLD_MS")) || undefined,
           // Keep the durable recovery budget aligned with the BullMQ attempt
           // budget configured in review.json.
@@ -263,8 +262,8 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
 
     const evaluateAlerts = async (): Promise<void> => {
       try {
-        const counts = await clients.reviewQueue.queue.getJobCounts("waiting", "active", "delayed");
-        const depth = (counts.waiting ?? 0) + (counts.active ?? 0) + (counts.delayed ?? 0);
+        const counts = await clients.reviewQueue.getJobCounts();
+        const depth = counts.waiting + counts.active + counts.delayed;
         metrics.queueDepth.set(depth);
 
         const failedTotal = counterTotal(metrics.reviewsFailed.values);
@@ -381,13 +380,12 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
       // "review-jobs" queue with the configured concurrency and runs the
       // repository retrieval pipeline (shallow clone, exact SHA checkout, diff,
       // changed-file enumeration, workspace cleanup) per review job.
-      reviewWorker = startReviewWorker(workerConnection, {
-        repositories: ingestion.repositories,
+      const reviewJobProcessor = createReviewJobProcessor({
+        jobs: ingestion.services,
         service: workspaceService,
         logger,
         observability,
         transitionReviewState: ingestion.services.transitionReviewState,
-        concurrency: reviewConfig.queue.concurrency,
         // Ticket 12 §12.4: retry policy from review.json (queue.retry.*).
         retryPolicy: retryPolicyConfigFromReviewConfig(reviewConfig),
         // Ticket 07+09: run the adaptive review engine on the prepared
@@ -395,6 +393,11 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
         // review to GitHub (ticket 09), driving the review to a terminal state.
         // Runtime/config errors fail the review immediately (§8.4).
         onWorkspacePrepared: reviewPipelineHook,
+      });
+      reviewWorker = startReviewWorker(workerConnection, {
+        processor: reviewJobProcessor,
+        logger,
+        concurrency: reviewConfig.queue.concurrency,
       });
 
       // Periodic stale-workspace sweep per repository.workspace.retentionHours.

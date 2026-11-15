@@ -7,17 +7,19 @@ import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { ReviewJobPayload } from "../../src/contracts/queue.js";
+import { createReviewJobService } from "../../src/modules/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
-import { NullTokenProvider } from "../../src/modules/workspace/credentials.js";
-import { startReviewWorker, stopReviewWorker } from "../../src/modules/workspace/processor.js";
+import { createReviewJobProcessor } from "../../src/modules/workspace/processor.js";
 import {
   ReviewRetrievalError,
   ReviewWorkspaceService,
   type ReviewWorkspaceOperations,
   type WorkspaceResult,
 } from "../../src/modules/workspace/workspace.js";
+import { NullTokenProvider } from "../../src/platform/github/app-auth.js";
 import { createObservability } from "../../src/platform/observability/index.js";
 import { createReviewQueue, createWorkerConnection } from "../../src/platform/queue/review-queue.js";
+import { startReviewWorker, stopReviewWorker } from "../../src/platform/queue/review-worker.js";
 import { disconnectRedis } from "../../src/platform/redis.js";
 import { orderShutdownSteps } from "../../src/platform/shutdown.js";
 import { testEnv } from "../helpers/env.js";
@@ -43,6 +45,18 @@ const REPO_ROOT = path.resolve(__dirname, "../..");
 const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 const queue = reviewQueue.queue;
 const transitionReviewState = createTestReviewState().transitionReviewState;
+const jobs = createReviewJobService({ repositories: createIngestionRepositories(prisma) });
+
+function startTestWorker(connection: ReturnType<typeof createWorkerConnection>, service: ReviewWorkspaceOperations) {
+  const processor = createReviewJobProcessor({
+    jobs,
+    service,
+    logger: silentLogger,
+    observability: createObservability(),
+    transitionReviewState,
+  });
+  return startReviewWorker(connection, { processor, logger: silentLogger, concurrency: 1 });
+}
 
 interface ShutdownRun {
   code: number | null;
@@ -236,14 +250,7 @@ describe("real BullMQ worker drain", () => {
     };
 
     const workerConnection = createWorkerConnection(testEnv.REDIS_URL);
-    const worker = startReviewWorker(workerConnection, {
-      repositories: createIngestionRepositories(prisma),
-      service,
-      logger: silentLogger,
-      observability: createObservability(),
-      transitionReviewState,
-      concurrency: 1,
-    });
+    const worker = startTestWorker(workerConnection, service);
     await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
 
     const active = once(worker, "active");
@@ -336,14 +343,7 @@ describe("real BullMQ worker retry during shutdown", () => {
     };
 
     const workerConnection = createWorkerConnection(testEnv.REDIS_URL);
-    const worker = startReviewWorker(workerConnection, {
-      repositories: createIngestionRepositories(prisma),
-      service,
-      logger: silentLogger,
-      observability: createObservability(),
-      transitionReviewState,
-      concurrency: 1,
-    });
+    const worker = startTestWorker(workerConnection, service);
     await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
 
     const payload: ReviewJobPayload = {
@@ -366,7 +366,7 @@ describe("real BullMQ worker retry during shutdown", () => {
     });
 
     let stopPromise: Promise<void> | undefined;
-    let retryWorker: ReturnType<typeof startReviewWorker> | undefined;
+    let retryWorker: ReturnType<typeof startTestWorker> | undefined;
     let retryConnection: ReturnType<typeof createWorkerConnection> | undefined;
     try {
       const active = once(worker, "active");
@@ -396,14 +396,7 @@ describe("real BullMQ worker retry during shutdown", () => {
       // A restarted worker picks the same queue job up: the retry completes.
       await queueJob.promote();
       retryConnection = createWorkerConnection(testEnv.REDIS_URL);
-      retryWorker = startReviewWorker(retryConnection, {
-        repositories: createIngestionRepositories(prisma),
-        service,
-        logger: silentLogger,
-        observability: createObservability(),
-        transitionReviewState,
-        concurrency: 1,
-      });
+      retryWorker = startTestWorker(retryConnection, service);
       const completed = once(retryWorker, "completed");
       await retryWorker.waitUntilReady();
       await completed;
@@ -451,14 +444,7 @@ describe("real BullMQ worker permanent payload failure", () => {
       tokenProvider: new NullTokenProvider(),
     });
     const workerConnection = createWorkerConnection(testEnv.REDIS_URL);
-    const worker = startReviewWorker(workerConnection, {
-      repositories: createIngestionRepositories(prisma),
-      service,
-      logger: silentLogger,
-      observability: createObservability(),
-      transitionReviewState,
-      concurrency: 1,
-    });
+    const worker = startTestWorker(workerConnection, service);
     await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
 
     const failed = new Promise<{ attemptsMade: number | undefined; message: string }>((resolve) => {

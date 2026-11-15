@@ -1,15 +1,13 @@
 import { once } from "node:events";
-import { UnrecoverableError, type Queue } from "bullmq";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { ReviewJobPayload } from "../../src/contracts/queue.js";
-import { reconcileIncompleteReviews } from "../../src/modules/ingestion/index.js";
+import { createReviewJobService, reconcileIncompleteReviews } from "../../src/modules/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
 import {
   ReviewJobRetryError,
+  createReviewJobProcessor,
   processReviewJob,
-  startReviewWorker,
-  stopReviewWorker,
 } from "../../src/modules/workspace/processor.js";
 import {
   ReviewRetrievalError,
@@ -19,8 +17,10 @@ import {
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/platform/config/review-loader.js";
 import { createObservability } from "../../src/platform/observability/index.js";
 import { createReviewQueue, createWorkerConnection } from "../../src/platform/queue/review-queue.js";
+import { startReviewWorker, stopReviewWorker } from "../../src/platform/queue/review-worker.js";
 import { disconnectRedis } from "../../src/platform/redis.js";
-import { AgentRuntimeError } from "../../src/shared/errors/index.js";
+import type { ReviewQueue } from "../../src/ports/review-queue.js";
+import { AgentRuntimeError, UnrecoverableJobError } from "../../src/shared/errors/index.js";
 import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/shared/retry.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion, createTestReviewState, silentLogger } from "../helpers/ingestion.js";
@@ -49,6 +49,7 @@ import {
 
 const repositories = createIngestionRepositories(prisma);
 const unitOfWork = createIngestionUnitOfWork(prisma);
+const jobs = createReviewJobService({ repositories });
 const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 const queue = reviewQueue.queue;
 
@@ -169,6 +170,8 @@ describe("retry policy from configuration (§12.4)", () => {
         added.push({ opts: opts as { attempts?: number; backoff?: { type: string; delay: number } } });
         return { id: chain.jobId };
       },
+      removeTerminalJob: async () => {},
+      getJobCounts: async () => ({ waiting: 0, active: 0, delayed: 0 }),
       close: async () => {},
     };
 
@@ -209,14 +212,18 @@ describe("worker retry execution (§12.4)", () => {
     };
 
     const connection = createWorkerConnection(testEnv.REDIS_URL);
-    const worker = startReviewWorker(connection, {
-      repositories,
+    const processor = createReviewJobProcessor({
+      jobs,
       service,
       logger: silentLogger,
       observability: createObservability(),
       transitionReviewState: reviewState.transitionReviewState,
-      concurrency: 1,
       retryPolicy,
+    });
+    const worker = startReviewWorker(connection, {
+      processor,
+      logger: silentLogger,
+      concurrency: 1,
     });
     const failedAttempts: number[] = [];
     worker.on("failed", (job) => {
@@ -273,14 +280,18 @@ describe("worker retry execution (§12.4)", () => {
     };
 
     const connection = createWorkerConnection(testEnv.REDIS_URL);
-    const worker = startReviewWorker(connection, {
-      repositories,
+    const processor = createReviewJobProcessor({
+      jobs,
       service,
       logger: silentLogger,
       observability: createObservability(),
       transitionReviewState: reviewState.transitionReviewState,
-      concurrency: 1,
       retryPolicy,
+    });
+    const worker = startReviewWorker(connection, {
+      processor,
+      logger: silentLogger,
+      concurrency: 1,
     });
     await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
 
@@ -334,11 +345,10 @@ describe("durable retry decisions (§12.4)", () => {
         jobId,
         payloadFor(chain),
         {
-          repositories,
+          jobs,
           service,
           logger: silentLogger,
           observability: createObservability(),
-          concurrency: 1,
           transitionReviewState: reviewState.transitionReviewState,
           retryPolicy,
         },
@@ -376,17 +386,16 @@ describe("durable retry decisions (§12.4)", () => {
         jobId,
         payloadFor(chain),
         {
-          repositories,
+          jobs,
           service,
           logger: silentLogger,
           observability: createObservability(),
-          concurrency: 1,
           transitionReviewState: reviewState.transitionReviewState,
           retryPolicy,
         },
         { attempt: 3, maxAttempts: 3 },
       ),
-    ).rejects.toBeInstanceOf(UnrecoverableError);
+    ).rejects.toBeInstanceOf(UnrecoverableJobError);
 
     const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     expect(job.status).toBe("failed");
@@ -416,17 +425,16 @@ describe("durable retry decisions (§12.4)", () => {
         jobId,
         payloadFor(chain),
         {
-          repositories,
+          jobs,
           service,
           logger: silentLogger,
           observability: createObservability(),
-          concurrency: 1,
           transitionReviewState: reviewState.transitionReviewState,
           retryPolicy,
         },
         { attempt: 1, maxAttempts: 3 },
       ),
-    ).rejects.toBeInstanceOf(UnrecoverableError);
+    ).rejects.toBeInstanceOf(UnrecoverableJobError);
 
     const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     expect(job.status).toBe("failed");
@@ -447,13 +455,15 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
     const { jobId } = jobIdentity(chain);
     await ageJobRow(jobId);
     const added: Array<{ jobId?: string; attempts?: number }> = [];
-    const fakeQueue = {
-      getJob: async () => undefined,
-      add: async (_name: string, _payload: ReviewJobPayload, opts: { jobId?: string; attempts?: number } = {}) => {
+    const fakeQueue: ReviewQueue = {
+      enqueue: async (_payload: ReviewJobPayload, opts) => {
         added.push(opts);
         return { id: opts.jobId };
       },
-    } as unknown as Queue<ReviewJobPayload>;
+      removeTerminalJob: async () => {},
+      getJobCounts: async () => ({ waiting: 0, active: 0, delayed: 0 }),
+      close: async () => {},
+    };
 
     const summary = await reconcileIncompleteReviews({
       repositories,

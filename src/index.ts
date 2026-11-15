@@ -23,8 +23,6 @@ export function createApp(services: AppServices): (app: Probot) => void {
     // runs the review itself.
     registerWebhooks(app, {
       ingestion: services.ingestion,
-      repositories: services.ingestionRepositories,
-      unitOfWork: services.ingestionUnitOfWork,
       config: services.config,
     });
 

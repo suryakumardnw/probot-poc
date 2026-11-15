@@ -29,7 +29,21 @@ export interface ReviewQueueEnqueueOptions {
   removeOnFail?: number;
 }
 
+export interface ReviewQueueCounts {
+  waiting: number;
+  active: number;
+  delayed: number;
+}
+
 export interface ReviewQueue {
   enqueue(payload: ReviewJobPayload, options: ReviewQueueEnqueueOptions): Promise<{ id?: string }>;
+  /**
+   * Remove a completed/failed queue job with this durable identity so a
+   * recovery re-enqueue is not a silent no-op. A waiting/active/delayed job
+   * still owns the work and must be left untouched.
+   */
+  removeTerminalJob(jobId: string): Promise<void>;
+  /** Current depth signals used by the worker alert loop. */
+  getJobCounts(): Promise<ReviewQueueCounts>;
   close(): Promise<void>;
 }

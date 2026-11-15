@@ -19,6 +19,7 @@
 import type { ReviewConfig } from "../../contracts/config.js";
 import type { AgentRuntime } from "../../ports/agent-runtime.js";
 import type { PublisherOctokit } from "../../ports/github-publisher.js";
+import type { InstallationTokenProvider } from "../../ports/installation-token.js";
 import type { Logger } from "../../ports/logger.js";
 import { reviewSpanAttributes, type Observability } from "../../ports/observability.js";
 import { resolveModelId } from "../../shared/model-id.js";
@@ -39,7 +40,7 @@ import {
   type PromptInjection,
   type RunReviewOutput,
 } from "../review/index.js";
-import { redactCredentials, type InstallationTokenProvider, type WorkspaceResult } from "../workspace/index.js";
+import { redactCredentials, type WorkspaceResult } from "../workspace/index.js";
 import { StaleHeadError, publishReview, recordPublicationFailure } from "./publisher.js";
 import type { PublishingRepositories, ReviewPublicationRepository } from "./publishing.repository.js";
 

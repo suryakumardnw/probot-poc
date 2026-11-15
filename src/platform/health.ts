@@ -1,6 +1,5 @@
-import type { Redis } from "ioredis";
 import type { DependencyCheck } from "./db/prisma.js";
-import { checkRedis } from "./redis.js";
+import { checkRedis, type RedisClient } from "./redis.js";
 
 /**
  * Health and readiness logic.
@@ -30,7 +29,7 @@ export type ReadinessReport = {
 export type HealthDependencies = {
   /** Database probe supplied by `platform/db` (never the vendor client). */
   checkDatabase: () => Promise<DependencyCheck>;
-  redis: Redis;
+  redis: RedisClient;
 };
 
 export async function checkDependencies(deps: HealthDependencies): Promise<ReadinessReport> {

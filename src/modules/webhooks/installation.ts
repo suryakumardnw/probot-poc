@@ -1,5 +1,5 @@
 import type { Probot } from "probot";
-import type { IngestionUnitOfWork } from "../ingestion/index.js";
+import type { InstallationService } from "../ingestion/index.js";
 
 /**
  * GitHub App installation lifecycle handlers (ARCHITECTURE.md §13.1).
@@ -8,12 +8,12 @@ import type { IngestionUnitOfWork } from "../ingestion/index.js";
  * installation.deleted: mark the installation deleted and disable its
  * repositories (no further reviews are ingested for them).
  *
- * Durable writes go through the injected ingestion unit of work, so the
- * handler never names a database client.
+ * Durable writes go through the ingestion module's public installation
+ * service, so the handler never names a database client or a repository.
  */
 
 export interface InstallationHandlerDeps {
-  unitOfWork: IngestionUnitOfWork;
+  installations: Pick<InstallationService, "registerInstallation" | "markInstallationDeleted">;
 }
 
 export function registerInstallationHandlers(app: Probot, deps: InstallationHandlerDeps): void {
@@ -24,20 +24,14 @@ export function registerInstallationHandlers(app: Probot, deps: InstallationHand
     const organization =
       account && "login" in account ? account.login : ((account as { name?: string | null } | null)?.name ?? "unknown");
     try {
-      await deps.unitOfWork.execute(async (repos) => {
-        const record = await repos.installations.upsertActive({
-          githubInstallationId: BigInt(installation.id),
-          organization,
-        });
-
-        for (const repo of repositories ?? []) {
-          await repos.repositories.upsertFromInstallation({
-            githubRepositoryId: BigInt(repo.id),
-            installationId: record.id,
-            fullName: repo.full_name,
-            defaultBranch: (repo as { default_branch?: string }).default_branch ?? null,
-          });
-        }
+      await deps.installations.registerInstallation({
+        githubInstallationId: BigInt(installation.id),
+        organization,
+        repositories: (repositories ?? []).map((repo) => ({
+          githubRepositoryId: BigInt(repo.id),
+          fullName: repo.full_name,
+          defaultBranch: (repo as { default_branch?: string }).default_branch ?? null,
+        })),
       });
       context.log.info(
         { installation: installation.id, repositories: repositories?.length ?? 0 },
@@ -51,10 +45,7 @@ export function registerInstallationHandlers(app: Probot, deps: InstallationHand
   app.on("installation.deleted", async (context) => {
     const { installation } = context.payload;
     try {
-      await deps.unitOfWork.execute(async (repos) => {
-        const record = await repos.installations.markDeleted(BigInt(installation.id));
-        await repos.repositories.disableByInstallation(record.id);
-      });
+      await deps.installations.markInstallationDeleted(BigInt(installation.id));
       context.log.info({ installation: installation.id }, "Installation marked deleted");
     } catch (error) {
       // Unknown installations are ignored (not registered here).

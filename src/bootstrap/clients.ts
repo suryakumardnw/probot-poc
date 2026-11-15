@@ -1,4 +1,3 @@
-import type { Redis } from "ioredis";
 import { createFindingsDependencies, type FindingsServiceDependencies } from "../modules/findings/index.js";
 import {
   createIngestionServices,
@@ -38,7 +37,7 @@ type DatabaseClient = ReturnType<typeof createPrisma>;
 
 export interface PlatformClients {
   prisma: DatabaseClient;
-  redis: Redis;
+  redis: ReturnType<typeof createRedis>;
   reviewQueue: BullMqReviewQueue;
 }
 
@@ -111,8 +110,6 @@ export function createReviewModule(prisma: DatabaseClient): ReviewModule {
  */
 export interface AppServices {
   ingestion: IngestionServices;
-  ingestionRepositories: IngestionRepositories;
-  ingestionUnitOfWork: IngestionUnitOfWork;
   triage: TriageServiceDependencies;
   config: ReviewConfigStore;
 }
@@ -140,8 +137,6 @@ export function createWebhookServices(env: Env): WebhookServices {
   const module = createIngestionModule({ prisma, queue: reviewQueue, config, logger });
   return {
     ingestion: module.services,
-    ingestionRepositories: module.repositories,
-    ingestionUnitOfWork: module.unitOfWork,
     triage: createTriageDependencies(),
     config,
     async close(): Promise<void> {

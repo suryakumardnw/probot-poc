@@ -40,24 +40,14 @@ export {
   type ChangedFile,
   type FileContent,
 } from "./files.js";
-export {
-  AppInstallationTokenProvider,
-  CredentialUnavailableError,
-  NullTokenProvider,
-  buildCloneUrl,
-  type InstallationToken,
-  type InstallationTokenProvider,
-} from "./credentials.js";
+export { buildCloneUrl } from "./credentials.js";
 export { redactCredentials, sanitizeGitUrl } from "./redact.js";
 export { workspaceDirectorySizeBytes } from "./disk.js";
 export { GIT_MAX_BUFFER, GIT_TIMEOUT_MS, GitCommandError, runGit, type RunGitOptions } from "./git.js";
 export {
   ReviewJobRetryError,
-  createDefaultTokenProvider,
+  createReviewJobProcessor,
   processReviewJob,
-  startReviewWorker,
-  stopReviewWorker,
   type ProcessOutcome,
   type ProcessReviewJobDeps,
-  type ReviewJobAttempt,
 } from "./processor.js";

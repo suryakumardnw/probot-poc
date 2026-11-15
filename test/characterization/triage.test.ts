@@ -33,6 +33,8 @@ function isGroqProviderCall(request: CapturedRequest): boolean {
 const testIngestion = createTestIngestion({
   queue: {
     enqueue: async () => ({ id: "test-job" }),
+    removeTerminalJob: async () => {},
+    getJobCounts: async () => ({ waiting: 0, active: 0, delayed: 0 }),
     close: async () => {},
   },
 });
@@ -41,8 +43,6 @@ const testIngestion = createTestIngestion({
 function makeTestApp() {
   return createApp({
     ingestion: testIngestion.services,
-    ingestionRepositories: testIngestion.repositories,
-    ingestionUnitOfWork: testIngestion.unitOfWork,
     triage: createTestTriage(),
     config: testIngestion.config,
   });

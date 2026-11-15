@@ -1,5 +1,5 @@
 import type { ReviewJobPayload } from "../../src/contracts/queue.js";
-import type { ReviewQueue, ReviewQueueEnqueueOptions } from "../../src/ports/review-queue.js";
+import type { ReviewQueue, ReviewQueueCounts, ReviewQueueEnqueueOptions } from "../../src/ports/review-queue.js";
 
 export interface FakeEnqueuedReview {
   payload: ReviewJobPayload;
@@ -15,6 +15,8 @@ export interface FakeEnqueuedReview {
  */
 export class FakeReviewQueue implements ReviewQueue {
   readonly enqueued: FakeEnqueuedReview[] = [];
+  readonly removedTerminalJobs: string[] = [];
+  counts: ReviewQueueCounts = { waiting: 0, active: 0, delayed: 0 };
   closeCalls = 0;
   closed = false;
   private readonly enqueueErrors: unknown[] = [];
@@ -37,6 +39,14 @@ export class FakeReviewQueue implements ReviewQueue {
     }
     this.enqueued.push({ payload, options });
     return { id: options.jobId };
+  }
+
+  async removeTerminalJob(jobId: string): Promise<void> {
+    this.removedTerminalJobs.push(jobId);
+  }
+
+  async getJobCounts(): Promise<ReviewQueueCounts> {
+    return this.counts;
   }
 
   async close(): Promise<void> {

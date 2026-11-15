@@ -14,7 +14,10 @@ import type { DependencyCheck } from "./db/prisma.js";
 
 export type RedisConnection = Pick<Env, "REDIS_URL">;
 
-export function createRedis(env: RedisConnection): Redis {
+/** The concrete Redis client, so callers never import the vendor type. */
+export type RedisClient = Redis;
+
+export function createRedis(env: RedisConnection): RedisClient {
   const client = new Redis(env.REDIS_URL, {
     lazyConnect: true,
     maxRetriesPerRequest: 2,

@@ -19,11 +19,45 @@ import tseslint from "typescript-eslint";
  *
  * Every exception is documented in docs/module-boundaries.md.
  */
-const PRISMA_ALLOWED_FILES = ["src/**/*.repository.ts", "src/platform/db/**/*.ts", "test/**/*.ts"];
+const PRISMA_ALLOWED_FILES = ["src/**/*.repository.ts", "src/platform/db/**/*.ts"];
 
 const PROCESS_ENV_ALLOWED_FILES = ["src/platform/config/**/*.ts", "test/**/*.ts", "deploy/inspect-key.js"];
 
 const FETCH_ALLOWED_FILES = ["src/platform/**/*.ts"];
+
+/**
+ * Vendor imports belong to the platform adapter that owns them. Modules,
+ * ports, contracts, and shared code depend on ports instead.
+ */
+const VENDOR_IMPORT_MESSAGES = {
+  "@prisma/client":
+    "Import Prisma only from *.repository.ts adapters or src/platform/db (see docs/module-boundaries.md).",
+  bullmq: "Import BullMQ only from src/platform/queue (see docs/module-boundaries.md).",
+  ioredis: "Import ioredis only from src/platform (see docs/module-boundaries.md).",
+  "@octokit/auth-app": "Import GitHub App auth only from src/platform/github (see docs/module-boundaries.md).",
+  "@octokit/core": "Import Octokit only from src/platform/github (see docs/module-boundaries.md).",
+  "@octokit/plugin-rest-endpoint-methods":
+    "Import Octokit only from src/platform/github (see docs/module-boundaries.md).",
+  "@octokit/plugin-retry": "Import Octokit only from src/platform/github (see docs/module-boundaries.md).",
+};
+
+const PRISMA_IMPORT_MESSAGE = VENDOR_IMPORT_MESSAGES["@prisma/client"];
+
+/**
+ * Build the `no-restricted-imports` rule, allowing the named vendor packages
+ * for one adapter directory while keeping every other vendor boundary.
+ */
+function restrictedImports(allowedNames = []) {
+  return [
+    "error",
+    {
+      paths: Object.entries(VENDOR_IMPORT_MESSAGES)
+        .filter(([name]) => !allowedNames.includes(name))
+        .map(([name, message]) => ({ name, message })),
+      patterns: [{ group: ["@prisma/client/*"], message: PRISMA_IMPORT_MESSAGE }],
+    },
+  ];
+}
 
 /**
  * ESLint flat config.
@@ -201,25 +235,7 @@ export default tseslint.config(
     // deploy process.env exception is documented in docs/module-boundaries.md.
     files: ["**/*.{ts,mts,cts}", "scripts/**/*.mjs", "deploy/**/*.js"],
     rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            {
-              name: "@prisma/client",
-              message:
-                "Import Prisma only from *.repository.ts adapters or src/platform/db (see docs/module-boundaries.md).",
-            },
-          ],
-          patterns: [
-            {
-              group: ["@prisma/client/*"],
-              message:
-                "Import Prisma only from *.repository.ts adapters or src/platform/db (see docs/module-boundaries.md).",
-            },
-          ],
-        },
-      ],
+      "no-restricted-imports": restrictedImports(),
       "no-restricted-syntax": [
         "error",
         {
@@ -244,6 +260,40 @@ export default tseslint.config(
     // Approved exceptions for the vendor rules above. The permanent entries are
     // documented in docs/module-boundaries.md.
     files: PRISMA_ALLOWED_FILES,
+    rules: {
+      "no-restricted-imports": restrictedImports(["@prisma/client"]),
+    },
+  },
+  {
+    // The queue adapter is the only owner of the BullMQ/ioredis clients.
+    files: ["src/platform/queue/**/*.ts"],
+    rules: {
+      "no-restricted-imports": restrictedImports(["bullmq", "ioredis"]),
+    },
+  },
+  {
+    // The shared Redis client factory is the only other ioredis owner.
+    files: ["src/platform/redis.ts"],
+    rules: {
+      "no-restricted-imports": restrictedImports(["ioredis"]),
+    },
+  },
+  {
+    // The GitHub transport adapters own the Octokit packages.
+    files: ["src/platform/github/**/*.ts"],
+    rules: {
+      "no-restricted-imports": restrictedImports([
+        "@octokit/auth-app",
+        "@octokit/core",
+        "@octokit/plugin-rest-endpoint-methods",
+        "@octokit/plugin-retry",
+      ]),
+    },
+  },
+  {
+    // Tests may arrange vendor clients and assert against vendor row types;
+    // tests are never application code (docs/module-boundaries.md).
+    files: ["test/**/*.ts"],
     rules: {
       "no-restricted-imports": "off",
     },

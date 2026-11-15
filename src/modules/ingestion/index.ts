@@ -32,8 +32,10 @@ import type { ReviewQueue } from "../../ports/review-queue.js";
 import { createIngestionReadService, type IngestionReadService } from "./ingestion-read.service.js";
 import { createIngestionService, type IngestionService } from "./ingestion.service.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
+import { createInstallationService, type InstallationService } from "./installation.service.js";
 import { createOutboxService, type OutboxService } from "./outbox.service.js";
 import { createOutboxRecoveryService, type OutboxRecoveryService } from "./recovery/index.js";
+import { createReviewJobService, type ReviewJobService } from "./review-job.service.js";
 import { createReviewStateService, type ReviewStateService } from "./review-state.service.js";
 
 export { REVIEW_TYPES } from "../../contracts/queue.js";
@@ -49,6 +51,9 @@ export {
   type ReviewListQueryInput,
   type ReviewListReport,
   type ReviewStatusReport,
+  type ReviewTarget,
+  type ReviewTargetInput,
+  type ReviewTargetLookup,
 } from "./ingestion-read.service.js";
 export {
   buildJobKey,
@@ -64,6 +69,22 @@ export {
   type ManualIngestionInput,
 } from "./ingestion.types.js";
 export type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
+export {
+  createInstallationService,
+  type InstallationRepositoryInput,
+  type InstallationService,
+  type InstallationServiceDependencies,
+  type RegisterInstallationInput,
+} from "./installation.service.js";
+export {
+  createReviewJobService,
+  type ReviewJobContext,
+  type ReviewJobReference,
+  type ReviewJobService,
+  type ReviewJobServiceDependencies,
+  type ReviewJobUpdate,
+  type ReviewResetResult,
+} from "./review-job.service.js";
 export {
   createOutboxService,
   type OutboxService,
@@ -100,7 +121,14 @@ export {
 // ---------------------------------------------------------------------------
 
 export interface IngestionServices
-  extends IngestionService, IngestionReadService, OutboxService, OutboxRecoveryService, ReviewStateService {}
+  extends
+    IngestionService,
+    IngestionReadService,
+    InstallationService,
+    OutboxService,
+    OutboxRecoveryService,
+    ReviewJobService,
+    ReviewStateService {}
 
 export interface IngestionServicesDependencies {
   repositories: IngestionRepositories;
@@ -134,5 +162,7 @@ export function createIngestionServices(deps: IngestionServicesDependencies): In
     publish: (eventId) => outbox.publishOutboxEvent(eventId),
   });
   const read = createIngestionReadService({ repositories, ingestion });
-  return { ...ingestion, ...read, ...outbox, ...recovery, ...reviewState };
+  const installations = createInstallationService({ unitOfWork });
+  const reviewJobs = createReviewJobService({ repositories });
+  return { ...ingestion, ...read, ...installations, ...outbox, ...recovery, ...reviewJobs, ...reviewState };
 }

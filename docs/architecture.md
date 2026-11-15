@@ -39,7 +39,8 @@ GitHub webhook
   → src/modules/webhooks/*          thin event adapters
   → src/modules/ingestion/*         one Postgres transaction + outbox row
   → Redis "review-jobs" queue
-  → src/modules/workspace/processor.ts   BullMQ consumer
+  → src/platform/queue/review-worker.ts   BullMQ consumer
+  → src/modules/workspace/processor.ts    job processor
   → workspace clone/diff
   → knowledge materialization + injection
   → src/modules/review/*            staged agent review
@@ -64,7 +65,7 @@ src/
 │   ├── webhooks/            # Probot event adapters
 │   ├── triage/              # issue triage use case + comment view
 │   ├── ingestion/           # durable intake, state machine, outbox, recovery
-│   ├── workspace/           # clone, checkout, diff, disk, cleanup, processor
+│   ├── workspace/           # clone, checkout, diff, disk, cleanup, job processing
 │   ├── review/              # adaptive engine, prompts, retrieval, hook
 │   ├── findings/            # validation, fingerprinting, store, lifecycle
 │   ├── publishing/          # pipeline wiring, GitHub review/comment output
@@ -77,7 +78,7 @@ src/
 │   ├── github/              # Octokit, app auth, OAuth client
 │   ├── config/              # env, review config loader and store
 │   ├── db/                  # Prisma client, evaluation-run repository
-│   ├── queue/               # BullMQ connection and review queue
+│   ├── queue/               # BullMQ connection, review queue, review worker
 │   ├── knowledge/           # GitHub knowledge fetch adapter
 │   ├── observability/       # metrics, tracing, alerts, metrics endpoint
 │   ├── redis.ts             # shared Redis client

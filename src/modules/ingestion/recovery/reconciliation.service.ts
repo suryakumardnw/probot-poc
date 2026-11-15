@@ -21,11 +21,11 @@
  * review can never produce a second queue job for the same review.
  */
 
-import type { Queue } from "bullmq";
 import { ERROR_CODES } from "../../../contracts/errors.js";
 import { outboxPayloadSchema, reviewJobPayloadSchema, type ReviewJobPayload } from "../../../contracts/queue.js";
 import type { Logger } from "../../../ports/logger.js";
 import type { Observability } from "../../../ports/observability.js";
+import type { ReviewQueue } from "../../../ports/review-queue.js";
 import { AppError, ValidationError } from "../../../shared/errors/index.js";
 import type {
   FailReviewForRecoveryResult,
@@ -48,8 +48,8 @@ export interface ReconciliationDeps extends ReconciliationDependencies {
   logger: Logger;
   /** Metrics adapter injected by the composition root. */
   observability: Observability;
-  /** BullMQ queue used to re-enqueue recovered reviews. */
-  queue?: Queue<ReviewJobPayload>;
+  /** Review queue port used to re-enqueue recovered reviews. */
+  queue?: ReviewQueue;
   /** Recovery behavior for stale reviews (§17.3 step 7). Default "requeue". */
   policy?: RecoveryPolicy;
   /** A review with no progress for longer than this is considered stale. */
@@ -321,23 +321,17 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         continue;
       }
 
-      // A terminal BullMQ job (completed/failed) with this id is retained by
-      // removeOnComplete/removeOnFail, and `queue.add` with an existing jobId
+      // A terminal queue job (completed/failed) with this id is retained by
+      // removeOnComplete/removeOnFail, and enqueueing with an existing jobId
       // is a silent no-op. Without clearing it, recovery would flip the review
       // back to `enqueued` while nothing ever runs — a permanent stale→requeue
       // loop. Only terminal jobs are removed; an active/waiting job still owns
       // the work and must not be touched.
-      const existing = await queue.getJob(job.id);
-      if (existing) {
-        const state = await existing.getState();
-        if (state === "completed" || state === "failed") {
-          await existing.remove();
-        }
-      }
+      await queue.removeTerminalJob(job.id);
 
       await repositories.reviewJobs.update(job.id, { status: "enqueued" });
       // Idempotent identity: jobId = ReviewJob.id (ticket 03 contract).
-      await queue.add("review", payload, {
+      await queue.enqueue(payload, {
         jobId: job.id,
         attempts: Math.max(1, maxJobAttempts - job.attempts),
         backoff: { type: "exponential", delay: 5000 },

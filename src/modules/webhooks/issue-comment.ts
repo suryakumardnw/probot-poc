@@ -2,7 +2,7 @@ import type { Probot } from "probot";
 import type { ReviewConfigStore } from "../../ports/review-config.js";
 import {
   REVIEW_TYPES,
-  type IngestionRepositories,
+  type IngestionReadService,
   type IngestionService,
   type ReviewTypeValue,
 } from "../ingestion/index.js";
@@ -43,8 +43,8 @@ import {
  * ingestion itself.
  */
 export interface IssueCommentHandlerDeps {
-  ingestion: IngestionService;
-  repositories: IngestionRepositories;
+  /** Durable intake plus the public read-side target lookup. */
+  ingestion: IngestionService & Pick<IngestionReadService, "findReviewTarget">;
   /** Review-config store (the module never imports the loader/platform). */
   config: ReviewConfigStore;
 }
@@ -148,14 +148,12 @@ export function registerIssueCommentHandlers(app: Probot, deps: IssueCommentHand
     let headSha: string | null = null;
     let baseSha: string | null = null;
     let draft = issue.draft ?? false;
-    const storedRepository = await deps.repositories.repositories
-      .findByGithubId(BigInt(repository.id))
+    // Durable row first (fresh from open/synchronize). A lookup failure or a
+    // missing target falls back to the GitHub API below, exactly as before.
+    const storedLookup = await deps.ingestion
+      .findReviewTarget({ githubRepositoryId: BigInt(repository.id), pullRequestNumber: issue.number })
       .catch(() => null);
-    const stored = storedRepository
-      ? await deps.repositories.pullRequests
-          .findByRepositoryAndNumber(storedRepository.id, issue.number)
-          .catch(() => null)
-      : null;
+    const stored = storedLookup?.outcome === "found" ? storedLookup.target : null;
     if (stored?.headSha) {
       headSha = stored.headSha;
       baseSha = stored.baseSha ?? null;

@@ -1203,8 +1203,10 @@ enqueued on Redis. The webhook returns fast.
 
 **"Which process runs the AI?"**
 
-The separate review worker (`src/worker.ts`), which consumes BullMQ
-`review-jobs` and calls `processReviewJob` in `src/modules/workspace/processor.ts`.
+The separate review worker (`src/worker.ts`). Its BullMQ adapter
+(`src/platform/queue/review-worker.ts`) consumes `review-jobs` and calls the
+injected processor, implemented by `processReviewJob` in
+`src/modules/workspace/processor.ts`.
 
 **"What is the system prompt?"**
 
@@ -1324,6 +1326,7 @@ also have the provider timeout. Timeout escalation is SIGTERM then SIGKILL.
 | `/review` handler | `src/modules/webhooks/issue-comment.ts` |
 | Durable ingestion, idempotency, outbox | `src/modules/ingestion/ingestion.service.ts` |
 | BullMQ queue | `src/platform/queue/review-queue.ts` |
+| BullMQ worker adapter | `src/platform/queue/review-worker.ts` |
 | Outbox publisher/recovery | `src/modules/ingestion/outbox.service.ts` |
 | State machine | `src/modules/ingestion/review-state.service.ts` |
 | Worker entry point | `src/worker.ts` |

@@ -4,10 +4,9 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { UnrecoverableError } from "bullmq";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { createReviewJobService } from "../../src/modules/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
-import type { InstallationTokenProvider } from "../../src/modules/workspace/credentials.js";
 import {
   parseNameStatus,
   readWorkspaceFile,
@@ -30,8 +29,9 @@ import {
   DiffFailedError,
 } from "../../src/modules/workspace/workspace.js";
 import { createObservability } from "../../src/platform/observability/index.js";
+import type { InstallationTokenProvider } from "../../src/ports/installation-token.js";
 import type { Logger } from "../../src/ports/logger.js";
-import { AgentRuntimeError } from "../../src/shared/errors/index.js";
+import { AgentRuntimeError, UnrecoverableJobError } from "../../src/shared/errors/index.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 import { createTestReviewState } from "../helpers/ingestion.js";
 
@@ -541,12 +541,11 @@ describe("workspace prepare", () => {
 describe("worker processor", () => {
   function makeDeps(service: ReviewWorkspaceService, logger: Logger = silentLogger): ProcessReviewJobDeps {
     return {
-      repositories: createIngestionRepositories(prisma),
+      jobs: createReviewJobService({ repositories: createIngestionRepositories(prisma) }),
       service,
       logger,
       observability: createObservability(),
       transitionReviewState: createTestReviewState().transitionReviewState,
-      concurrency: 1,
     };
   }
 
@@ -623,7 +622,7 @@ describe("worker processor", () => {
         reviewType: "standard",
         trigger: "opened",
       },
-      { ...makeDeps(service, silentLogger), repositories: racingRepositories },
+      { ...makeDeps(service, silentLogger), jobs: createReviewJobService({ repositories: racingRepositories }) },
     );
 
     expect(outcome).toBe("skipped_status");
@@ -867,7 +866,7 @@ describe("worker processor", () => {
         },
         makeDeps(service, silentLogger),
       ),
-    ).rejects.toBeInstanceOf(UnrecoverableError);
+    ).rejects.toBeInstanceOf(UnrecoverableJobError);
     const job = await prisma.reviewJob.findUnique({ where: { id: chain.jobId } });
     expect(job?.status).toBe("failed");
     expect(job?.lastError).toContain("clone");

@@ -53,6 +53,23 @@ export type ReviewComparisonInput = {
   pullRequestNumber: number;
 };
 
+/** Stored pull-request fields a manual `/review` command needs. */
+export type ReviewTarget = {
+  headSha: string | null;
+  baseSha: string | null;
+  draft: boolean;
+};
+
+export type ReviewTargetLookup =
+  | { outcome: "repository_not_found" }
+  | { outcome: "pull_request_not_found" }
+  | { outcome: "found"; target: ReviewTarget };
+
+export type ReviewTargetInput = {
+  githubRepositoryId: bigint;
+  pullRequestNumber: number;
+};
+
 export type IngestionReadServiceDependencies = {
   repositories: IngestionRepositories;
   ingestion: IngestionService;
@@ -63,6 +80,12 @@ export interface IngestionReadService {
   getReviewStatus(reviewId: string): Promise<ReviewStatusReport | null>;
   listReviews(input: ReviewListQueryInput): Promise<ReviewListReport>;
   getReviewComparison(input: ReviewComparisonInput): Promise<ReviewComparisonLookup>;
+  /**
+   * Resolve the durable pull-request target for one repository id. Missing
+   * repository and missing pull request stay distinct so callers can keep
+   * their existing fallbacks without reading repositories directly.
+   */
+  findReviewTarget(input: ReviewTargetInput): Promise<ReviewTargetLookup>;
 }
 
 export type ReviewListQueryInput = {
@@ -173,5 +196,27 @@ export function createIngestionReadService(deps: IngestionReadServiceDependencie
     return { outcome: "found", reviews };
   }
 
-  return { ingestManualReview, getReviewStatus, listReviews, getReviewComparison };
+  async function findReviewTarget(input: ReviewTargetInput): Promise<ReviewTargetLookup> {
+    const repository = await deps.repositories.repositories.findByGithubId(input.githubRepositoryId);
+    if (!repository) {
+      return { outcome: "repository_not_found" };
+    }
+    const pullRequest = await deps.repositories.pullRequests.findByRepositoryAndNumber(
+      repository.id,
+      input.pullRequestNumber,
+    );
+    if (!pullRequest) {
+      return { outcome: "pull_request_not_found" };
+    }
+    return {
+      outcome: "found",
+      target: {
+        headSha: pullRequest.headSha,
+        baseSha: pullRequest.baseSha,
+        draft: pullRequest.draft,
+      },
+    };
+  }
+
+  return { ingestManualReview, getReviewStatus, listReviews, getReviewComparison, findReviewTarget };
 }

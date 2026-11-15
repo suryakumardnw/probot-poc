@@ -193,8 +193,6 @@ type TestIngestion = ReturnType<typeof createTestIngestion>;
 function makeApp(testIngestion: TestIngestion) {
   return createApp({
     ingestion: testIngestion.services,
-    ingestionRepositories: testIngestion.repositories,
-    ingestionUnitOfWork: testIngestion.unitOfWork,
     triage: createTestTriage(),
     config: testIngestion.config,
   });
@@ -754,6 +752,8 @@ describe("transactional outbox recovery (§12.2)", () => {
       enqueue: async (): Promise<{ id?: string }> => {
         throw new Error("connect ECONNREFUSED 127.0.0.1:6379");
       },
+      removeTerminalJob: async () => {},
+      getJobCounts: async () => ({ waiting: 0, active: 0, delayed: 0 }),
       close: async () => {},
     };
     const offlineIngestion = createTestIngestion({ queue: unavailableQueue });
@@ -865,6 +865,8 @@ describe("outbox publish ordering", () => {
         expect(opts.jobId).toBe(jobId);
         return { id: jobId };
       },
+      removeTerminalJob: async () => {},
+      getJobCounts: async () => ({ waiting: 0, active: 0, delayed: 0 }),
       close: async () => {},
     };
 
@@ -885,6 +887,8 @@ describe("outbox publish ordering", () => {
       enqueue: async () => {
         throw new Error("connect ECONNREFUSED 127.0.0.1:6379");
       },
+      removeTerminalJob: async () => {},
+      getJobCounts: async () => ({ waiting: 0, active: 0, delayed: 0 }),
       close: async () => {},
     };
 

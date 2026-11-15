@@ -1,15 +1,13 @@
-import fs from "node:fs";
-import { UnrecoverableError, Worker } from "bullmq";
-import type { Redis } from "ioredis";
 import type { Logger } from "../../ports/logger.js";
 import { reviewSpanAttributes, type Observability, type ReviewSpan } from "../../ports/observability.js";
+import type { ReviewJobAttempt, ReviewJobProcessor } from "../../ports/review-job-processor.js";
 import {
   createReviewLogger,
   startStage,
   type ReviewCorrelation,
   type StageTracker,
 } from "../../ports/review-logging.js";
-import { AppError, AgentRuntimeError } from "../../shared/errors/index.js";
+import { AppError, AgentRuntimeError, UnrecoverableJobError } from "../../shared/errors/index.js";
 import {
   classifyQueueFailure,
   DEFAULT_RETRY_POLICY_CONFIG,
@@ -18,22 +16,14 @@ import {
 } from "../../shared/retry.js";
 import {
   isTerminalReviewState,
-  parseReviewJobPayload,
-  REVIEW_QUEUE_NAME,
-  type IngestionRepositories,
-  type ResetReviewForRecoveryResult,
   type ReviewJobPayload,
+  type ReviewJobService,
+  type ReviewResetResult,
   type ReviewState,
   type ReviewStateService,
 } from "../ingestion/index.js";
-import { AppInstallationTokenProvider, NullTokenProvider, type InstallationTokenProvider } from "./credentials.js";
 import { redactCredentials } from "./redact.js";
-import {
-  StaleCommitError,
-  ReviewRetrievalError,
-  type ReviewWorkspaceOperations,
-  type WorkspaceResult,
-} from "./workspace.js";
+import { ReviewRetrievalError, type ReviewWorkspaceOperations, type WorkspaceResult } from "./workspace.js";
 
 /** Max characters of error detail attached to the structured failure log. */
 const MAX_LOGGED_ERROR_DETAIL_CHARS = 4_000;
@@ -41,9 +31,10 @@ const MAX_LOGGED_ERROR_DETAIL_CHARS = 4_000;
 /**
  * Review worker job processor (ticket 04).
  *
- * Consumes BullMQ queue "review-jobs" (concurrency from review.json
- * `queue.concurrency`, default 1). The BullMQ jobId equals the ReviewJob.id
- * (ticket 03 contract).
+ * Consumes durable review jobs from the BullMQ "review-jobs" queue through the
+ * `ReviewJobProcessor` port; the queue adapter lives in
+ * `src/platform/queue/review-worker.ts`. The BullMQ jobId equals the
+ * ReviewJob.id (ticket 03 contract).
  *
  * IMPORTANT (ticket 03 handoff): before doing any work the processor checks
  * the DURABLE job status. A job whose ReviewJob.status is "superseded"
@@ -51,15 +42,14 @@ const MAX_LOGGED_ERROR_DETAIL_CHARS = 4_000;
  * the review has already been superseded in Postgres and must never run.
  */
 export interface ProcessReviewJobDeps {
-  /** Ingestion repository bundle; the worker never names a Prisma client. */
-  repositories: IngestionRepositories;
+  /** Public ingestion lifecycle service; the worker never names a repository. */
+  jobs: ReviewJobService;
   service: ReviewWorkspaceOperations;
   logger: Logger;
   /** Metrics/tracing adapter injected by the composition root. */
   observability: Observability;
   /** Review-state transition boundary (durable, injected by bootstrap). */
   transitionReviewState: ReviewStateService["transitionReviewState"];
-  concurrency: number;
   /**
    * Hook for the agent runtime (ticket 07): invoked with the prepared
    * workspace before cleanup. Never receives credentials. The default
@@ -77,28 +67,22 @@ export interface ProcessReviewJobDeps {
 /**
  * A successful or deliberately skipped attempt. Every failure throws:
  *
- *  - retryable failures throw `ReviewJobRetryError` (BullMQ applies the
- *    configured attempts/backoff);
- *  - permanent failures and exhausted retries throw `UnrecoverableError`
+ *  - retryable failures throw `ReviewJobRetryError` (the queue adapter applies
+ *    the configured attempts/backoff);
+ *  - permanent failures and exhausted retries throw an unrecoverable error
  *    after the durable job/review are marked failed.
  *
- * The worker callback must never resolve a failed attempt, because BullMQ would
+ * The processor must never resolve a failed attempt, because the queue would
  * treat that as success and silently drop the retry budget.
  */
 export type ProcessOutcome = "processed" | "skipped_superseded" | "skipped_status";
-
-/** Attempt context supplied by the BullMQ callback (1-based). */
-export interface ReviewJobAttempt {
-  attempt: number;
-  maxAttempts: number;
-}
 
 /** Direct callers (tests, scripts) process exactly one attempt. */
 const SINGLE_ATTEMPT: ReviewJobAttempt = { attempt: 1, maxAttempts: 1 };
 
 /**
- * Retryable attempt failure. BullMQ retries any ordinary Error, so this class
- * intentionally does not extend its `UnrecoverableError`.
+ * Retryable attempt failure. The BullMQ adapter retries any ordinary Error, so
+ * this class intentionally does not extend its `UnrecoverableError`.
  */
 export class ReviewJobRetryError extends Error {
   readonly failureClass: FailureClass;
@@ -118,11 +102,8 @@ const RECOVERY_RESET_MAX_ATTEMPTS = 3;
  * repository guard refuses terminal reviews and only resets the state it
  * observed, so a concurrent supersede/completion is never overwritten.
  */
-async function resetReviewForProcessing(
-  repositories: IngestionRepositories,
-  reviewId: string,
-): Promise<ResetReviewForRecoveryResult> {
-  let result = await repositories.reviews.resetForRecovery(reviewId);
+async function resetReviewForProcessing(jobs: ReviewJobService, reviewId: string): Promise<ReviewResetResult> {
+  let result = await jobs.resetForRecovery(reviewId);
   for (
     let attempt = 1;
     attempt < RECOVERY_RESET_MAX_ATTEMPTS &&
@@ -130,7 +111,7 @@ async function resetReviewForProcessing(
     !isTerminalReviewState(result.currentState);
     attempt += 1
   ) {
-    result = await repositories.reviews.resetForRecovery(reviewId);
+    result = await jobs.resetForRecovery(reviewId);
   }
   return result;
 }
@@ -141,29 +122,28 @@ export async function processReviewJob(
   deps: ProcessReviewJobDeps,
   attempt: ReviewJobAttempt = SINGLE_ATTEMPT,
 ): Promise<ProcessOutcome> {
-  const { repositories, logger } = deps;
-  const foundJob = await repositories.reviewJobs.findWithReview(jobId);
-  if (!foundJob) {
+  const { jobs, logger } = deps;
+  const job = await jobs.findWithReview(jobId);
+  if (!job) {
     logger.warn({ jobId }, "ReviewJob row missing for queue job; failing permanently");
-    throw new UnrecoverableError(`ReviewJob '${jobId}' not found`);
+    throw new UnrecoverableJobError(`ReviewJob '${jobId}' not found`);
   }
-  const job = { ...foundJob.job, review: foundJob.review };
 
   // Stale/outdated job supersede check (ticket 03 §4.4 handoff): a superseded
   // job is dead on arrival — no workspace, no clone, no token minting.
-  if (job.status === "superseded") {
+  if (job.jobStatus === "superseded") {
     logger.info({ jobId, reviewId: job.reviewId }, "Review job superseded before processing; skipping");
     return "skipped_superseded";
   }
   // A terminal review is already decided; do not claim a processing slot for it.
-  if (isTerminalReviewState(job.review.state)) {
+  if (isTerminalReviewState(job.reviewState)) {
     logger.info(
-      { jobId, reviewId: job.reviewId, state: job.review.state },
+      { jobId, reviewId: job.reviewId, state: job.reviewState },
       "Review already terminal before processing; skipping",
     );
     // Mirror the terminal review onto the durable job instead of leaving a
     // stale `enqueued`/`processing` row that no recovery scan can finish.
-    await repositories.reviewJobs.update(job.id, { status: terminalJobStatus(job.review.state) }).catch(() => {
+    await jobs.update(job.jobId, { status: terminalJobStatus(job.reviewState) }).catch(() => {
       /* row already gone or concurrently updated */
     });
     return "skipped_status";
@@ -172,11 +152,11 @@ export async function processReviewJob(
   // above. The outbox publisher commits `enqueued` in Postgres and only then
   // (in the old ordering) made the queue job visible, so an idle worker could
   // legitimately observe `pending_outbox` for an in-flight job and discard it
-  // as "not processable" — BullMQ then treats the skip as a successful run.
+  // as "not processable" — the queue then treats the skip as a successful run.
   // `processing` stays claimable so a stalled/retried delivery can resume.
-  const claimed = await repositories.reviewJobs.claimForProcessing(job.id);
+  const claimed = await jobs.claimForProcessing(job.jobId);
   if (!claimed) {
-    logger.info({ jobId, status: job.status }, "Review job not in a processable state; skipping");
+    logger.info({ jobId, status: job.jobStatus }, "Review job not in a processable state; skipping");
     return "skipped_status";
   }
 
@@ -185,23 +165,23 @@ export async function processReviewJob(
   // to `queued` (with an audit transition) before the forward state machine
   // runs again. A terminal review — e.g. concurrently superseded — is never
   // resurrected.
-  const reviewState = await repositories.reviews.findStateById(job.reviewId);
+  const reviewState = await jobs.findReviewState(job.reviewId);
   if (reviewState === null) {
-    throw new UnrecoverableError(`Review '${job.reviewId}' not found`);
+    throw new UnrecoverableJobError(`Review '${job.reviewId}' not found`);
   }
   if (isTerminalReviewState(reviewState)) {
     logger.info({ jobId, reviewId: job.reviewId, state: reviewState }, "Review already terminal; skipping queue job");
     // Keep the durable row consistent with the review instead of leaving a
     // claimed `processing` row that no recovery scan can ever finish.
-    await repositories.reviewJobs.update(job.id, { status: terminalJobStatus(reviewState) }).catch(() => {
+    await jobs.update(job.jobId, { status: terminalJobStatus(reviewState) }).catch(() => {
       /* row already gone or concurrently updated */
     });
     return "skipped_status";
   }
   if (reviewState !== "queued") {
-    const reset = await resetReviewForProcessing(repositories, job.reviewId);
+    const reset = await resetReviewForProcessing(jobs, job.reviewId);
     if (reset.outcome === "not_found") {
-      throw new UnrecoverableError(`Review '${job.reviewId}' not found`);
+      throw new UnrecoverableJobError(`Review '${job.reviewId}' not found`);
     }
     if (reset.outcome === "conflict") {
       if (isTerminalReviewState(reset.currentState)) {
@@ -210,13 +190,13 @@ export async function processReviewJob(
           "Review became terminal before recovery reset; skipping queue job",
         );
         // Keep the durable row consistent with the decided review.
-        await repositories.reviewJobs.update(job.id, { status: terminalJobStatus(reset.currentState) }).catch(() => {
+        await jobs.update(job.jobId, { status: terminalJobStatus(reset.currentState) }).catch(() => {
           /* row already gone or concurrently updated */
         });
         return "skipped_status";
       }
       // A concurrent writer kept advancing the review. Do not drive the
-      // forward state machine from an unknown predecessor; let BullMQ retry.
+      // forward state machine from an unknown predecessor; let the queue retry.
       throw new ReviewJobRetryError(`review '${job.reviewId}' kept advancing before recovery reset`, "unknown");
     }
   }
@@ -229,7 +209,7 @@ export async function processReviewJob(
 
     const correlation: ReviewCorrelation = {
       review_id: job.reviewId,
-      job_id: job.id,
+      job_id: job.jobId,
       repository: payload.repositoryFullName,
       pull_request_number: payload.pullRequestNumber,
       head_sha: payload.headSha,
@@ -237,7 +217,7 @@ export async function processReviewJob(
     const reviewLogger = createReviewLogger(logger, correlation);
     const metrics = deps.observability.metrics;
     metrics.recordReviewStarted();
-    const enqueuedAt = job.createdAt instanceof Date ? job.createdAt : new Date(job.createdAt);
+    const enqueuedAt = job.jobCreatedAt;
     metrics.observeQueueWait(Math.max(0, (Date.now() - enqueuedAt.getTime()) / 1000));
 
     span = deps.observability.tracing.startSpan("review.process", reviewSpanAttributes(correlation));
@@ -247,10 +227,8 @@ export async function processReviewJob(
     // Base commit resolution: prefer the exact base SHA captured at ingestion.
     // Manual `/review` requests (and older jobs) may have none, so fall back to
     // the repository's default branch instead of failing the clone outright.
-    const baseSha = payload.baseSha ?? job.review.baseSha ?? null;
-    const baseRef = baseSha
-      ? null
-      : await repositories.repositories.findDefaultBranchByGithubId(job.review.githubRepositoryId);
+    const baseSha = payload.baseSha ?? job.reviewBaseSha ?? null;
+    const baseRef = baseSha ? null : await jobs.findDefaultBranch(job.githubRepositoryId);
 
     const workspace = await deps.service.prepare({
       reviewId: job.reviewId,
@@ -276,7 +254,7 @@ export async function processReviewJob(
 
     await deps.service.cleanupAfterReview(job.reviewId);
     // A successful retry must not retain the previous attempt's failure text.
-    await repositories.reviewJobs.update(job.id, { status: "completed", lastError: null });
+    await jobs.update(job.jobId, { status: "completed", lastError: null });
     span.end();
     deps.observability.metrics.recordReviewCompleted("processed");
     deps.observability.metrics.observeReviewDuration((Date.now() - enqueuedAt.getTime()) / 1000);
@@ -308,7 +286,7 @@ export async function processReviewJob(
     const retriesExhausted = decision.retryable && !retriesRemaining;
     const reviewLogger2 = createReviewLogger(logger, {
       review_id: job.reviewId,
-      job_id: job.id,
+      job_id: job.jobId,
       repository: payload.repositoryFullName,
       pull_request_number: payload.pullRequestNumber,
       head_sha: payload.headSha,
@@ -330,7 +308,7 @@ export async function processReviewJob(
           reason: decision.reason,
         },
       },
-      retriesRemaining ? "Review attempt failed; BullMQ will retry" : "Review failed permanently",
+      retriesRemaining ? "Review attempt failed; the queue will retry" : "Review failed permanently",
     );
     if (span) {
       span.end(error);
@@ -341,29 +319,29 @@ export async function processReviewJob(
 
     // A concurrent supersede/completion may have made the review terminal while
     // this attempt was running. Never resurrect or overwrite that outcome.
-    const currentState = await repositories.reviews.findStateById(job.reviewId).catch(() => null);
+    const currentState = await jobs.findReviewState(job.reviewId).catch(() => null);
     if (currentState !== null && isTerminalReviewState(currentState)) {
       logger.info(
         { jobId, reviewId: job.reviewId, state: currentState },
         "Review became terminal during processing; not retrying",
       );
-      throw new UnrecoverableError(message);
+      throw new UnrecoverableJobError(message);
     }
 
     if (retriesRemaining) {
-      // Keep the durable job claimable for the next BullMQ attempt and leave
-      // the review in `queued` so the forward state machine can run again.
-      await repositories.reviewJobs.update(job.id, { lastError: message.slice(0, 500) }).catch(() => {
+      // Keep the durable job claimable for the next attempt and leave the
+      // review in `queued` so the forward state machine can run again.
+      await jobs.update(job.jobId, { lastError: message.slice(0, 500) }).catch(() => {
         /* row already gone; the queue retry still owns the work */
       });
       if (currentState !== null && currentState !== "queued") {
-        const reset = await repositories.reviews.resetForRecovery(job.reviewId).catch(() => null);
+        const reset = await jobs.resetForRecovery(job.reviewId).catch(() => null);
         if (reset?.outcome === "conflict" && isTerminalReviewState(reset.currentState)) {
           logger.info(
             { jobId, reviewId: job.reviewId, state: reset.currentState },
             "Review became terminal before retry reset; not retrying",
           );
-          throw new UnrecoverableError(message);
+          throw new UnrecoverableJobError(message);
         }
       }
       throw new ReviewJobRetryError(message, decision.failureClass);
@@ -381,10 +359,10 @@ export async function processReviewJob(
     } catch {
       // Review may already be in a terminal state (e.g. superseded) — fine.
     }
-    await repositories.reviewJobs.markFailedUnlessTerminal(job.id, message.slice(0, 500)).catch(() => {
+    await jobs.markFailedUnlessTerminal(job.jobId, message.slice(0, 500)).catch(() => {
       /* row already gone or already terminal */
     });
-    throw new UnrecoverableError(message);
+    throw new UnrecoverableJobError(message);
   }
 }
 
@@ -415,18 +393,18 @@ function terminalJobStatus(state: ReviewState): "completed" | "failed" | "supers
  *
  * The payload is permanent input: retrying cannot change it, so the durable
  * job and review are marked failed with the stable `REVIEW_JOB_PAYLOAD_INVALID`
- * code and the BullMQ job is thrown as an `UnrecoverableError` (no retries).
- * A superseded/completed job is left untouched — its review already reached a
+ * code and the queue adapter fails the job without retries. A
+ * superseded/completed job is left untouched — its review already reached a
  * terminal state for another reason.
  */
 async function failMalformedReviewJob(deps: ProcessReviewJobDeps, jobId: string, error: AppError): Promise<void> {
   const reason = `${error.code}: ${error.message}`.slice(0, 500);
   try {
-    const row = await deps.repositories.reviewJobs.findById(jobId);
+    const row = await deps.jobs.findById(jobId);
     if (!row || row.status === "superseded" || row.status === "completed") {
       return;
     }
-    await deps.repositories.reviewJobs.markFailedUnlessTerminal(jobId, reason);
+    await deps.jobs.markFailedUnlessTerminal(jobId, reason);
     await deps
       .transitionReviewState(row.reviewId, "failed", {
         errorCode: error.code,
@@ -447,84 +425,12 @@ async function failMalformedReviewJob(deps: ProcessReviewJobDeps, jobId: string,
 }
 
 /**
- * Start the BullMQ review worker on a connection created by the composition
- * root. The connection is configured for blocking commands
- * (`maxRetriesPerRequest: null`); it is closed separately on shutdown.
+ * Bind the workspace processor to the queue-adapter port. The queue adapter
+ * owns BullMQ; this factory owns what one attempt means.
  */
-export function startReviewWorker(connection: Redis, deps: ProcessReviewJobDeps): Worker<ReviewJobPayload> {
-  const worker = new Worker<ReviewJobPayload>(
-    REVIEW_QUEUE_NAME,
-    async (job) => {
-      if (!job.id) {
-        throw new Error("BullMQ job has no id");
-      }
-      let payload: ReviewJobPayload;
-      try {
-        payload = parseReviewJobPayload(job.data);
-      } catch (error) {
-        if (!(error instanceof AppError)) {
-          throw error;
-        }
-        deps.logger.error(
-          { jobId: job.id, code: error.code, details: error.details },
-          "Review job payload invalid; failing permanently",
-        );
-        await failMalformedReviewJob(deps, job.id, error);
-        // Permanent: do not consume the configured retry budget on a payload
-        // that cannot become valid between attempts.
-        throw new UnrecoverableError(`${error.code}: ${error.message}`);
-      }
-      // BullMQ supplies the retry context: attemptsMade is the count of failed
-      // attempts so far, so the current attempt is attemptsMade + 1.
-      return processReviewJob(job.id, payload, deps, {
-        attempt: job.attemptsMade + 1,
-        maxAttempts: job.opts.attempts ?? 1,
-      });
-    },
-    { connection, concurrency: deps.concurrency },
-  );
-  return worker;
+export function createReviewJobProcessor(deps: ProcessReviewJobDeps): ReviewJobProcessor {
+  return {
+    process: (jobId, payload, attempt) => processReviewJob(jobId, payload, deps, attempt),
+    failInvalidPayload: (jobId, error) => failMalformedReviewJob(deps, jobId, error),
+  };
 }
-
-/**
- * Stop accepting new jobs and wait for in-flight work to finish.
- *
- * `close()` (without `force`) drains active jobs: a processor that is still
- * running is awaited, not abandoned. When the global shutdown deadline fires
- * first, the process exits without acknowledging the active job; BullMQ's
- * stalled-job recovery then makes it available again and reconciliation backs
- * that up from Postgres.
- */
-export async function stopReviewWorker(worker: Worker<ReviewJobPayload>): Promise<void> {
-  await worker.close(false);
-}
-
-/**
- * Default installation-token provider built from injected environment
- * credentials. Falls back to a NullTokenProvider (throws on use) when no
- * GitHub App credentials are configured. Private key material never leaves
- * this module.
- */
-export function createDefaultTokenProvider(appEnv: NodeJS.ProcessEnv): InstallationTokenProvider {
-  const appId = appEnv.GITHUB_APP_ID;
-  let privateKey = appEnv.GITHUB_PRIVATE_KEY;
-  if (!privateKey) {
-    const privateKeyPath = appEnv.GITHUB_PRIVATE_KEY_PATH;
-    if (privateKeyPath) {
-      privateKey = fs.readFileSync(privateKeyPath, "utf-8");
-    }
-  }
-  if (!privateKey && appEnv.GITHUB_PRIVATE_KEY_BASE64) {
-    privateKey = Buffer.from(appEnv.GITHUB_PRIVATE_KEY_BASE64.replace(/\s+/g, ""), "base64").toString("utf8");
-  }
-  if (!appId || !privateKey) {
-    return new NullTokenProvider();
-  }
-  return new AppInstallationTokenProvider({
-    appId,
-    privateKey,
-    baseUrl: appEnv.GITHUB_BASE_URL,
-  });
-}
-
-export { StaleCommitError };

@@ -1,7 +1,7 @@
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { type ReviewJobPayload } from "../../contracts/queue.js";
-import type { ReviewQueue, ReviewQueueEnqueueOptions } from "../../ports/review-queue.js";
+import type { ReviewQueue, ReviewQueueCounts, ReviewQueueEnqueueOptions } from "../../ports/review-queue.js";
 import { REVIEW_QUEUE_NAME } from "../../shared/queue-payload.js";
 
 /**
@@ -69,6 +69,27 @@ export function createReviewQueue(redisUrl: string): BullMqReviewQueue {
         removeOnComplete: options.removeOnComplete ?? 1000,
         removeOnFail: options.removeOnFail ?? 5000,
       });
+    },
+    async removeTerminalJob(jobId: string): Promise<void> {
+      // A terminal job retained by removeOnComplete/removeOnFail makes
+      // `queue.add` with the same jobId a silent no-op. Recovery must clear it
+      // or the review would flip to `enqueued` while nothing ever runs.
+      const existing = await queue.getJob(jobId);
+      if (!existing) {
+        return;
+      }
+      const state = await existing.getState();
+      if (state === "completed" || state === "failed") {
+        await existing.remove();
+      }
+    },
+    async getJobCounts(): Promise<ReviewQueueCounts> {
+      const counts = await queue.getJobCounts("waiting", "active", "delayed");
+      return {
+        waiting: counts.waiting ?? 0,
+        active: counts.active ?? 0,
+        delayed: counts.delayed ?? 0,
+      };
     },
     async close(): Promise<void> {
       try {

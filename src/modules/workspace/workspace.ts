@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import type { InstallationTokenProvider } from "../../ports/installation-token.js";
 import type { Logger } from "../../ports/logger.js";
-import { buildCloneUrl, type InstallationTokenProvider } from "./credentials.js";
+import { buildCloneUrl } from "./credentials.js";
 import { parseNameStatus, type ChangedFile } from "./files.js";
 import { runGit, type RunGitOptions } from "./git.js";
 import { redactCredentials, sanitizeGitUrl } from "./redact.js";

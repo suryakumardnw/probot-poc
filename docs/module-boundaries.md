@@ -131,6 +131,26 @@ No module may import another module's internal file or a platform adapter.
   `BenchmarkRun` to a plain `EvaluationRunRecord`; no tooling file imports
   `@prisma/client`.
 
+### Final boundary fixes (2026-11-15)
+
+- `modules/workspace/processor.ts` no longer imports BullMQ or ioredis. It
+  implements the `ReviewJobProcessor` port; `platform/queue/review-worker.ts`
+  owns the BullMQ `Worker`, payload parsing, attempt context, and
+  `UnrecoverableError`. Permanent application failures cross the port as
+  `UnrecoverableJobError` (`shared/errors`) and are translated once at the
+  adapter edge.
+- Reconciliation re-enqueues through the `ReviewQueue` port
+  (`removeTerminalJob`, `enqueue`, `getJobCounts`), not a BullMQ `Queue`.
+- GitHub App authentication moved from `modules/workspace/credentials.ts` to
+  `platform/github/app-auth.ts`, behind `ports/installation-token.ts`.
+  Workspace and publishing receive an `InstallationTokenProvider`; only the
+  platform adapter imports `@octokit/auth-app`.
+- Webhooks depend on public ingestion services: `InstallationService` for the
+  installation lifecycle and `findReviewTarget` for durable PR resolution.
+  They no longer receive `IngestionRepositories` or `IngestionUnitOfWork`.
+- The Octokit packages are declared as direct dependencies at the versions
+  already installed; the build no longer relies on npm hoisting through Probot.
+
 ## Vendor and environment rules
 
 The rules apply to TypeScript (`**/*.{ts,mts,cts}`), root tooling
@@ -138,15 +158,19 @@ The rules apply to TypeScript (`**/*.{ts,mts,cts}`), root tooling
 
 | Rule | Restriction | Approved exceptions |
 |---|---|---|
-| `no-restricted-imports` | No `@prisma/client` import, including deep subpaths via the `@prisma/client/*` pattern. | `src/**/*.repository.ts`, `src/platform/db/**`, and `test/**` (permanent). |
+| `no-restricted-imports` | No `@prisma/client` import, including deep subpaths via the `@prisma/client/*` pattern. | `src/**/*.repository.ts` and `src/platform/db/**` (permanent). |
+| `no-restricted-imports` | No `bullmq` or `ioredis` import. | `src/platform/queue/**` (BullMQ + ioredis) and `src/platform/redis.ts` (ioredis). |
+| `no-restricted-imports` | No `@octokit/auth-app`, `@octokit/core`, `@octokit/plugin-rest-endpoint-methods`, or `@octokit/plugin-retry` import. | `src/platform/github/**`. |
+| `no-restricted-imports` | Every vendor package above. | `test/**` (test-tier exception; tests are never application code). |
 | `no-restricted-syntax` | No `process.env` reads (dot or bracket form). | `src/platform/config/**`, `test/**`, and `deploy/inspect-key.js` (permanent). |
 | `no-restricted-globals` | No global `fetch`. | `src/platform/**` (permanent). |
 
-Tests may use `@prisma/client` row types to assert database state and fixture
-shapes. This is an **approved test-tier exception**, not application code:
-repositories and `platform/db` remain the only production owners of the vendor
-client. If the test fakes migration removes those imports, the exception can be
-dropped later.
+Tests may use `@prisma/client` row types and the BullMQ error classes to
+arrange fixtures and assert queue behavior. This is an **approved test-tier
+exception**, not application code: repositories and `platform/db` remain the
+only production owners of the vendor client, and `platform/queue` is the only
+production owner of BullMQ. If the test fakes migration removes those imports,
+the exception can be dropped later.
 
 `deploy/inspect-key.js` is a one-off container diagnostic copied into a running
 worker container; it is CommonJS, outside the package, and never imported by the
@@ -162,8 +186,9 @@ supplied by bootstrap:
 | `execution` | `ExecutionAuditRepository`, `appEnv` | `prisma-execution-audit.repository.ts`; bootstrap supplies `appEnv` |
 | `knowledge` | `KnowledgeFetcher`, `ReviewKnowledgeStore`, `env` | `platform/knowledge/fetch.ts`, `prisma-knowledge.repository.ts` |
 | `admin` | `GithubOAuthClient`, `devLoginEnabled` | `platform/github/oauth-client.ts`; bootstrap computes the flag |
-| `workspace` | `appEnv`, `InstallationTokenProvider` | bootstrap supplies `appEnv`; the provider is built in `workspace/processor.ts` |
-| `publishing` | `env` | bootstrap supplies `env` |
+| `workspace` | `appEnv`, `InstallationTokenProvider`, `ReviewJobService` | bootstrap supplies `appEnv`; `platform/github/app-auth.ts` builds the provider behind `ports/installation-token.ts`; `modules/ingestion` exposes the job lifecycle service |
+| `publishing` | `env`, `InstallationTokenProvider` | bootstrap supplies both; the provider port is shared with `workspace` |
+| `webhooks` | `IngestionServices` (public services only) | `modules/ingestion` exposes intake, target lookup, and installation registration; webhooks never see repositories or the unit of work |
 
 ## Negative checks
 
@@ -189,6 +214,9 @@ several policies).
 | `src/shared/__probe.ts` reads `process.env.EXAMPLE`. | `no-restricted-syntax` |
 | `src/shared/__probe.ts` reads `process.env["EXAMPLE"]`. | `no-restricted-syntax` (computed form) |
 | `src/shared/__probe.ts` calls `fetch("https://example.com")`. | `no-restricted-globals` |
+| `src/modules/knowledge/__probe.ts` imports `bullmq`. | `no-restricted-imports` |
+| `src/modules/knowledge/__probe.ts` imports `ioredis`. | `no-restricted-imports` |
+| `src/modules/knowledge/__probe.ts` imports `@octokit/auth-app`. | `no-restricted-imports` |
 | `src/modules/knowledge/__probe_a.ts` imports `__probe_b.ts`, and `__probe_b.ts` imports `__probe_a.ts`. | `import/no-cycle` |
 
 The PR 3.12 verification used this probe set with no temporary allowances

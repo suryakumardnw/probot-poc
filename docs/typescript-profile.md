@@ -98,9 +98,8 @@ overrides must be marked `override`, and type-only imports must use
 ## Known gaps (current)
 
 Baseline gaps are tracked in the [gap analysis](./typescript-gap-analysis.md).
-Final verification on 2026-11-15: 67 test files / 1,059 tests pass
-(500 unit, 194 contract, 280 integration, 85 characterization); Docker Compose
-smoke passes. The [final verification report](./typescript-refactor-report.md)
+Final verification on 2026-11-15: 67 test files / 1,065 tests pass; Docker
+Compose smoke passes. The [final verification report](./typescript-refactor-report.md)
 §8 lists every remaining deviation, including the queue follow-ups (preflight
 classifier bypass, fixed reconciliation backoff, orphaned terminal-review job
 rows), the macOS Docker `TMPDIR` requirement, and the security-audit allowlist.
@@ -113,6 +112,14 @@ At the end of the refactor:
 - **Persistence is behind repositories.** No `src` file imports
   `@prisma/client` outside `*.repository.ts` adapters or `src/platform/db/**`;
   no `src` file reads `process.env` outside `src/platform/config/**`.
+- **Vendor transport stays in `platform`.** No module imports BullMQ, ioredis,
+  or an Octokit package. The queue worker is
+  `src/platform/queue/review-worker.ts`, GitHub App auth is
+  `src/platform/github/app-auth.ts`, and modules depend on the
+  `ReviewJobProcessor`, `ReviewQueue`, and `InstallationTokenProvider` ports.
+- **Cross-module access is through services.** Webhooks use ingestion's public
+  services (`findReviewTarget`, `InstallationService`); the workspace processor
+  uses `ReviewJobService`. No module imports another module's repository ports.
 - **Boundary shapes are parsed.** There are zero boundary
   `JSON.parse(...) as` casts and zero explicit `any` type positions in `src`.
 - **No non-null assertions in `src`.** The frozen characterization suite keeps

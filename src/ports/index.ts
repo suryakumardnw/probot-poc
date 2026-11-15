@@ -7,4 +7,7 @@
 
 export type { Clock } from "./clock.js";
 export { systemClock } from "./clock.js";
+export type { InstallationToken, InstallationTokenProvider } from "./installation-token.js";
 export type { LogContext, Logger } from "./logger.js";
+export type { ReviewJobAttempt, ReviewJobProcessor } from "./review-job-processor.js";
+export type { ReviewQueue, ReviewQueueCounts, ReviewQueueEnqueueOptions } from "./review-queue.js";

@@ -137,8 +137,6 @@ export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerR
   const probot = maybeCreateProbot(env, logger, processEnv, privateKeyOverride);
   const appFn = createApp({
     ingestion: ingestion.services,
-    ingestionRepositories: ingestion.repositories,
-    ingestionUnitOfWork: ingestion.unitOfWork,
     triage: createTriageDependencies(),
     config,
   });

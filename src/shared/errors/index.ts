@@ -9,6 +9,7 @@ export { GithubOauthError } from "./github-oauth.js";
 export { ModelProviderError } from "./model-provider.js";
 export type { ModelErrorCode, ModelProviderErrorOptions } from "./model-provider.js";
 export { redactDetails, redactSecrets } from "./redact.js";
+export { UnrecoverableJobError } from "./unrecoverable-job.js";
 export {
   AuthError,
   ConflictError,

@@ -1,4 +1,3 @@
-import type { Queue } from "bullmq";
 import pino from "pino";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { reviewJobPayloadSchema } from "../../src/contracts/queue.js";
@@ -15,6 +14,7 @@ import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-
 import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
 import { createObservability } from "../../src/platform/observability/index.js";
 import { getMetricsRegistry } from "../../src/platform/observability/metrics.js";
+import type { ReviewQueue } from "../../src/ports/review-queue.js";
 import { first } from "../helpers/assert.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 
@@ -118,26 +118,25 @@ async function createStuckReview(
 }
 
 function fakeQueue(existingState?: "completed" | "failed" | "waiting" | "active" | "prioritized" | "delayed") {
-  const added: Array<{ name: string; payload: ReviewJobPayload; opts: { jobId?: string; attempts?: number } }> = [];
+  const added: Array<{ payload: ReviewJobPayload; opts: { jobId?: string; attempts?: number } }> = [];
   const events: string[] = [];
-  const queue = {
-    add: async (name: string, payload: ReviewJobPayload, opts: { jobId?: string; attempts?: number } = {}) => {
+  const isTerminal = existingState === "completed" || existingState === "failed";
+  const queue: ReviewQueue = {
+    enqueue: async (payload, opts) => {
       events.push("add");
-      added.push({ name, payload, opts });
-      return { id: opts.jobId ?? "x" };
+      added.push({ payload, opts });
+      return { id: opts.jobId };
     },
-    getJob: async () => {
-      if (!existingState) {
-        return undefined;
+    removeTerminalJob: async () => {
+      // The adapter decides by live state; the fake mirrors the two terminal
+      // cases the recovery contract cares about.
+      if (isTerminal) {
+        events.push("remove");
       }
-      return {
-        getState: async () => existingState,
-        remove: async () => {
-          events.push("remove");
-        },
-      };
     },
-  } as unknown as Queue<ReviewJobPayload>;
+    getJobCounts: async () => ({ waiting: 0, active: 0, delayed: 0 }),
+    close: async () => {},
+  };
   return { queue, added, events };
 }
 

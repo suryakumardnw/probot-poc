@@ -80,6 +80,8 @@ describe("outbox publication (§12.2)", () => {
       enqueue: async () => {
         throw new Error("connect ECONNREFUSED 127.0.0.1:6379");
       },
+      removeTerminalJob: async () => {},
+      getJobCounts: async () => ({ waiting: 0, active: 0, delayed: 0 }),
       close: async () => {},
     };
     const offlineIngestion = createTestIngestion({ queue: unavailableQueue });
