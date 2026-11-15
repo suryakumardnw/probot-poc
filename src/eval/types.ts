@@ -6,49 +6,18 @@
  * reviewer MUST surface (and, for false-positive traps and clean PRs, the
  * findings it must NOT raise). Scoring compares the engine output against the
  * expectations — the fixtures never contain secrets or repository content.
+ *
+ * The file contract lives in `src/contracts/evaluation.ts`; this module keeps
+ * the public type surface plus the scoring output types.
  */
 
-import type { FindingCategory, FindingSeverity } from "../review-engine/types.js";
-
-export interface BenchmarkFile {
-  /** Workspace-relative path. */
-  path: string;
-  content: string;
-}
-
-export interface ExpectedFinding {
-  category: FindingCategory;
-  severity: FindingSeverity;
-  file: string;
-  /** 1-based line the finding should anchor to. */
-  line: number;
-  /** Allowed |predicted - expected| deviation. Default 5 (§19.2). */
-  lineTolerance?: number;
-}
-
-export interface BenchmarkCase {
-  id: string;
-  name: string;
-  description?: string;
-  files: BenchmarkFile[];
-  diff: string;
-  changedFiles: Array<{ path: string; status: "added" | "modified" | "deleted" }>;
-  /** Findings the reviewer must surface (recall). */
-  expectedFindings: ExpectedFinding[];
-  /**
-   * Clean-PR / false-positive-trap case: true when NO inline finding is
-   * acceptable — any predicted finding counts as a false positive.
-   */
-  expectClean?: boolean;
-}
-
-export interface BenchmarkSuite {
-  id: string;
-  name: string;
-  /** Benchmark version — part of the EvaluationRun identity (§19). */
-  version: string;
-  cases: BenchmarkCase[];
-}
+export type {
+  BenchmarkCase,
+  BenchmarkChangedFile,
+  BenchmarkFile,
+  BenchmarkSuite,
+  ExpectedFinding,
+} from "../contracts/evaluation.js";
 
 /** Per-case score (scoring.ts). */
 export interface CaseScore {

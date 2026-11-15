@@ -54,9 +54,17 @@ const optionalString = (max: number) =>
       return trimmed ? trimmed : undefined;
     });
 
+/** Finding category taxonomy, shared with the evaluation benchmark contract. */
+export const findingCategorySchema = z.enum(FINDING_CATEGORIES);
+export type FindingCategoryValue = z.infer<typeof findingCategorySchema>;
+
+/** Finding severity taxonomy, shared with the evaluation benchmark contract. */
+export const findingSeveritySchema = z.enum(["critical", "high", "medium", "low", "informational"]);
+export type FindingSeverityValue = z.infer<typeof findingSeveritySchema>;
+
 export const findingSchema = z.object({
-  category: z.enum(FINDING_CATEGORIES),
-  severity: z.enum(["critical", "high", "medium", "low", "informational"]),
+  category: findingCategorySchema,
+  severity: findingSeveritySchema,
   confidence: z.number().min(0).max(1),
   title: z.string().min(1).max(300),
   file: z.string().min(1).max(512),

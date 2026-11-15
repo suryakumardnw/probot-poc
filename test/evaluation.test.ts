@@ -1,10 +1,13 @@
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { ReviewConfig } from "../src/config/review-schema.js";
 import { reviewConfigSchema } from "../src/config/review-schema.js";
 import { configurationHashFrom, persistEvaluationRun } from "../src/eval/persistence.js";
 import { runBenchmarkSuite } from "../src/eval/runner.js";
 import { scoreCase, aggregateScores, percentile, DEFAULT_LINE_TOLERANCE } from "../src/eval/scoring.js";
+import { loadBenchmarkSuites } from "../src/eval/suite-loader.js";
 import type { BenchmarkCase, BenchmarkSuite, CaseScore } from "../src/eval/types.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import type { Finding, RunReviewOutput } from "../src/review-engine/types.js";
@@ -74,6 +77,43 @@ function benchmarkCase(overrides: Partial<BenchmarkCase> = {}): BenchmarkCase {
 function suiteOf(cases: BenchmarkCase[]): BenchmarkSuite {
   return { id: "unit-suite", name: "Unit suite", version: "1.0.0", cases };
 }
+
+// ---------------------------------------------------------------------------
+// Suite loading (§19 fixture contract)
+// ---------------------------------------------------------------------------
+
+describe("loadBenchmarkSuites", () => {
+  test("loads every checked-in benchmark suite", async () => {
+    const suites = await loadBenchmarkSuites(path.join(process.cwd(), "benchmarks"));
+
+    expect(suites.length).toBeGreaterThan(0);
+    expect(suites.map((suite) => suite.id)).toContain("security");
+    expect(suites.every((suite) => suite.cases.length > 0)).toBe(true);
+  });
+
+  test("returns an empty list when the directory is absent", async () => {
+    await expect(loadBenchmarkSuites(path.join(process.cwd(), "benchmarks-missing"))).resolves.toEqual([]);
+  });
+
+  test("rejects malformed JSON and contract drift with the file name", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "eval-suites-"));
+    try {
+      await fs.writeFile(path.join(dir, "broken.json"), "{ not json", "utf8");
+      await expect(loadBenchmarkSuites(dir)).rejects.toThrow(
+        "Invalid benchmark suite file: broken.json (not valid JSON)",
+      );
+
+      await fs.writeFile(
+        path.join(dir, "broken.json"),
+        JSON.stringify({ id: "x", name: "x", version: "1.0.0", cases: [{ id: "c" }] }),
+        "utf8",
+      );
+      await expect(loadBenchmarkSuites(dir)).rejects.toThrow(/Invalid benchmark suite file: broken\.json \(cases\.0/);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Scoring math (§19.2)

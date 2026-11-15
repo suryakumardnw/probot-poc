@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_CONFIG_PATH,
   EmbeddedSecretError,
   LAST_KNOWN_GOOD_SUFFIX,
   MANDATORY_SECURITY_POLICIES,
@@ -16,8 +17,8 @@ import {
   resolveRepositoryOverrides,
   updateReviewConfig,
   validateRawConfig,
-} from "../lib/config/review-loader.js";
-import { CURRENT_SCHEMA_VERSION, reviewConfigSchema } from "../lib/config/review-schema.js";
+} from "../src/config/review-loader.js";
+import { CURRENT_SCHEMA_VERSION, reviewConfigSchema } from "../src/config/review-schema.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -81,6 +82,12 @@ function track(initial: unknown, name?: string): Fixture {
 // ---------------------------------------------------------------------------
 
 describe("reviewConfigSchema (strict validation)", () => {
+  it("accepts the checked-in config/review.json", () => {
+    const raw: unknown = JSON.parse(readFileSync(DEFAULT_CONFIG_PATH, "utf8"));
+
+    expect(() => validateRawConfig(raw)).not.toThrow();
+  });
+
   it("accepts a minimal valid configuration and applies defaults", () => {
     const config = validateRawConfig({
       schemaVersion: 1,

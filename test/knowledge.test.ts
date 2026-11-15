@@ -12,14 +12,14 @@
  *  - per-review materialization: own workspace copy + persisted snapshot,
  *    injection reads only the copy, and unreproducible snapshots fail fast.
  */
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
-import { sha256Hex } from "../src/knowledge/fetch.js";
+import { fetchFileContent, fetchRepoTree, resolveCommitSha, sha256Hex } from "../src/knowledge/fetch.js";
 import {
   ensureKnowledgeSources,
   knowledgeSpecsFromConfig,
@@ -694,5 +694,127 @@ describe("per-review knowledge snapshot (§4)", () => {
     expect(persisted.metrics!.truncated).toBe(false);
     // Additive merge: the snapshot identity is untouched.
     expect(persisted.handbook!.ref).toBe(HANDBOOK_SHA);
+  });
+});
+
+describe("GitHub response contracts", () => {
+  test("resolveCommitSha accepts a 40-hex commit sha", async () => {
+    const sha = "a".repeat(40);
+    const fetcher: KnowledgeFetcher = async () => ({ status: 200, text: JSON.stringify({ sha, extra: true }) });
+
+    await expect(resolveCommitSha(fetcher, "o", "r", "main", 1_000)).resolves.toBe(sha);
+  });
+
+  test("resolveCommitSha rejects a non-SHA response", async () => {
+    const fetcher: KnowledgeFetcher = async () => ({ status: 200, text: JSON.stringify({ sha: 42 }) });
+
+    await expect(resolveCommitSha(fetcher, "o", "r", "main", 1_000)).rejects.toThrow(
+      "ref 'main' did not resolve to a commit SHA",
+    );
+  });
+
+  test("resolveCommitSha reports invalid JSON without echoing the body", async () => {
+    const fetcher: KnowledgeFetcher = async () => ({ status: 200, text: "<html>not json</html>" });
+
+    await expect(resolveCommitSha(fetcher, "o", "r", "main", 1_000)).rejects.toThrow(
+      "resolving ref 'main' returned invalid JSON",
+    );
+  });
+
+  test("fetchRepoTree returns structurally valid entries and preserves extra fields", async () => {
+    const fetcher: KnowledgeFetcher = async () => ({
+      status: 200,
+      text: JSON.stringify({
+        truncated: false,
+        tree: [
+          { path: "docs/a.md", mode: "100644", type: "blob", size: 10, sha: "b".repeat(40) },
+          { path: "docs", mode: "040000", type: "tree", sha: "c".repeat(40) },
+        ],
+      }),
+    });
+
+    const tree = await fetchRepoTree(fetcher, "o", "r", "d".repeat(40), 1_000);
+    expect(tree).toHaveLength(2);
+    expect(tree[0]).toMatchObject({ path: "docs/a.md", mode: "100644", type: "blob", size: 10 });
+    expect(tree[1]).toMatchObject({ path: "docs", mode: "040000", type: "tree" });
+  });
+
+  test("fetchRepoTree keeps the unexpected-tree error for a missing or malformed tree", async () => {
+    const missing: KnowledgeFetcher = async () => ({ status: 200, text: JSON.stringify({ truncated: false }) });
+    const malformed: KnowledgeFetcher = async () => ({
+      status: 200,
+      text: JSON.stringify({ tree: [{ path: "docs/a.md" }] }),
+    });
+
+    await expect(fetchRepoTree(missing, "o", "r", "d".repeat(40), 1_000)).rejects.toThrow("unexpected tree response");
+    await expect(fetchRepoTree(malformed, "o", "r", "d".repeat(40), 1_000)).rejects.toThrow("unexpected tree response");
+  });
+
+  test("fetchFileContent decodes a base64 payload", async () => {
+    const fetcher: KnowledgeFetcher = async () => ({
+      status: 200,
+      text: JSON.stringify({ content: Buffer.from("# skill").toString("base64"), encoding: "base64" }),
+    });
+
+    await expect(fetchFileContent(fetcher, "o", "r", "docs/a.md", "d".repeat(40), 1_000)).resolves.toBe("# skill");
+  });
+
+  test("fetchFileContent keeps its no-content and unsupported-encoding errors", async () => {
+    const empty: KnowledgeFetcher = async () => ({ status: 200, text: JSON.stringify({ encoding: "base64" }) });
+    const notBase64: KnowledgeFetcher = async () => ({
+      status: 200,
+      text: JSON.stringify({ content: "abc", encoding: "utf8" }),
+    });
+
+    await expect(fetchFileContent(empty, "o", "r", "docs/a.md", "d".repeat(40), 1_000)).rejects.toThrow(
+      "'docs/a.md' has no content",
+    );
+    await expect(fetchFileContent(notBase64, "o", "r", "docs/a.md", "d".repeat(40), 1_000)).rejects.toThrow(
+      "'docs/a.md' has unsupported encoding 'utf8'",
+    );
+  });
+});
+
+describe("knowledge cache manifest contract", () => {
+  test("an invalid cached manifest is ignored and the source is refetched", async () => {
+    const cacheDir = makeCacheDir();
+    const first = makeFetcher({
+      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# v1",
+      [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards",
+    });
+    const snapshot1 = await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, {
+      cacheDir,
+      fetcher: first,
+    });
+    expect(snapshot1.skill.status).toBe("fresh");
+    const firstSkillDir = snapshot1.skill.dir;
+    if (firstSkillDir === null) {
+      throw new Error("expected the skill source to be cached");
+    }
+
+    // Tamper with the manifest shape: a cached entry that does not satisfy the
+    // contract must never be reused.
+    writeFileSync(
+      join(firstSkillDir, "manifest.json"),
+      JSON.stringify({ ref: SKILL_REF, status: "fresh", files: "not-an-array" }),
+      "utf8",
+    );
+
+    const second = makeFetcher({
+      [`${SKILL_REF}/skills/code-review/SKILL.md`]: "# v2",
+      [`${HANDBOOK_SHA}/docs/standards.md`]: "# Standards",
+    });
+    const snapshot2 = await ensureKnowledgeSources(makeConfig(SKILL_REF, HANDBOOK_SHA), fakeLogger, {
+      cacheDir,
+      fetcher: second,
+    });
+
+    expect(second.calls.length).toBeGreaterThan(0);
+    expect(snapshot2.skill.status).toBe("fresh");
+    const secondSkillDir = snapshot2.skill.dir;
+    if (secondSkillDir === null) {
+      throw new Error("expected the skill source to be cached after refetch");
+    }
+    expect(readFileSync(join(secondSkillDir, "skills/code-review/SKILL.md"), "utf8")).toBe("# v2");
   });
 });

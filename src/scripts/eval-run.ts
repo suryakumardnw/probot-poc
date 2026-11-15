@@ -12,37 +12,19 @@
  */
 
 import "dotenv/config";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { createAgentRuntime } from "../agent/index.js";
 import { loadEnv } from "../config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
 import { configurationHashFrom, persistEvaluationRun } from "../eval/persistence.js";
 import { runBenchmarkSuite } from "../eval/runner.js";
+import { loadBenchmarkSuites } from "../eval/suite-loader.js";
 import type { BenchmarkSuite } from "../eval/types.js";
 import { createLogger } from "../lib/logger.js";
 import { getPrisma } from "../lib/prisma.js";
 import { disconnectPrisma } from "../lib/prisma.js";
 
 const BENCHMARKS_DIR = path.join(process.cwd(), "benchmarks");
-
-async function loadSuites(dir: string): Promise<BenchmarkSuite[]> {
-  let entries: string[];
-  try {
-    entries = await fs.readdir(dir);
-  } catch {
-    return [];
-  }
-  const suites: BenchmarkSuite[] = [];
-  for (const entry of entries.filter((f) => f.endsWith(".json")).sort()) {
-    const raw = JSON.parse(await fs.readFile(path.join(dir, entry), "utf8")) as BenchmarkSuite;
-    if (!raw?.id || !Array.isArray(raw.cases)) {
-      throw new Error(`Invalid benchmark suite file: ${entry}`);
-    }
-    suites.push(raw);
-  }
-  return suites;
-}
 
 function printSuiteReport(suite: BenchmarkSuite, run: Awaited<ReturnType<typeof runBenchmarkSuite>>): void {
   const s = run.score;
@@ -72,7 +54,7 @@ async function main(): Promise<void> {
   const config = loaded.config;
   const qualityThreshold = config.evaluation.minimumQualityThreshold;
 
-  const suites = await loadSuites(BENCHMARKS_DIR);
+  const suites = await loadBenchmarkSuites(BENCHMARKS_DIR);
   if (suites.length === 0) {
     console.error(`No benchmark suites found in ${BENCHMARKS_DIR}`);
     process.exitCode = 1;

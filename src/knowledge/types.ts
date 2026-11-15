@@ -8,15 +8,16 @@
  * workspace copy (§10 security invariant).
  */
 
+import type { KnowledgeFileRecord } from "../contracts/knowledge.js";
+
 /** status "fresh": fetched from GitHub; "unavailable": no content (there is no fallback). */
 export type KnowledgeSourceStatus = "fresh" | "unavailable";
 
-/** One cached knowledge file. Paths are cache-relative and pre-validated. */
-export interface KnowledgeFileRecord {
-  path: string;
-  sha256: string;
-  bytes: number;
-}
+/**
+ * One cached knowledge file. The shape and manifest validation live in
+ * `src/contracts/knowledge.ts`; this re-export keeps the module API stable.
+ */
+export type { KnowledgeFileRecord };
 
 /** Resolved state of one knowledge source for this worker boot. */
 export interface KnowledgeSourceSnapshot {

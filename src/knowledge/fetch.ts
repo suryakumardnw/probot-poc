@@ -8,9 +8,20 @@
  * public sources work unauthenticated, and a bearer token from
  * KNOWLEDGE_GITHUB_TOKEN / GITHUB_TOKEN is attached when present (the
  * handbook repository is org-private).
+ *
+ * Response bodies are parsed against the contracts in
+ * `src/contracts/knowledge.ts` before any field is read.
  */
 import { createHash } from "node:crypto";
+import {
+  githubCommitResponseSchema,
+  githubContentResponseSchema,
+  githubTreeResponseSchema,
+  type GitHubTreeEntry,
+} from "../contracts/knowledge.js";
 import type { KnowledgeFetcher } from "./types.js";
+
+export type { GitHubTreeEntry };
 
 export const DEFAULT_GITHUB_API = "https://api.github.com";
 
@@ -48,19 +59,22 @@ export function createDefaultKnowledgeFetcher(): KnowledgeFetcher {
   };
 }
 
+/** Parse a response body without leaking its content into the error. */
+function parseJsonBody(text: string, description: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed;
+  } catch {
+    throw new Error(`${description} returned invalid JSON`);
+  }
+}
+
 export function parseOwnerRepo(repo: string): { owner: string; repo: string } {
   const [owner, name] = repo.split("/");
   if (!owner || !name || repo.split("/").length !== 2) {
     throw new Error(`knowledge source repository must be "owner/repo", got '${repo}'`);
   }
   return { owner, repo: name };
-}
-
-export interface GitHubTreeEntry {
-  path: string;
-  mode: string;
-  type: string;
-  size?: number;
 }
 
 /** GET /repos/{owner}/{repo}/commits/{ref} — resolve any ref to a commit SHA. */
@@ -77,11 +91,11 @@ export async function resolveCommitSha(
   if (response.status !== 200) {
     throw new Error(`resolving ref '${ref}' failed with HTTP ${response.status}`);
   }
-  const body = JSON.parse(response.text) as { sha?: string };
-  if (!body.sha || !/^[0-9a-f]{40}$/.test(body.sha)) {
+  const body = githubCommitResponseSchema.safeParse(parseJsonBody(response.text, `resolving ref '${ref}'`));
+  if (!body.success || !body.data.sha || !/^[0-9a-f]{40}$/.test(body.data.sha)) {
     throw new Error(`ref '${ref}' did not resolve to a commit SHA`);
   }
-  return body.sha;
+  return body.data.sha;
 }
 
 /** GET /repos/{owner}/{repo}/git/trees/{sha}?recursive=1 — blob listing. */
@@ -98,11 +112,13 @@ export async function fetchRepoTree(
   if (response.status !== 200) {
     throw new Error(`fetching tree of ${owner}/${repo}@${sha} failed with HTTP ${response.status}`);
   }
-  const body = JSON.parse(response.text) as { tree?: GitHubTreeEntry[] };
-  if (!Array.isArray(body.tree)) {
+  const body = githubTreeResponseSchema.safeParse(
+    parseJsonBody(response.text, `fetching tree of ${owner}/${repo}@${sha}`),
+  );
+  if (!body.success || !Array.isArray(body.data.tree)) {
     throw new Error("unexpected tree response");
   }
-  return body.tree;
+  return body.data.tree;
 }
 
 /** GET /repos/{owner}/{repo}/contents/{path}?ref={sha} — base64 file content. */
@@ -121,12 +137,12 @@ export async function fetchFileContent(
   if (response.status !== 200) {
     throw new Error(`fetching '${filePath}' failed with HTTP ${response.status}`);
   }
-  const body = JSON.parse(response.text) as { content?: string; encoding?: string };
-  if (typeof body.content !== "string") {
+  const body = githubContentResponseSchema.safeParse(parseJsonBody(response.text, `fetching '${filePath}'`));
+  if (!body.success || typeof body.data.content !== "string") {
     throw new Error(`'${filePath}' has no content`);
   }
-  if (body.encoding !== "base64") {
-    throw new Error(`'${filePath}' has unsupported encoding '${body.encoding}'`);
+  if (body.data.encoding !== "base64") {
+    throw new Error(`'${filePath}' has unsupported encoding '${body.data.encoding}'`);
   }
-  return Buffer.from(body.content, "base64").toString("utf8");
+  return Buffer.from(body.data.content, "base64").toString("utf8");
 }

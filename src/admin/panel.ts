@@ -772,10 +772,35 @@ export function createAdminPanel(
       return;
     }
 
-    const finalCandidate =
-      confirmed && typeof lastValue(form, "candidate") === "string"
-        ? (JSON.parse(lastValue(form, "candidate")!) as unknown)
-        : candidate;
+    let finalCandidate: unknown = candidate;
+    if (confirmed) {
+      const submittedCandidate = lastValue(form, "candidate");
+      if (typeof submittedCandidate === "string") {
+        try {
+          const parsed: unknown = JSON.parse(submittedCandidate);
+          finalCandidate = parsed;
+        } catch {
+          // A malformed hidden field is tampering or a stale page. Fail closed:
+          // report a validation error and persist nothing.
+          await audit(session.login, "config.update_rejected", "configuration", {
+            reason: "invalid candidate JSON",
+          });
+          fieldErrors.set("(root)", "Submitted configuration is not valid JSON.");
+          renderSection(
+            res,
+            section,
+            loaded,
+            fieldErrors,
+            "Submitted configuration is not valid JSON. Nothing was saved.",
+            400,
+            session,
+            version,
+            url,
+          );
+          return;
+        }
+      }
+    }
 
     try {
       const result = updateReviewConfig(configPath, finalCandidate, { env: processEnv });

@@ -33,6 +33,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import type pino from "pino";
 import type { ReviewConfig } from "../config/review-schema.js";
+import { knowledgeManifestSchema, type GitHubTreeEntry, type KnowledgeManifest } from "../contracts/knowledge.js";
 import {
   createDefaultKnowledgeFetcher,
   fetchFileContent,
@@ -89,13 +90,8 @@ export interface EnsureKnowledgeOptions {
   fetcher?: KnowledgeFetcher;
 }
 
-export interface KnowledgeManifest {
-  ref: string;
-  fetchedAt: string;
-  contentHash: string;
-  status: "fresh";
-  files: KnowledgeFileRecord[];
-}
+/** Manifest contract lives in `src/contracts/knowledge.ts`. */
+export type { KnowledgeManifest };
 
 // ---------------------------------------------------------------------------
 // Path safety + content selection (untrusted input)
@@ -138,10 +134,7 @@ export function computeContentHash(files: KnowledgeFileRecord[]): string {
   return sha256Hex(sorted.map((file) => `${file.sha256}  ${file.path}\n`).join(""));
 }
 
-function selectTreeEntries(
-  entries: Array<{ path: string; mode: string; type: string; size?: number }>,
-  spec: KnowledgeSourceSpec,
-): Array<{ path: string }> {
+function selectTreeEntries(entries: GitHubTreeEntry[], spec: KnowledgeSourceSpec): Array<{ path: string }> {
   const prefix = spec.path.replace(/\/+$/, "").replace(/^\/+/, "");
   const extensions = spec.kind === "skill" ? SKILL_EXTENSIONS : HANDBOOK_EXTENSIONS;
   const maxFiles = spec.kind === "skill" ? MAX_SKILL_FILES : MAX_HANDBOOK_FILES;
@@ -319,13 +312,18 @@ async function readCachedEntry(cacheDir: string, kind: "skill" | "handbook", ref
   } catch {
     return null;
   }
-  let manifest: KnowledgeManifest;
+  let parsed: unknown;
   try {
-    manifest = JSON.parse(raw) as KnowledgeManifest;
+    parsed = JSON.parse(raw);
   } catch {
     return null;
   }
-  if (manifest.ref !== ref || !Array.isArray(manifest.files) || manifest.files.length === 0) {
+  const result = knowledgeManifestSchema.safeParse(parsed);
+  if (!result.success) {
+    return null;
+  }
+  const manifest: KnowledgeManifest = result.data;
+  if (manifest.ref !== ref || manifest.files.length === 0) {
     return null;
   }
   try {

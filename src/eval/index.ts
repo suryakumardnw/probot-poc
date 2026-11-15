@@ -3,6 +3,7 @@
  */
 export type {
   BenchmarkCase,
+  BenchmarkChangedFile,
   BenchmarkFile,
   BenchmarkScore,
   BenchmarkSuite,
@@ -10,6 +11,7 @@ export type {
   ExpectedFinding,
 } from "./types.js";
 export { aggregateScores, DEFAULT_LINE_TOLERANCE, percentile, scoreCase } from "./scoring.js";
+export { loadBenchmarkSuites } from "./suite-loader.js";
 export {
   runBenchmarkCase,
   runBenchmarkSuite,

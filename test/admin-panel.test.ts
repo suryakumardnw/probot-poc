@@ -423,6 +423,27 @@ describe("admin panel (ticket 14)", () => {
     expect(await prisma.auditLog.findMany({ where: { action: "config.update" } })).toHaveLength(1);
   });
 
+  test("a malformed confirmation candidate fails closed without persisting", async () => {
+    const session = await login(handlers);
+    const before = fs.readFileSync(configPath(), "utf8");
+
+    const rejected = await call(handlers.panel, "POST", "/admin/execution", {
+      headers: { cookie: session.cookie },
+      body: formBody({
+        _csrf: session.csrfToken,
+        action: "save",
+        confirm: "confirmed",
+        candidate: "{ not json",
+      }),
+    });
+
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.body).toMatch(/not valid JSON/);
+    expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
+    expect(await prisma.auditLog.findMany({ where: { action: "config.update" } })).toHaveLength(0);
+    expect(await prisma.auditLog.findMany({ where: { action: "config.update_rejected" } })).toHaveLength(1);
+  });
+
   test("validate action reports success without persisting", async () => {
     const session = await login(handlers);
     const before = fs.readFileSync(configPath(), "utf8");
