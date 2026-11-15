@@ -1,5 +1,5 @@
 import type { Probot } from "probot";
-import { ingestReviewRequest, type IngestTrigger } from "../ingestion/orchestrator.js";
+import { ingestReviewRequest, type IngestTrigger } from "../ingestion/index.js";
 
 /**
  * Pull request webhook handlers (ARCHITECTURE.md §4, §13.1).

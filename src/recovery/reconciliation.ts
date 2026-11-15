@@ -23,9 +23,9 @@ import type { Queue } from "bullmq";
 import type pino from "pino";
 import { ERROR_CODES } from "../contracts/errors.js";
 import { outboxPayloadSchema, reviewJobPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
+import { TERMINAL_REVIEW_STATES } from "../ingestion/index.js";
 import type { ReviewJobRecord, ReviewJobWithReview, ReviewRecord } from "../ingestion/ingestion.repository.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "../ingestion/ingestion.unit-of-work.js";
-import { TERMINAL_REVIEW_STATES } from "../ingestion/review-state.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
 import { AppError, ValidationError } from "../shared/errors/index.js";
 

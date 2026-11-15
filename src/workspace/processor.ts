@@ -4,8 +4,8 @@ import { UnrecoverableError, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import type pino from "pino";
 import { AgentRuntimeError } from "../agent/types.js";
+import { transitionReviewState } from "../ingestion/index.js";
 import { parseReviewJobPayload, REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../ingestion/queue.js";
-import { transitionReviewState } from "../ingestion/review-state.js";
 import {
   createReviewLogger,
   startStage,

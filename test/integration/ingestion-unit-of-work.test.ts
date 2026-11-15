@@ -1,10 +1,10 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import type { IngestionRepositories, IngestionUnitOfWork } from "../../src/ingestion/ingestion.unit-of-work.js";
 import {
   createIngestionService,
   createIngestionServices,
   type IngestReviewRequestInput,
-} from "../../src/ingestion/orchestrator.js";
+} from "../../src/ingestion/index.js";
+import type { IngestionRepositories, IngestionUnitOfWork } from "../../src/ingestion/ingestion.unit-of-work.js";
 import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
 import {
   createIngestionDependencies,

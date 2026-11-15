@@ -2,7 +2,7 @@ import type { Queue } from "bullmq";
 import type pino from "pino";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/config/review-loader.js";
-import { publishOutboxEvent } from "../../src/ingestion/outbox.js";
+import { publishOutboxEvent } from "../../src/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
 import type { ReviewJobPayload } from "../../src/ingestion/queue.js";

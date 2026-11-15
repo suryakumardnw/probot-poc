@@ -81,11 +81,6 @@ export interface OutboxService {
    * result reports what happened so the recovery loop can retry later.
    */
   publishOutboxEvent(eventId: string, queue?: Queue<ReviewJobPayload>): Promise<PublishResult>;
-  /**
-   * Re-publish pending outbox events (oldest first). Called periodically by
-   * the worker and right after startup. Never throws.
-   */
-  recoverOutbox(limit?: number, queue?: Queue<ReviewJobPayload>): Promise<OutboxRecoverySummary>;
 }
 
 export function createOutboxService(deps: OutboxServiceDependencies): OutboxService {
@@ -178,37 +173,8 @@ export function createOutboxService(deps: OutboxServiceDependencies): OutboxServ
     }
   }
 
-  async function recoverOutbox(limit = 100, queue?: Queue<ReviewJobPayload>): Promise<OutboxRecoverySummary> {
-    let pending: string[] = [];
-    try {
-      pending = await deps.repositories.outboxEvents.findPendingIds(limit);
-    } catch {
-      pending = [];
-    }
-
-    const summary: OutboxRecoverySummary = { scanned: pending.length, published: 0, discarded: 0, failed: 0 };
-    for (const eventId of pending) {
-      const result = await publishOutboxEvent(eventId, queue);
-      if (result === "published") {
-        summary.published += 1;
-      } else if (result === "discarded") {
-        summary.discarded += 1;
-      } else if (result === "failed") {
-        summary.failed += 1;
-      }
-    }
-    return summary;
-  }
-
-  return { publishOutboxEvent, recoverOutbox };
+  return { publishOutboxEvent };
 }
-
-export type OutboxRecoverySummary = {
-  scanned: number;
-  published: number;
-  discarded: number;
-  failed: number;
-};
 
 let defaultOutboxService: OutboxService | undefined;
 
@@ -226,12 +192,4 @@ export async function publishOutboxEvent(
   queue: Queue<ReviewJobPayload> = getReviewQueue(),
 ): Promise<PublishResult> {
   return getDefaultOutboxService().publishOutboxEvent(eventId, queue);
-}
-
-/**
- * Module-edge compatibility function for existing callers. PR 2.6 wires the
- * composition root and removes this wrapper.
- */
-export async function recoverOutbox(limit = 100, queue?: Queue<ReviewJobPayload>): Promise<OutboxRecoverySummary> {
-  return getDefaultOutboxService().recoverOutbox(limit, queue);
 }

@@ -6,11 +6,16 @@ import type { Queue } from "bullmq";
 import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import myProbotApp from "../src/index.js";
-import { ingestManualReview, getReviewStatus } from "../src/ingestion/orchestrator.js";
-import { publishOutboxEvent, recoverOutbox } from "../src/ingestion/outbox.js";
+import {
+  InvalidStateTransitionError,
+  getReviewStatus,
+  ingestManualReview,
+  publishOutboxEvent,
+  recoverOutbox,
+  transitionReviewState,
+} from "../src/ingestion/index.js";
 import { closeReviewQueue, getReviewQueue, getQueueConnection } from "../src/ingestion/queue.js";
 import type { ReviewJobPayload } from "../src/ingestion/queue.js";
-import { transitionReviewState, InvalidStateTransitionError } from "../src/ingestion/review-state.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { checkRedis, disconnectRedis } from "../src/lib/redis.js";
 

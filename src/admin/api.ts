@@ -40,12 +40,7 @@ import {
   type AdminErrorEnvelope,
 } from "../contracts/admin.js";
 import { ERROR_CODES } from "../contracts/errors.js";
-import {
-  getReviewStatus,
-  ingestManualReview,
-  ManualIngestionError,
-  type ReviewTypeValue,
-} from "../ingestion/orchestrator.js";
+import { getReviewStatus, ingestManualReview, ManualIngestionError, type ReviewTypeValue } from "../ingestion/index.js";
 import { summarizeKnowledgeMetrics, summarizeKnowledgeSnapshot } from "../knowledge/index.js";
 import { toErrorLogPayload, toHttpEnvelope } from "../platform/http/error-mapper.js";
 import {

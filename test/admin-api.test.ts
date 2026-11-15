@@ -10,7 +10,7 @@ import { clearSessions } from "../src/admin/session.js";
 import { loadEnv, type Env } from "../src/config/env.js";
 import { DEFAULT_CONFIG_PATH } from "../src/config/review-loader.js";
 import { ADMIN_REVIEW_STATES, adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../src/contracts/admin.js";
-import { REVIEW_STATES } from "../src/ingestion/review-state.js";
+import { REVIEW_STATES } from "../src/ingestion/index.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { disconnectRedis } from "../src/lib/redis.js";
 

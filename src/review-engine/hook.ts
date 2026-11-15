@@ -15,8 +15,8 @@
 import type pino from "pino";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
+import { transitionReviewState } from "../ingestion/index.js";
 import type { ReviewJobPayload } from "../ingestion/queue.js";
-import { transitionReviewState } from "../ingestion/review-state.js";
 import { recordProviderCall, recordReviewFindings } from "../observability/metrics.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 import { redactCredentials } from "../workspace/redact.js";

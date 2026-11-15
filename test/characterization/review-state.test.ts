@@ -5,7 +5,7 @@ import {
   REVIEW_STATES,
   isTerminalReviewState,
   transitionReviewState,
-} from "../../src/ingestion/review-state.js";
+} from "../../src/ingestion/index.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
 /**

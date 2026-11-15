@@ -1,6 +1,6 @@
 import type { Queue } from "bullmq";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
-import { publishOutboxEvent, recoverOutbox } from "../../src/ingestion/outbox.js";
+import { publishOutboxEvent, recoverOutbox } from "../../src/ingestion/index.js";
 import { closeReviewQueue, getReviewQueue, type ReviewJobPayload } from "../../src/ingestion/queue.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
 

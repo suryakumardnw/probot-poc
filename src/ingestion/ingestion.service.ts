@@ -1,102 +1,20 @@
 import type pino from "pino";
 import { loadEnv } from "../config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig, type ConfigurationSnapshot } from "../config/review-loader.js";
-import {
-  REVIEW_TYPES,
-  outboxPayloadSchema,
-  type IngestOutcome,
-  type ReviewModeValue,
-  type ReviewTriggerValue,
-  type ReviewTypeValue,
-} from "../contracts/queue.js";
+import { REVIEW_TYPES, outboxPayloadSchema, type ReviewModeValue, type ReviewTypeValue } from "../contracts/queue.js";
 import { createLogger } from "../lib/logger.js";
-import type { ReviewState, ReviewTrigger } from "./ingestion.repository.js";
+import type { IngestReviewRequestInput, IngestReviewRequestResult } from "./ingestion.types.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
-import { createOutboxService, publishOutboxEvent, type OutboxService, type PublishResult } from "./outbox.js";
-import { createIngestionRepositories, type PrismaRootClient } from "./prisma-ingestion.repository.js";
-import { createIngestionUnitOfWork, getDefaultIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
-import { closeReviewQueue } from "./queue.js";
-import { createReviewStateService, TERMINAL_REVIEW_STATES, type ReviewStateService } from "./review-state.js";
+import { publishOutboxEvent, type PublishResult } from "./outbox.service.js";
+import { getDefaultIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
+import { TERMINAL_REVIEW_STATES } from "./review-state.service.js";
 
 /**
- * Durable review ingestion (ARCHITECTURE.md §4, §12, §13.1).
- *
- * Webhook handlers stay fast: all durable work happens in a single Postgres
- * transaction (installation/repository/PR upsert, review creation, job
- * identity, superseding, webhook-delivery dedupe, outbox event), followed by
- * one best-effort BullMQ enqueue. If Redis is down, the outbox event stays
- * pending and the worker's recovery loop publishes it later.
- *
- * Idempotency (§12.3):
- * - Webhook delivery: unique WebhookDelivery.deliveryId collapses duplicate
- *   webhook deliveries (GitHub retries with the same X-GitHub-Delivery id).
- * - Review identity: unique (pullRequestId, headSha, reviewMode, reviewType,
- *   attempt) means one review per commit per type; forced manual re-reviews
- *   (`/review` command) increment `attempt` instead of deduping.
- * - Job identity: unique jobKey
- *   `installation:repository:pr:sha:mode:type[:a<attempt>]`.
- * - Outdated commits: default queue.newCommitPolicy "supersede" (§4.4) — a
- *   newer push supersedes in-flight reviews for the same PR.
- *
- * Persistence is behind repository ports and the ingestion unit of work; this
- * service receives them and never touches Prisma.
+ * Durable review intake (ARCHITECTURE.md §4, §12, §13.1). The full idempotency
+ * contract is documented on the module entry point (`index.ts`).
  */
 
 const logger: pino.Logger = createLogger(loadEnv());
-
-export type IngestTrigger = ReviewTriggerValue;
-
-export { REVIEW_TYPES };
-export type { IngestOutcome, ReviewTypeValue };
-
-export type IngestReviewRequestInput = {
-  trigger: IngestTrigger;
-  installationId: number | string;
-  repositoryId: number | string;
-  /** Full repository name, "owner/repo". */
-  repositoryName: string;
-  /** Repository owner login (organization). */
-  owner: string;
-  defaultBranch?: string | null;
-  pullRequestNumber: number;
-  headSha: string;
-  baseSha?: string | null;
-  draft: boolean;
-  /** GitHub delivery id (X-GitHub-Delivery) for webhook idempotency. */
-  deliveryId?: string;
-  /**
-   * Which review methodology runs (§4.1): standard | skill | handbook.
-   * Independent of `review.mode` (the adaptive/fixed strategy): every type
-   * runs the same engine; skill/handbook inject extra instructions.
-   */
-  reviewType?: ReviewTypeValue;
-  /**
-   * Force a brand-new review even when a review already exists for the same
-   * (PR, head SHA, review mode, review type) — used by the manual `/review`
-   * command (§12.3): the attempt counter is incremented so identity stays
-   * unique.
-   */
-  force?: boolean;
-  /** Webhook-delivery event label recorded for idempotency (§12.1). */
-  deliveryEvent?: string;
-};
-
-export type IngestReviewRequestResult = {
-  outcome: IngestOutcome;
-  reason?: string;
-  reviewId?: string;
-  jobId?: string;
-  state?: ReviewState;
-  /** Attempt counter of the created review (forced re-reviews). */
-  attempt?: number;
-};
-
-export class ManualIngestionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ManualIngestionError";
-  }
-}
 
 /** Load the effective review configuration; throws when unavailable. */
 export function loadIngestionConfig(): {
@@ -106,10 +24,6 @@ export function loadIngestionConfig(): {
   const loaded = loadReviewConfig(DEFAULT_CONFIG_PATH);
   return { config: loaded.config, snapshot: loaded.snapshot };
 }
-
-// ---------------------------------------------------------------------------
-// Core ingestion
-// ---------------------------------------------------------------------------
 
 export function buildJobKey(parts: {
   installationId: string;
@@ -138,8 +52,6 @@ export type IngestionServiceDependencies = {
 
 export interface IngestionService {
   ingestReviewRequest(input: IngestReviewRequestInput): Promise<IngestReviewRequestResult>;
-  ingestManualReview(input: ManualIngestionInput): Promise<IngestReviewRequestResult>;
-  getReviewStatus(reviewId: string): Promise<ReviewStatusReport | null>;
 }
 
 export function createIngestionService(deps: IngestionServiceDependencies): IngestionService {
@@ -398,148 +310,13 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
     };
   }
 
-  /**
-   * Manual ingestion (no auth in this milestone; §15 notes hardening for
-   * later).
-   */
-  async function ingestManualReview(input: ManualIngestionInput): Promise<IngestReviewRequestResult> {
-    const found = await deps.repositories.repositories.findActiveByFullName(input.repository);
-    if (!found) {
-      throw new ManualIngestionError(`Repository '${input.repository}' is not registered`);
-    }
-    const pullRequest = await deps.repositories.pullRequests.findByRepositoryAndNumber(
-      found.repository.id,
-      input.pullRequestNumber,
-    );
-    if (!pullRequest) {
-      throw new ManualIngestionError(`Pull request #${input.pullRequestNumber} not found on '${input.repository}'`);
-    }
-    const headSha = input.headSha ?? pullRequest.headSha;
-    if (!headSha) {
-      throw new ManualIngestionError(`No head SHA known for '${input.repository}'#${input.pullRequestNumber}`);
-    }
-
-    return ingestReviewRequest({
-      trigger: "manual",
-      reviewType: input.reviewType ?? "standard",
-      installationId: found.installation.githubInstallationId.toString(),
-      repositoryId: found.repository.githubRepositoryId.toString(),
-      repositoryName: found.repository.fullName,
-      owner: found.installation.organization,
-      defaultBranch: found.repository.defaultBranch,
-      pullRequestNumber: pullRequest.githubPrNumber,
-      headSha,
-      baseSha: pullRequest.baseSha,
-      draft: pullRequest.draft,
-    });
-  }
-
-  async function getReviewStatus(reviewId: string): Promise<ReviewStatusReport | null> {
-    const status = await deps.repositories.reviews.findStatusById(reviewId);
-    if (!status) {
-      return null;
-    }
-    return {
-      review: {
-        id: status.review.id,
-        state: status.review.state,
-        trigger: status.review.trigger,
-        reviewMode: status.review.reviewMode,
-        headSha: status.review.headSha,
-        configurationHash: status.review.configurationHash,
-        createdAt: status.review.createdAt,
-        completedAt: status.review.completedAt,
-        errorCode: status.review.errorCode,
-      },
-      job: status.job
-        ? {
-            id: status.job.id,
-            status: status.job.status,
-            attempts: status.job.attempts,
-            lastError: status.job.lastError,
-            queueJobId: status.job.queueJobId,
-            jobKey: status.job.jobKey,
-          }
-        : null,
-      transitions: status.transitions.map((transition) => ({
-        fromState: transition.fromState,
-        toState: transition.toState,
-        at: transition.createdAt,
-      })),
-    };
-  }
-
-  return { ingestReviewRequest, ingestManualReview, getReviewStatus };
-}
-
-// ---------------------------------------------------------------------------
-// Manual ingestion input
-// ---------------------------------------------------------------------------
-
-export type ManualIngestionInput = {
-  /** Full repository name, "owner/repo". */
-  repository: string;
-  pullRequestNumber: number;
-  headSha?: string;
-  /** Which review methodology runs (§4.1); defaults to "standard". */
-  reviewType?: ReviewTypeValue;
-};
-
-// ---------------------------------------------------------------------------
-// Job / review status tracking
-// ---------------------------------------------------------------------------
-
-export type ReviewStatusReport = {
-  review: {
-    id: string;
-    state: ReviewState;
-    trigger: ReviewTrigger;
-    reviewMode: string;
-    headSha: string;
-    configurationHash: string | null;
-    createdAt: Date;
-    completedAt: Date | null;
-    errorCode: string | null;
-  };
-  job: {
-    id: string;
-    status: string;
-    attempts: number;
-    lastError: string | null;
-    queueJobId: string | null;
-    jobKey: string;
-  } | null;
-  transitions: Array<{ fromState: string | null; toState: string; at: Date }>;
-};
-
-// ---------------------------------------------------------------------------
-// Temporary module-edge composition (PR 2.1 → PR 2.6)
-// ---------------------------------------------------------------------------
-
-export interface IngestionServices extends IngestionService, OutboxService, ReviewStateService {}
-
-/**
- * Build the ingestion module's services for one Prisma client.
- *
- * Temporary for PR 2.1: the bootstrap composition root replaces this factory
- * in PR 2.6. Services themselves never read the Prisma singleton.
- */
-export function createIngestionServices(prisma: PrismaRootClient): IngestionServices {
-  const repositories = createIngestionRepositories(prisma);
-  const unitOfWork = createIngestionUnitOfWork(prisma);
-  const outbox = createOutboxService({ repositories, unitOfWork });
-  const reviewState = createReviewStateService({ unitOfWork });
-  const ingestion = createIngestionService({
-    repositories,
-    unitOfWork,
-    publish: (eventId) => outbox.publishOutboxEvent(eventId),
-  });
-  return { ...ingestion, ...outbox, ...reviewState };
+  return { ingestReviewRequest };
 }
 
 let defaultIngestionService: IngestionService | undefined;
 
-function getDefaultIngestionService(): IngestionService {
+/** Internal module-edge instance shared with the read service and wrappers. */
+export function getDefaultIngestionService(): IngestionService {
   defaultIngestionService ??= createIngestionService({
     ...getDefaultIngestionDependencies(),
     publish: (eventId) => publishOutboxEvent(eventId),
@@ -548,22 +325,9 @@ function getDefaultIngestionService(): IngestionService {
 }
 
 /**
- * Module-edge compatibility functions for existing callers. PR 2.6 wires the
- * composition root and removes these wrappers.
+ * Module-edge compatibility function for existing callers. PR 2.6 wires the
+ * composition root and removes this wrapper.
  */
 export async function ingestReviewRequest(input: IngestReviewRequestInput): Promise<IngestReviewRequestResult> {
   return getDefaultIngestionService().ingestReviewRequest(input);
-}
-
-export async function ingestManualReview(input: ManualIngestionInput): Promise<IngestReviewRequestResult> {
-  return getDefaultIngestionService().ingestManualReview(input);
-}
-
-export async function getReviewStatus(reviewId: string): Promise<ReviewStatusReport | null> {
-  return getDefaultIngestionService().getReviewStatus(reviewId);
-}
-
-/** Used by the worker on shutdown and tests on teardown. */
-export async function closeIngestion(): Promise<void> {
-  await closeReviewQueue();
 }

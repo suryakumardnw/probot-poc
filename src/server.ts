@@ -8,7 +8,7 @@ import { loadEnv } from "./config/env.js";
 import { adminErrorEnvelopeSchema } from "./contracts/admin.js";
 import { ERROR_CODES } from "./contracts/errors.js";
 import { ingestOutcomeSchema } from "./contracts/queue.js";
-import { getReviewStatus, ingestManualReview, ManualIngestionError } from "./ingestion/orchestrator.js";
+import { getReviewStatus, ingestManualReview, ManualIngestionError } from "./ingestion/index.js";
 import { checkDependencies } from "./lib/health.js";
 import { createLogger } from "./lib/logger.js";
 import { getPrisma, disconnectPrisma } from "./lib/prisma.js";
