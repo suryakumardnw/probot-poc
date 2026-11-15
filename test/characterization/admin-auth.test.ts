@@ -12,7 +12,9 @@ import { loadEnv, type Env } from "../../src/config/env.js";
 import { createReviewConfigStore } from "../../src/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH } from "../../src/config/review-loader.js";
 import { adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../../src/contracts/admin.js";
-import { createIngestionServices } from "../../src/ingestion/index.js";
+import { createReviewQueue } from "../../src/ingestion/queue.js";
+import { testEnv } from "../helpers/db.js";
+import { createTestIngestion } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
 /**
@@ -26,6 +28,8 @@ import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
 process.env.MODEL_BASE_URL ??= "http://localhost:8000";
 process.env.MODEL_NAME ??= "glm-4.7-flash";
+
+const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 
 const BASE_ENV = {
   NODE_ENV: "test",
@@ -141,7 +145,7 @@ function makeHandler(env: Env, configPath: string): Handler {
   const handler = createAdminApi({
     env,
     audit: createPrismaAuditRepository(prisma, logger),
-    ingestion: createIngestionServices(prisma, config),
+    ingestion: createTestIngestion({ queue: reviewQueue.queue, config }).services,
     config,
     logger,
   });
@@ -220,6 +224,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  await reviewQueue.close();
   await cleanDatabase();
   await disconnectDatabase();
 });

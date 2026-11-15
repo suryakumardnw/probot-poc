@@ -4,6 +4,7 @@ import {
   getFindingsForReview,
   persistReviewFindings,
   supersedeFindingsForReview,
+  createFindingsDependencies,
 } from "../../src/findings/index.js";
 import type { Finding } from "../../src/review-engine/index.js";
 import {
@@ -30,6 +31,7 @@ import {
 
 const config = makeReviewConfig();
 let workspace: WorkspaceFixture;
+const findingsDependencies = createFindingsDependencies(prisma);
 
 function persist(
   chain: SeededReviewChain,
@@ -44,6 +46,7 @@ function persist(
     findings,
     uncertainFindings,
     config,
+    dependencies: findingsDependencies,
   });
 }
 
@@ -102,7 +105,7 @@ describe("finding persistence (§7.1, §13.1)", () => {
     });
     expect(result.transitions).toBe(1);
 
-    const rows = await getFindingsForReview(chain.reviewId);
+    const rows = await getFindingsForReview(chain.reviewId, findingsDependencies);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.fingerprint).toMatch(/^fp1:[0-9a-f]{64}$/);
     expect(rows[0]!.evidence).toEqual(finding.evidence);
@@ -122,7 +125,7 @@ describe("finding persistence (§7.1, §13.1)", () => {
     expect(result.stored).toHaveLength(1);
     expect(result.stored[0]!.title).toBe("Higher confidence");
     expect(result.transitions).toBe(1);
-    const rows = await getFindingsForReview(chain.reviewId);
+    const rows = await getFindingsForReview(chain.reviewId, findingsDependencies);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.title).toBe("Higher confidence");
   });
@@ -173,7 +176,7 @@ describe("finding persistence (§7.1, §13.1)", () => {
     const second = await seedReviewChain({ prefix: "findings-supersede-target" });
     await persist(first, [brokenFunctionFinding()]);
 
-    const count = await supersedeFindingsForReview(first.reviewId, second.reviewId);
+    const count = await supersedeFindingsForReview(first.reviewId, second.reviewId, findingsDependencies);
     expect(count).toBe(1);
 
     const row = await prisma.finding.findFirstOrThrow({ where: { reviewId: first.reviewId } });
@@ -186,7 +189,7 @@ describe("finding persistence (§7.1, §13.1)", () => {
     expect(transition.reason).toContain(second.reviewId);
 
     // Superseding again is a no-op: only active findings are touched.
-    expect(await supersedeFindingsForReview(first.reviewId, second.reviewId)).toBe(0);
+    expect(await supersedeFindingsForReview(first.reviewId, second.reviewId, findingsDependencies)).toBe(0);
   });
 
   test("a failed persistence transaction leaves no partial finding or transition rows", async () => {
@@ -224,7 +227,7 @@ describe("finding persistence (§7.1, §13.1)", () => {
 
     await expect(persist(chain, [wouldSucceed, conflict])).rejects.toThrow();
 
-    const rows = await getFindingsForReview(chain.reviewId);
+    const rows = await getFindingsForReview(chain.reviewId, findingsDependencies);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.title).toBe("Existing row");
     expect(rows.some((row) => row.title === wouldSucceed.title)).toBe(false);

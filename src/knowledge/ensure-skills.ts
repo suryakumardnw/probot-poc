@@ -31,9 +31,9 @@
  */
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type pino from "pino";
 import type { ReviewConfig } from "../config/review-schema.js";
 import { knowledgeManifestSchema, type GitHubTreeEntry, type KnowledgeManifest } from "../contracts/knowledge.js";
+import type { Logger } from "../ports/logger.js";
 import {
   createDefaultKnowledgeFetcher,
   fetchFileContent,
@@ -222,7 +222,7 @@ async function fetchSource(
   fetcher: KnowledgeFetcher,
   spec: KnowledgeSourceSpec,
   timeoutMs: number,
-  logger: pino.Logger,
+  logger: Logger,
 ): Promise<FetchedSource> {
   const { owner, repo } = parseOwnerRepo(spec.repo);
   const pinnedSha = await resolveCommitSha(fetcher, owner, repo, spec.ref, timeoutMs);
@@ -355,7 +355,7 @@ async function ensureSource(
   spec: KnowledgeSourceSpec,
   fetcher: KnowledgeFetcher,
   timeoutMs: number,
-  logger: pino.Logger,
+  logger: Logger,
 ): Promise<KnowledgeSourceSnapshot> {
   // Branch names are case-sensitive on GitHub; only SHA comparisons are
   // case-insensitive. Never lowercase a ref before resolving it.
@@ -487,7 +487,7 @@ let inflightKey = "";
  */
 export async function ensureKnowledgeSources(
   config: ReviewConfig,
-  logger: pino.Logger,
+  logger: Logger,
   options: EnsureKnowledgeOptions = {},
 ): Promise<KnowledgeSnapshot> {
   const specs = knowledgeSpecsFromConfig(config);

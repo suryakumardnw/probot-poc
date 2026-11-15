@@ -130,7 +130,7 @@ export async function withRetry<T>(
   label: string,
   fn: () => Promise<T>,
   options: RetryOptions,
-  logger?: { warn: (obj: unknown, msg: string) => void },
+  logger?: { warn: (obj: object, msg: string) => void },
 ): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
@@ -218,7 +218,7 @@ export interface PublishReviewInput {
   /** Header metadata for the review body (reviewer, source, date). */
   meta?: ReviewBodyMeta;
   retry?: Partial<RetryOptions>;
-  logger?: { info: (obj: unknown, msg: string) => void; warn: (obj: unknown, msg: string) => void };
+  logger?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
 }
 
 function splitFullName(repositoryFullName: string): { owner: string; repo: string } {

@@ -1,11 +1,7 @@
 import type { ReviewState } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import {
-  InvalidStateTransitionError,
-  REVIEW_STATES,
-  isTerminalReviewState,
-  transitionReviewState,
-} from "../../src/ingestion/index.js";
+import { InvalidStateTransitionError, REVIEW_STATES, isTerminalReviewState } from "../../src/ingestion/index.js";
+import { createTestReviewState } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
 /**
@@ -16,6 +12,8 @@ import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
  * exercised through the exported `transitionReviewState` boundary and verified
  * against the persisted Review row and ReviewStateTransition history.
  */
+
+const transitionReviewState = createTestReviewState().transitionReviewState;
 
 const ALLOWED: Readonly<Record<ReviewState, readonly ReviewState[]>> = {
   queued: ["preparing", "failed", "cancelled", "superseded"],

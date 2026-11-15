@@ -9,8 +9,8 @@ import { runBenchmarkSuite } from "../src/eval/runner.js";
 import { scoreCase, aggregateScores, percentile, DEFAULT_LINE_TOLERANCE } from "../src/eval/scoring.js";
 import { loadBenchmarkSuites } from "../src/eval/suite-loader.js";
 import type { BenchmarkCase, BenchmarkSuite, CaseScore } from "../src/eval/types.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import type { Finding, RunReviewOutput } from "../src/review-engine/types.js";
+import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 /**
  * Ticket 12 unit/integration tests: benchmark scoring math, benchmark runner
@@ -368,12 +368,11 @@ describe("runBenchmarkSuite", () => {
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
 describe("evaluation persistence", () => {
-  const prisma = getPrisma();
   const createdIds: string[] = [];
 
   afterAll(async () => {
     await prisma.evaluationRun.deleteMany({ where: { id: { in: createdIds } } }).catch(() => {});
-    await disconnectPrisma();
+    await disconnectDatabase();
   });
 
   beforeEach(() => {

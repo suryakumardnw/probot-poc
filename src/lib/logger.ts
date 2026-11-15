@@ -1,5 +1,6 @@
 import pino from "pino";
 import type { Env } from "../config/env.js";
+import type { LogContext, Logger } from "../ports/logger.js";
 
 /**
  * Structured logging via Pino.
@@ -7,6 +8,10 @@ import type { Env } from "../config/env.js";
  * Security: secrets (tokens, private keys, credentials) must never be
  * logged. The redact list catches common key names defensively, and
  * connection strings are only ever logged in sanitized form.
+ *
+ * This adapter implements the `Logger` port. Entry points additionally use
+ * `fatal` and `flush`, which remain platform concerns and are not part of the
+ * module-facing port.
  */
 
 const REDACTED = "[REDACTED]";
@@ -33,7 +38,13 @@ export const logRedactPaths = [
   "REDIS_URL",
 ];
 
-export function createLogger(env: Env): pino.Logger {
+export interface PlatformLogger extends Logger {
+  fatal(message: string): void;
+  fatal(obj: LogContext, message: string): void;
+  flush?(): void;
+}
+
+export function createLogger(env: Env): PlatformLogger {
   return pino({
     level: env.LOG_LEVEL,
     redact: {

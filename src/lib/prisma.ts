@@ -4,22 +4,20 @@ import type { Env } from "../config/env.js";
 /**
  * PostgreSQL connectivity via Prisma.
  *
- * A single PrismaClient instance is shared per process. Prisma connects
+ * This module is a factory only: bootstrap constructs exactly one client per
+ * process and injects it into repositories and services. Prisma connects
  * lazily on first query, so a missing/unreachable Postgres does NOT crash
  * startup — callers use `checkPrisma()` (readiness endpoint) and handle the
  * failure themselves.
  */
 
-let prismaClient: PrismaClient | undefined;
+export type PrismaConnection = Pick<Env, "DATABASE_URL">;
 
-export function getPrisma(env?: Env): PrismaClient {
-  if (!prismaClient) {
-    prismaClient = new PrismaClient({
-      datasourceUrl: env?.DATABASE_URL,
-      log: [], // We route errors through our own logger; never log the URL.
-    });
-  }
-  return prismaClient;
+export function createPrisma(env: PrismaConnection): PrismaClient {
+  return new PrismaClient({
+    datasourceUrl: env.DATABASE_URL,
+    log: [], // We route errors through our own logger; never log the URL.
+  });
 }
 
 export type DependencyCheck = {
@@ -29,10 +27,10 @@ export type DependencyCheck = {
 };
 
 /** Check PostgreSQL connectivity. Never throws. */
-export async function checkPrisma(): Promise<DependencyCheck> {
+export async function checkPrisma(prisma: PrismaClient): Promise<DependencyCheck> {
   const started = Date.now();
   try {
-    await getPrisma().$queryRaw`SELECT 1`;
+    await prisma.$queryRaw`SELECT 1`;
     return { status: "ok", latencyMs: Date.now() - started };
   } catch (error) {
     return {
@@ -44,9 +42,9 @@ export async function checkPrisma(): Promise<DependencyCheck> {
 }
 
 /** Disconnect on shutdown. Never throws. */
-export async function disconnectPrisma(): Promise<void> {
+export async function disconnectPrisma(prisma: PrismaClient): Promise<void> {
   try {
-    await prismaClient?.$disconnect();
+    await prisma.$disconnect();
   } catch {
     // Ignore shutdown errors.
   }

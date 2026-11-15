@@ -1,15 +1,11 @@
-import type { Queue } from "bullmq";
-import type pino from "pino";
-import { loadEnv } from "../config/env.js";
 import { ERROR_CODES } from "../contracts/errors.js";
 import { outboxPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
-import { createLogger } from "../lib/logger.js";
+import type { Logger } from "../ports/logger.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";
 import { AppError, ValidationError } from "../shared/errors/index.js";
 import type { OutboxEventRecord } from "./ingestion.repository.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
-import { getDefaultIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
-import { getReviewQueue } from "./queue.js";
+import type { ReviewQueueWriter } from "./queue.js";
 
 /**
  * Transactional outbox publisher (ARCHITECTURE.md §12.2).
@@ -27,8 +23,6 @@ import { getReviewQueue } from "./queue.js";
  */
 
 export type PublishResult = "published" | "discarded" | "skipped" | "failed";
-
-const logger: pino.Logger = createLogger(loadEnv());
 
 /**
  * Parse the stored outbox payload into the queue contract.
@@ -77,6 +71,9 @@ export type OutboxServiceDependencies = {
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
   config: ReviewConfigStore;
+  /** Durable BullMQ queue bound by the composition root. */
+  queue: ReviewQueueWriter;
+  logger: Logger;
 };
 
 export interface OutboxService {
@@ -84,7 +81,7 @@ export interface OutboxService {
    * Publish a single outbox event to the BullMQ queue. Never throws: the
    * result reports what happened so the recovery loop can retry later.
    */
-  publishOutboxEvent(eventId: string, queue?: Queue<ReviewJobPayload>): Promise<PublishResult>;
+  publishOutboxEvent(eventId: string): Promise<PublishResult>;
 }
 
 export function createOutboxService(deps: OutboxServiceDependencies): OutboxService {
@@ -92,10 +89,7 @@ export function createOutboxService(deps: OutboxServiceDependencies): OutboxServ
    * Publish a single outbox event to the BullMQ queue. Never throws: the
    * result reports what happened so the recovery loop can retry later.
    */
-  async function publishOutboxEvent(
-    eventId: string,
-    queue: Queue<ReviewJobPayload> = getReviewQueue(),
-  ): Promise<PublishResult> {
+  async function publishOutboxEvent(eventId: string): Promise<PublishResult> {
     try {
       const event = await deps.repositories.outboxEvents.findByIdWithJob(eventId);
       if (!event || event.status !== "pending") {
@@ -122,7 +116,7 @@ export function createOutboxService(deps: OutboxServiceDependencies): OutboxServ
 
       const queueJob = await (async () => {
         try {
-          return await queue.add("review", payload, {
+          return await deps.queue.add("review", payload, {
             jobId: job.id, // idempotent: same ReviewJob.id never enqueued twice
             attempts: retry.attempts,
             backoff: retry.backoff,
@@ -159,7 +153,10 @@ export function createOutboxService(deps: OutboxServiceDependencies): OutboxServ
         try {
           const discarded = await deps.repositories.outboxEvents.discardIfPending(eventId, message);
           if (discarded) {
-            logger.error({ err: message, code, outboxEventId: eventId }, "Outbox payload invalid; event discarded");
+            deps.logger.error(
+              { err: message, code, outboxEventId: eventId },
+              "Outbox payload invalid; event discarded",
+            );
             return "discarded";
           }
         } catch {
@@ -172,28 +169,10 @@ export function createOutboxService(deps: OutboxServiceDependencies): OutboxServ
       } catch {
         // Postgres may be unreachable too; the event stays pending.
       }
-      logger.warn({ err: message, code, outboxEventId: eventId }, "Outbox publish failed; event stays pending");
+      deps.logger.warn({ err: message, code, outboxEventId: eventId }, "Outbox publish failed; event stays pending");
       return "failed";
     }
   }
 
   return { publishOutboxEvent };
-}
-
-let defaultOutboxService: OutboxService | undefined;
-
-function getDefaultOutboxService(): OutboxService {
-  defaultOutboxService ??= createOutboxService(getDefaultIngestionDependencies());
-  return defaultOutboxService;
-}
-
-/**
- * Module-edge compatibility function for existing callers. PR 2.6 wires the
- * composition root and removes this wrapper.
- */
-export async function publishOutboxEvent(
-  eventId: string,
-  queue: Queue<ReviewJobPayload> = getReviewQueue(),
-): Promise<PublishResult> {
-  return getDefaultOutboxService().publishOutboxEvent(eventId, queue);
 }

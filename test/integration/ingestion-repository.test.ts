@@ -2,8 +2,8 @@ import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { outboxPayloadSchema } from "../../src/contracts/queue.js";
 import type { CreateReviewInput, ReviewJobRecord, ReviewRecord } from "../../src/ingestion/ingestion.repository.js";
 import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
-import { getPrisma, disconnectPrisma } from "../../src/lib/prisma.js";
 import { cleanDatabase } from "../characterization/support.js";
+import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 /**
  * Integration: ingestion repositories against real PostgreSQL.
@@ -17,7 +17,6 @@ process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/review
 process.env.REDIS_URL ??= "redis://localhost:6379";
 process.env.MODEL_BASE_URL ??= "http://localhost:8000";
 
-const prisma = getPrisma();
 const repositories = createIngestionRepositories(prisma);
 
 const INSTALLATION_ID = 9_300_001n;
@@ -98,7 +97,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await cleanDatabase();
-  await disconnectPrisma();
+  await disconnectDatabase();
 });
 
 describe("installation, repository, and pull request repositories", () => {

@@ -1,6 +1,6 @@
+import type { Clock } from "../ports/clock.js";
 import { REVIEW_STATES, type ReviewState, type ReviewStatePatch } from "./ingestion.repository.js";
 import type { IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
-import { getDefaultIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
 
 /**
  * Review lifecycle state machine (ARCHITECTURE.md §4.3).
@@ -81,6 +81,7 @@ export interface ReviewStateService {
 
 export type ReviewStateServiceDependencies = {
   unitOfWork: IngestionUnitOfWork;
+  clock: Clock;
 };
 
 export function createReviewStateService(deps: ReviewStateServiceDependencies): ReviewStateService {
@@ -104,12 +105,14 @@ export function createReviewStateService(deps: ReviewStateServiceDependencies): 
 
         const patch: ReviewStatePatch = {
           state: toState,
-          ...(toState === "completed" || toState === "completed_with_warnings" ? { completedAt: new Date() } : {}),
+          ...(toState === "completed" || toState === "completed_with_warnings"
+            ? { completedAt: deps.clock.now() }
+            : {}),
           ...(toState === "failed"
             ? { errorCode: options.errorCode ?? "REVIEW_FAILED", errorMessage: options.errorMessage ?? null }
             : {}),
           ...(toState === "superseded" && options.supersededByReviewId
-            ? { supersededByReviewId: options.supersededByReviewId, supersededAt: new Date() }
+            ? { supersededByReviewId: options.supersededByReviewId, supersededAt: deps.clock.now() }
             : {}),
         };
 
@@ -124,26 +127,4 @@ export function createReviewStateService(deps: ReviewStateServiceDependencies): 
       });
     },
   };
-}
-
-let defaultReviewStateService: ReviewStateService | undefined;
-
-function getDefaultReviewStateService(): ReviewStateService {
-  defaultReviewStateService ??= createReviewStateService({
-    unitOfWork: getDefaultIngestionDependencies().unitOfWork,
-  });
-  return defaultReviewStateService;
-}
-
-/**
- * Module-edge compatibility function for existing callers. The implementation
- * receives its unit of work; PR 2.6 wires the composition root and removes this
- * wrapper.
- */
-export async function transitionReviewState(
-  reviewId: string,
-  toState: ReviewState,
-  options: TransitionOptions = {},
-): Promise<{ id: string; state: ReviewState }> {
-  return getDefaultReviewStateService().transitionReviewState(reviewId, toState, options);
 }

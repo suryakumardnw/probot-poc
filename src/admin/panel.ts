@@ -69,9 +69,9 @@ export interface AdminPanelDeps {
   audit: AuditRepository;
   config: ReviewConfigStore;
   logger: {
-    info: (obj: unknown, msg: string) => void;
-    warn: (obj: unknown, msg: string) => void;
-    error: (obj: unknown, msg: string) => void;
+    info: (obj: object, msg: string) => void;
+    warn: (obj: object, msg: string) => void;
+    error: (obj: object, msg: string) => void;
   };
 }
 

@@ -1,9 +1,8 @@
 import fs from "node:fs";
 import { UnrecoverableError, Worker } from "bullmq";
-import { Redis } from "ioredis";
-import type pino from "pino";
+import type { Redis } from "ioredis";
 import { AgentRuntimeError } from "../agent/types.js";
-import { transitionReviewState, type IngestionRepositories } from "../ingestion/index.js";
+import type { IngestionRepositories, ReviewStateService } from "../ingestion/index.js";
 import { parseReviewJobPayload, REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../ingestion/queue.js";
 import {
   createReviewLogger,
@@ -15,6 +14,7 @@ import { getMetricsRegistry } from "../observability/metrics.js";
 import { classifyFailure, retryPolicyFor, type RetryPolicyConfig } from "../observability/retry.js";
 import { DEFAULT_RETRY_POLICY_CONFIG } from "../observability/retry.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
+import type { Logger } from "../ports/logger.js";
 import { AppError } from "../shared/errors/index.js";
 import { AppInstallationTokenProvider, NullTokenProvider, type InstallationTokenProvider } from "./credentials.js";
 import { redactCredentials } from "./redact.js";
@@ -40,7 +40,9 @@ export interface ProcessReviewJobDeps {
   /** Ingestion repository bundle; the worker never names a Prisma client. */
   repositories: IngestionRepositories;
   service: ReviewWorkspaceService;
-  logger: pino.Logger;
+  logger: Logger;
+  /** Review-state transition boundary (durable, injected by bootstrap). */
+  transitionReviewState: ReviewStateService["transitionReviewState"];
   concurrency: number;
   /**
    * Hook for the agent runtime (ticket 07): invoked with the prepared
@@ -92,8 +94,8 @@ export async function processReviewJob(
   let span: ReturnType<typeof startSpan> | undefined;
   let activeStage: StageTracker | undefined;
   try {
-    await transitionReviewState(job.reviewId, "preparing");
-    await transitionReviewState(job.reviewId, "cloning");
+    await deps.transitionReviewState(job.reviewId, "preparing");
+    await deps.transitionReviewState(job.reviewId, "cloning");
 
     const correlation: ReviewCorrelation = {
       review_id: job.reviewId,
@@ -132,7 +134,7 @@ export async function processReviewJob(
     cloneStage.end();
     activeStage = undefined;
 
-    await transitionReviewState(job.reviewId, "analyzing");
+    await deps.transitionReviewState(job.reviewId, "analyzing");
 
     // Ticket 07: the review engine runs inside the hook (workspace is still
     // present; it is disposed afterwards per repository.workspace config).
@@ -196,7 +198,7 @@ export async function processReviewJob(
       /* cleanup is best-effort */
     });
     try {
-      await transitionReviewState(job.reviewId, "failed", {
+      await deps.transitionReviewState(job.reviewId, "failed", {
         errorCode: error instanceof ReviewRetrievalError ? error.code : "retrieval_failed",
         errorMessage: message.slice(0, 500),
       });
@@ -227,12 +229,14 @@ async function failMalformedReviewJob(deps: ProcessReviewJobDeps, jobId: string,
       return;
     }
     await deps.repositories.reviewJobs.update(jobId, { status: "failed", lastError: reason });
-    await transitionReviewState(row.reviewId, "failed", {
-      errorCode: error.code,
-      errorMessage: reason,
-    }).catch(() => {
-      // The review may already be terminal (e.g. superseded concurrently).
-    });
+    await deps
+      .transitionReviewState(row.reviewId, "failed", {
+        errorCode: error.code,
+        errorMessage: reason,
+      })
+      .catch(() => {
+        // The review may already be terminal (e.g. superseded concurrently).
+      });
   } catch (failure) {
     deps.logger.warn(
       {
@@ -245,19 +249,11 @@ async function failMalformedReviewJob(deps: ProcessReviewJobDeps, jobId: string,
 }
 
 /**
- * Start the BullMQ review worker. Connection retries are unbounded for the
- * worker (long-lived process), unlike the outbox publisher's fast-fail
- * connection.
+ * Start the BullMQ review worker on a connection created by the composition
+ * root. The connection is configured for blocking commands
+ * (`maxRetriesPerRequest: null`); it is closed separately on shutdown.
  */
-export function startReviewWorker(redisUrl: string, deps: ProcessReviewJobDeps): Worker<ReviewJobPayload> {
-  const connection = new Redis(redisUrl, {
-    // Workers need an offline queue: a brief Redis outage must not kill
-    // in-flight job processing.
-    maxRetriesPerRequest: null,
-  });
-  connection.on("error", () => {
-    // Swallow connection errors; BullMQ surfaces stalled/retry state itself.
-  });
+export function startReviewWorker(connection: Redis, deps: ProcessReviewJobDeps): Worker<ReviewJobPayload> {
   const worker = new Worker<ReviewJobPayload>(
     REVIEW_QUEUE_NAME,
     async (job) => {
@@ -289,12 +285,6 @@ export function startReviewWorker(redisUrl: string, deps: ProcessReviewJobDeps):
 
 export async function stopReviewWorker(worker: Worker<ReviewJobPayload>): Promise<void> {
   await worker.close();
-  const connection = (worker as unknown as { connection?: Redis }).connection;
-  try {
-    await connection?.quit();
-  } catch {
-    // Already disconnected.
-  }
 }
 
 /**

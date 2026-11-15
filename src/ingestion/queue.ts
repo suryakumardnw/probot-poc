@@ -16,6 +16,9 @@ import { ValidationError } from "../shared/errors/index.js";
  * time. The BullMQ jobId is the ReviewJob.id, which makes enqueue attempts
  * idempotent — re-enqueueing the same outbox event after a crash cannot
  * create a duplicate job.
+ *
+ * This module is a factory only: bootstrap constructs the queue once and
+ * injects it into the ingestion outbox service.
  */
 
 export const REVIEW_QUEUE_NAME = "review-jobs";
@@ -37,8 +40,6 @@ export type {
   ReviewTriggerValue,
   ReviewTypeValue,
 } from "../contracts/queue.js";
-
-let queue: Queue<ReviewJobPayload> | undefined;
 
 /**
  * Parse a BullMQ job's `data` at the worker boundary.
@@ -77,35 +78,70 @@ function createQueueConnection(redisUrl: string): Redis {
   });
 }
 
-let connection: Redis | undefined;
-
-export function getReviewQueue(redisUrl?: string): Queue<ReviewJobPayload> {
-  if (!queue) {
-    connection = createQueueConnection(redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:6379");
-    connection.on("error", () => {
-      // Swallow connection errors: callers observe enqueue results and the
-      // outbox recovery loop retries. Never crash the process.
-    });
-    queue = new Queue<ReviewJobPayload>(REVIEW_QUEUE_NAME, { connection });
-  }
-  return queue;
+/**
+ * A ready-to-use review queue plus its dedicated fast-fail connection.
+ * `close()` shuts both down; bootstrap wires it into graceful shutdown.
+ */
+export interface ReviewQueue {
+  queue: Queue<ReviewJobPayload>;
+  connection: Redis;
+  close(): Promise<void>;
 }
 
-export function getQueueConnection(): Redis | undefined {
+/**
+ * The subset of the BullMQ queue the outbox publisher uses. Keeping it narrow
+ * lets tests inject a failing/fake writer without constructing Redis.
+ */
+export interface ReviewQueueWriter {
+  add(
+    name: string,
+    data: ReviewJobPayload,
+    opts: {
+      jobId: string;
+      attempts: number;
+      backoff: { type: "exponential" | "fixed"; delay: number };
+      removeOnComplete: number;
+      removeOnFail: number;
+    },
+  ): Promise<{ id?: string | undefined }>;
+}
+
+export function createReviewQueue(redisUrl: string): ReviewQueue {
+  const connection = createQueueConnection(redisUrl);
+  connection.on("error", () => {
+    // Swallow connection errors: callers observe enqueue results and the
+    // outbox recovery loop retries. Never crash the process.
+  });
+  const queue = new Queue<ReviewJobPayload>(REVIEW_QUEUE_NAME, { connection });
+  return {
+    queue,
+    connection,
+    async close(): Promise<void> {
+      try {
+        await queue.close();
+      } catch {
+        // Already closed.
+      }
+      try {
+        await connection.quit();
+      } catch {
+        // Already disconnected.
+      }
+    },
+  };
+}
+
+/**
+ * Dedicated BullMQ worker connection. Workers need an offline queue and
+ * unbounded command retries so a brief Redis outage does not kill in-flight
+ * job processing.
+ */
+export function createWorkerConnection(redisUrl: string): Redis {
+  const connection = new Redis(redisUrl, {
+    maxRetriesPerRequest: null,
+  });
+  connection.on("error", () => {
+    // Swallow connection errors; BullMQ surfaces stalled/retry state itself.
+  });
   return connection;
-}
-
-export async function closeReviewQueue(): Promise<void> {
-  try {
-    await queue?.close();
-  } catch {
-    // Already closed.
-  }
-  queue = undefined;
-  try {
-    await connection?.quit();
-  } catch {
-    // Already disconnected.
-  }
-  connection = undefined;
 }

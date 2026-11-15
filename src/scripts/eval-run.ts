@@ -21,8 +21,7 @@ import { runBenchmarkSuite } from "../eval/runner.js";
 import { loadBenchmarkSuites } from "../eval/suite-loader.js";
 import type { BenchmarkSuite } from "../eval/types.js";
 import { createLogger } from "../lib/logger.js";
-import { getPrisma } from "../lib/prisma.js";
-import { disconnectPrisma } from "../lib/prisma.js";
+import { createPrisma, disconnectPrisma } from "../lib/prisma.js";
 
 const BENCHMARKS_DIR = path.join(process.cwd(), "benchmarks");
 
@@ -64,56 +63,56 @@ async function main(): Promise<void> {
   const runtime = createAgentRuntime(config);
   const env = loadEnv();
   const logger = createLogger(env);
+  const prisma = createPrisma(env);
 
-  let allPassed = true;
-  for (const suite of suites) {
-    const run = await runBenchmarkSuite(suite, {
-      runtime,
-      config,
-      qualityThreshold,
-    });
-    printSuiteReport(suite, run);
-    if (!run.score.passed) {
-      allPassed = false;
-    }
-
-    // Persistence is best-effort: an offline run still prints its report.
-    try {
-      const prisma = getPrisma(env);
-      const persisted = await persistEvaluationRun(
-        prisma,
-        run,
-        {
-          model: config.provider.model,
-          provider: config.provider.type,
-          runtime: config.agent.runtime.type,
-          configurationHash: configurationHashFrom(config),
-          promptVersion: null,
-        },
+  try {
+    let allPassed = true;
+    for (const suite of suites) {
+      const run = await runBenchmarkSuite(suite, {
+        runtime,
+        config,
         qualityThreshold,
-      );
-      console.log(`  persisted: EvaluationRun ${persisted.id} (passed=${persisted.passed})`);
-    } catch (error) {
-      logger.warn(
-        { err: error instanceof Error ? error.message : String(error) },
-        "EvaluationRun persistence skipped (PostgreSQL unreachable?)",
-      );
-    }
-  }
+      });
+      printSuiteReport(suite, run);
+      if (!run.score.passed) {
+        allPassed = false;
+      }
 
-  console.log(
-    allPassed
-      ? `\nQUALITY GATE: PASS (threshold ${qualityThreshold})`
-      : `\nQUALITY GATE: FAIL (threshold ${qualityThreshold})`,
-  );
-  process.exitCode = allPassed ? 0 : 1;
+      // Persistence is best-effort: an offline run still prints its report.
+      try {
+        const persisted = await persistEvaluationRun(
+          prisma,
+          run,
+          {
+            model: config.provider.model,
+            provider: config.provider.type,
+            runtime: config.agent.runtime.type,
+            configurationHash: configurationHashFrom(config),
+            promptVersion: null,
+          },
+          qualityThreshold,
+        );
+        console.log(`  persisted: EvaluationRun ${persisted.id} (passed=${persisted.passed})`);
+      } catch (error) {
+        logger.warn(
+          { err: error instanceof Error ? error.message : String(error) },
+          "EvaluationRun persistence skipped (PostgreSQL unreachable?)",
+        );
+      }
+    }
+
+    console.log(
+      allPassed
+        ? `\nQUALITY GATE: PASS (threshold ${qualityThreshold})`
+        : `\nQUALITY GATE: FAIL (threshold ${qualityThreshold})`,
+    );
+    process.exitCode = allPassed ? 0 : 1;
+  } finally {
+    await disconnectPrisma(prisma);
+  }
 }
 
-main()
-  .catch((error: unknown) => {
-    console.error(`eval:run failed: ${error instanceof Error ? error.message : String(error)}`);
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    void disconnectPrisma();
-  });
+main().catch((error: unknown) => {
+  console.error(`eval:run failed: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+});

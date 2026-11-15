@@ -1,5 +1,3 @@
-import { createReviewConfigStore } from "../config/review-config-store.js";
-import { getPrisma } from "../lib/prisma.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 import { createIngestionRepositories, type PrismaRootClient } from "./prisma-ingestion.repository.js";
@@ -11,9 +9,8 @@ import { createIngestionRepositories, type PrismaRootClient } from "./prisma-ing
  * semantics are Prisma's defaults: this adapter only builds a repository
  * bundle bound to the transaction client.
  *
- * The default-dependency helpers below are the temporary module-edge wiring for
- * PR 2.1. They are the only place in this module that reads the Prisma
- * singleton; PR 2.6 replaces them with the bootstrap composition root.
+ * Factories take every dependency explicitly. Bootstrap constructs the client
+ * once and passes it here; there is no module-edge singleton.
  */
 
 export function createIngestionUnitOfWork(prisma: PrismaRootClient): IngestionUnitOfWork {
@@ -30,22 +27,14 @@ export type IngestionServiceDependencies = {
   config: ReviewConfigStore;
 };
 
-/** Build the service dependencies for one Prisma client. */
+/** Build the service dependencies for one Prisma client and config store. */
 export function createIngestionDependencies(
-  prisma: PrismaRootClient = getPrisma(),
-  config: ReviewConfigStore = createReviewConfigStore(),
+  prisma: PrismaRootClient,
+  config: ReviewConfigStore,
 ): IngestionServiceDependencies {
   return {
     repositories: createIngestionRepositories(prisma),
     unitOfWork: createIngestionUnitOfWork(prisma),
     config,
   };
-}
-
-let defaultDependencies: IngestionServiceDependencies | undefined;
-
-/** Temporary lazy singleton wiring used by the exported module-edge functions. */
-export function getDefaultIngestionDependencies(): IngestionServiceDependencies {
-  defaultDependencies ??= createIngestionDependencies(getPrisma());
-  return defaultDependencies;
 }

@@ -20,13 +20,13 @@
  */
 
 import type { Queue } from "bullmq";
-import type pino from "pino";
 import { ERROR_CODES } from "../contracts/errors.js";
 import { outboxPayloadSchema, reviewJobPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
 import { TERMINAL_REVIEW_STATES } from "../ingestion/index.js";
 import type { ReviewJobRecord, ReviewJobWithReview, ReviewRecord } from "../ingestion/ingestion.repository.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "../ingestion/ingestion.unit-of-work.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
+import type { Logger } from "../ports/logger.js";
 import { AppError, ValidationError } from "../shared/errors/index.js";
 
 export type RecoveryPolicy = "requeue" | "fail";
@@ -37,7 +37,7 @@ export type ReconciliationDependencies = {
 };
 
 export interface ReconciliationDeps extends ReconciliationDependencies {
-  logger: pino.Logger;
+  logger: Logger;
   /** BullMQ queue used to re-enqueue recovered reviews. */
   queue?: Queue<ReviewJobPayload>;
   /** Recovery behavior for stale reviews (§17.3 step 7). Default "requeue". */

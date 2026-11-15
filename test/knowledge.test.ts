@@ -30,8 +30,8 @@ import {
   KnowledgeSnapshotError,
 } from "../src/knowledge/index.js";
 import type { KnowledgeFetcher } from "../src/knowledge/types.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { resolveReviewInjection, selectHandbookSections } from "../src/review-engine/injection.js";
+import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
@@ -133,7 +133,7 @@ beforeEach(() => {
 });
 
 afterAll(async () => {
-  await disconnectPrisma();
+  await disconnectDatabase();
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -234,7 +234,7 @@ describe("ensureKnowledgeSources", () => {
             return {};
           },
         },
-      } as unknown as ReturnType<typeof getPrisma>,
+      } as unknown as ReturnType<typeof import("../src/lib/prisma.js").createPrisma>,
       logger: fakeLogger,
     });
     expect(captured!.handbook!.ref).toBe(HANDBOOK_SHA);
@@ -296,7 +296,7 @@ describe("ensureKnowledgeSources", () => {
           findUnique: async () => ({ knowledgeSnapshot: null }),
           update: async () => ({}),
         },
-      } as unknown as ReturnType<typeof getPrisma>,
+      } as unknown as ReturnType<typeof import("../src/lib/prisma.js").createPrisma>,
       logger: fakeLogger,
     });
 
@@ -419,7 +419,6 @@ describe("ensureKnowledgeSources", () => {
 });
 
 describe("per-review knowledge snapshot (§4)", () => {
-  const prisma = getPrisma();
   let reviewId: string;
 
   beforeAll(async () => {

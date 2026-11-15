@@ -25,7 +25,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { PrismaClient } from "@prisma/client";
-import type pino from "pino";
+import type { Logger } from "../ports/logger.js";
 import { sha256Hex } from "./fetch.js";
 import {
   knowledgeRefSlug,
@@ -138,7 +138,7 @@ export interface MaterializeKnowledgeInput {
   /** Boot-time snapshot (may be null when knowledge init never ran). */
   snapshot: KnowledgeSnapshot | null;
   prisma: Pick<PrismaClient, "review">;
-  logger: pino.Logger;
+  logger: Logger;
 }
 
 export interface MaterializeKnowledgeResult {

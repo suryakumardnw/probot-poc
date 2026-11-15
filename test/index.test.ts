@@ -4,13 +4,25 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Probot, ProbotOctokit } from "probot";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import myProbotApp from "../src/index.js";
-// Requiring our fixtures
+import { createApp } from "../src/index.js";
 import issueOpenedPayload from "./fixtures/issues.opened.json" with { type: "json" };
+import { createTestIngestion } from "./helpers/ingestion.js";
+// Requiring our fixtures
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const privateKey = fs.readFileSync(path.join(__dirname, "fixtures/mock-cert.pem"), "utf-8");
+
+const testIngestion = createTestIngestion({
+  queue: {
+    add: async () => ({ id: "test-job" }),
+  },
+});
+const testApp = createApp({
+  ingestion: testIngestion.services,
+  ingestionRepositories: testIngestion.repositories,
+  ingestionUnitOfWork: testIngestion.unitOfWork,
+});
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -76,7 +88,7 @@ describe("probot-poc app", () => {
       })),
     });
     // Load our app into probot
-    probot.load(myProbotApp);
+    probot.load(testApp);
   });
 
   afterEach(() => {

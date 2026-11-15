@@ -5,33 +5,32 @@ import type { DependencyCheck } from "./prisma.js";
 /**
  * Redis connectivity via ioredis.
  *
- * Connections must degrade gracefully: the client is created with offline
- * tolerance so a missing Redis does not crash the process, and
- * `checkRedis()` reports status for the readiness endpoint.
+ * This module is a factory only: bootstrap constructs exactly one shared
+ * client per process and injects it wherever readiness is checked. Connections
+ * must degrade gracefully: the client is created with offline tolerance so a
+ * missing Redis does not crash the process, and `checkRedis()` reports status
+ * for the readiness endpoint.
  */
 
-let redisClient: Redis | undefined;
-let redisConnectPromise: Promise<unknown> | undefined;
+export type RedisConnection = Pick<Env, "REDIS_URL">;
 
-export function getRedis(env?: Env): Redis {
-  if (!redisClient) {
-    redisClient = new Redis(env?.REDIS_URL ?? "redis://localhost:6379", {
-      lazyConnect: true,
-      maxRetriesPerRequest: 2,
-      // Bounded retry loop; the readiness endpoint surfaces the failure.
-      retryStrategy: (times: number) => Math.min(times * 500, 5000),
-      enableOfflineQueue: false,
-    });
-    redisClient.on("error", () => {
-      // ioredis emits 'error' on connection failures; swallow here so the
-      // process never crashes on an unreachable Redis. Callers observe
-      // state via checkRedis().
-    });
-    redisConnectPromise = redisClient.connect().catch(() => {
-      // Handled via checkRedis(); never crash the process here.
-    });
-  }
-  return redisClient;
+export function createRedis(env: RedisConnection): Redis {
+  const client = new Redis(env.REDIS_URL, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 2,
+    // Bounded retry loop; the readiness endpoint surfaces the failure.
+    retryStrategy: (times: number) => Math.min(times * 500, 5000),
+    enableOfflineQueue: false,
+  });
+  client.on("error", () => {
+    // ioredis emits 'error' on connection failures; swallow here so the
+    // process never crashes on an unreachable Redis. Callers observe
+    // state via checkRedis().
+  });
+  void client.connect().catch(() => {
+    // Handled via checkRedis(); never crash the process here.
+  });
+  return client;
 }
 
 /**
@@ -39,39 +38,27 @@ export function getRedis(env?: Env): Redis {
  * the connection never succeeds (graceful degradation); callers observe the
  * actual state via checkRedis().
  */
-export async function waitRedisReady(timeoutMs = 5000): Promise<void> {
-  const client = getRedis();
-  const connect = redisConnectPromise ?? Promise.resolve();
-  await Promise.race([
-    (async () => {
-      await connect;
-      if (client.status !== "ready") {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
-            client.off("ready", onReady);
-            resolve();
-          }, timeoutMs);
-          timer.unref();
-          const onReady = () => {
-            clearTimeout(timer);
-            resolve();
-          };
-          client.once("ready", onReady);
-        });
-      }
-    })(),
-    new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, timeoutMs);
-      timer.unref();
-    }),
-  ]);
+export async function waitRedisReady(client: Redis, timeoutMs = 5000): Promise<void> {
+  if (client.status === "ready") {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      client.off("ready", onReady);
+      resolve();
+    };
+    const onReady = () => finish();
+    const timer = setTimeout(finish, timeoutMs);
+    timer.unref();
+    client.once("ready", onReady);
+  });
 }
 
 /** Check Redis connectivity. Never throws. */
-export async function checkRedis(): Promise<DependencyCheck> {
+export async function checkRedis(client: Redis): Promise<DependencyCheck> {
   const started = Date.now();
   try {
-    const client = getRedis();
     const pong = await client.ping();
     if (pong !== "PONG") {
       throw new Error(`unexpected PING response: ${pong}`);
@@ -87,9 +74,9 @@ export async function checkRedis(): Promise<DependencyCheck> {
 }
 
 /** Disconnect on shutdown. Never throws. */
-export async function disconnectRedis(): Promise<void> {
+export async function disconnectRedis(client: Redis): Promise<void> {
   try {
-    await redisClient?.quit();
+    await client.quit();
   } catch {
     // Connection may already be closed.
   }

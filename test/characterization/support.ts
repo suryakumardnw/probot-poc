@@ -3,25 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import type { JobStatus, OutboxStatus, ReviewState, ReviewTrigger, ReviewType } from "@prisma/client";
 import { reviewConfigSchema, type ReviewConfig } from "../../src/config/review-schema.js";
-import { disconnectPrisma, getPrisma } from "../../src/lib/prisma.js";
 import type { Finding, FindingEvidence } from "../../src/review-engine/index.js";
+import { disconnectDatabase, prisma } from "../helpers/db.js";
+import { silentLogger } from "../helpers/ingestion.js";
 
-/**
- * Shared fixtures for the characterization suite.
- *
- * These helpers only seed rows and inspect public boundaries. They contain no
- * assertions about behaviour: the tests in this directory own the expected
- * contract (see README.md).
- */
-
-process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
-process.env.REDIS_URL ??= "redis://localhost:6379";
-// config/review.json references these; the review pipeline is not exercised
-// against a real provider by the characterization suite.
-process.env.MODEL_BASE_URL ??= "http://localhost:8000";
-process.env.MODEL_NAME ??= "glm-4.7-flash";
-
-export const prisma = getPrisma();
+export { disconnectDatabase, prisma, silentLogger };
 
 /** Delete every domain row in FK-safe order. Postgres/Redis are required. */
 export async function cleanDatabase(): Promise<void> {
@@ -41,17 +27,6 @@ export async function cleanDatabase(): Promise<void> {
   await prisma.repository.deleteMany();
   await prisma.installation.deleteMany();
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await disconnectPrisma();
-}
-
-export const silentLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {},
-};
 
 let chainSeq = 0;
 

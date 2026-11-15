@@ -16,7 +16,6 @@
  *  - GitHub API failure after bounded retries → `completed_with_warnings`
  *    (the review data is retained; publication can be retried later).
  */
-import type pino from "pino";
 import { resolveModelId } from "../agent/index.js";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
@@ -28,11 +27,12 @@ import {
   type FindingsServiceDependencies,
   type StoredFinding,
 } from "../findings/index.js";
-import { transitionReviewState } from "../ingestion/index.js";
+import type { ReviewStateService } from "../ingestion/index.js";
 import type { ReviewJobPayload } from "../ingestion/queue.js";
 import type { MaterializeKnowledgeResult } from "../knowledge/index.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 import type { PublisherOctokit } from "../ports/github-publisher.js";
+import type { Logger } from "../ports/logger.js";
 import { createReviewEngineHook } from "../review-engine/hook.js";
 import { resolveReviewInjection } from "../review-engine/injection.js";
 import type { KnowledgeInjectionMetrics, PromptInjection, RunReviewOutput } from "../review-engine/types.js";
@@ -45,7 +45,7 @@ import type { PublishingRepositories, ReviewPublicationRepository } from "./publ
 /**
  * Knowledge materialization and metrics writes, bound to the worker's
  * database client at the composition edge. The pipeline stays free of the
- * concrete Prisma client; PR 2.6 moves this wiring into bootstrap.
+ * concrete Prisma client; bootstrap wires these dependencies.
  */
 export interface ReviewKnowledgeDependencies {
   /** Materialize the review's own knowledge copy and persist its identity. */
@@ -65,7 +65,9 @@ export interface ReviewKnowledgeDependencies {
 export interface ReviewPipelineDeps {
   runtime: AgentRuntime;
   config: ReviewConfig;
-  logger: pino.Logger;
+  logger: Logger;
+  /** Review-state transition boundary (durable, injected by bootstrap). */
+  transitionReviewState: ReviewStateService["transitionReviewState"];
   /** Review-comment persistence and review publication state. */
   publishing: PublishingRepositories;
   /** Findings persistence and the publication-input read. */
@@ -251,16 +253,18 @@ export async function finalizeReview(
   } catch (error) {
     const message = redactCredentials(error instanceof Error ? error.message : String(error));
     logger.error({ reviewId, err: message }, "Findings persistence failed");
-    await transitionReviewState(reviewId, "failed", {
-      errorCode: "findings_persist_failed",
-      errorMessage: message.slice(0, 500),
-    }).catch(() => {
-      /* already terminal */
-    });
+    await deps
+      .transitionReviewState(reviewId, "failed", {
+        errorCode: "findings_persist_failed",
+        errorMessage: message.slice(0, 500),
+      })
+      .catch(() => {
+        /* already terminal */
+      });
     throw error;
   }
 
-  await transitionReviewState(reviewId, "publishing");
+  await deps.transitionReviewState(reviewId, "publishing");
 
   const publishSpan = startSpan("github.publishing", {
     attributes: reviewSpanAttributes({
@@ -285,7 +289,7 @@ export async function finalizeReview(
     await deps.publishing.reviews.markPublishSkipped(reviewId).catch(() => {
       /* row gone — ignore */
     });
-    await transitionReviewState(reviewId, "completed");
+    await deps.transitionReviewState(reviewId, "completed");
     endSpan(publishSpan);
     logger.info(
       buildReviewTelemetry({
@@ -355,7 +359,7 @@ export async function finalizeReview(
     // Persist aggregate token usage (§16.1 comparison endpoint).
     const usagePersisted = await persistReviewUsage(deps.publishing.reviews, reviewId, output);
 
-    await transitionReviewState(reviewId, "completed");
+    await deps.transitionReviewState(reviewId, "completed");
     endSpan(publishSpan);
     logger.info(
       buildReviewTelemetry({
@@ -378,12 +382,14 @@ export async function finalizeReview(
       // §4.3/§4.4: reject the result, publish nothing.
       endSpan(publishSpan, error);
       logger.warn({ reviewId }, "PR head moved before publication; rejecting review results");
-      await transitionReviewState(reviewId, "failed", {
-        errorCode: "stale_commit",
-        errorMessage: redactCredentials(error.message).slice(0, 500),
-      }).catch(() => {
-        /* already terminal */
-      });
+      await deps
+        .transitionReviewState(reviewId, "failed", {
+          errorCode: "stale_commit",
+          errorMessage: redactCredentials(error.message).slice(0, 500),
+        })
+        .catch(() => {
+          /* already terminal */
+        });
       logger.info(
         buildReviewTelemetry({
           config: deps.config,
@@ -417,7 +423,7 @@ export async function finalizeReview(
     logger.error({ reviewId, err: message }, "GitHub publication failed");
     await recordPublicationFailure(deps.publishing.comments, reviewId);
     // The review data is intact and retained; only the GitHub write failed.
-    await transitionReviewState(reviewId, "completed_with_warnings").catch(() => {
+    await deps.transitionReviewState(reviewId, "completed_with_warnings").catch(() => {
       /* already terminal */
     });
   }

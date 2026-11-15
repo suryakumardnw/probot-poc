@@ -5,14 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import pino from "pino";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
-import { closeReviewQueue, getReviewQueue, type ReviewJobPayload } from "../../src/ingestion/queue.js";
+import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/ingestion/queue.js";
+import { disconnectRedis } from "../../src/lib/redis.js";
 import { NullTokenProvider } from "../../src/workspace/credentials.js";
 import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
 import { ReviewWorkspaceService, type WorkspaceResult } from "../../src/workspace/workspace.js";
-import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogger } from "./support.js";
+import { testEnv } from "../helpers/db.js";
+import { createTestReviewState, silentLogger } from "../helpers/ingestion.js";
+import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
 
 /**
  * Characterization: graceful worker shutdown (ARCHITECTURE.md §12.4 / §17.3).
@@ -29,6 +31,10 @@ import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogge
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, "../fixtures/shutdown-child.mjs");
 const REPO_ROOT = path.resolve(__dirname, "../..");
+
+const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
+const queue = reviewQueue.queue;
+const transitionReviewState = createTestReviewState().transitionReviewState;
 
 interface ShutdownRun {
   code: number | null;
@@ -101,7 +107,6 @@ async function runWithSigterm(mode: "complete" | "timeout"): Promise<ShutdownRun
 }
 
 async function clearQueuedJobs(): Promise<void> {
-  const queue = getReviewQueue();
   await queue.waitUntilReady();
   const jobs = await queue.getJobs(["waiting", "paused", "delayed", "failed"]);
   await Promise.all(jobs.map((job) => job.remove().catch(() => {})));
@@ -116,7 +121,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await clearQueuedJobs();
-  await closeReviewQueue();
+  await reviewQueue.close();
   await cleanDatabase();
   await disconnectDatabase();
 });
@@ -188,13 +193,14 @@ describe("real BullMQ worker drain", () => {
       cleanupAfterFailure: async () => {},
     } as unknown as ReviewWorkspaceService;
 
-    const worker = startReviewWorker(process.env.REDIS_URL ?? "redis://localhost:6379", {
+    const workerConnection = createWorkerConnection(testEnv.REDIS_URL);
+    const worker = startReviewWorker(workerConnection, {
       repositories: createIngestionRepositories(prisma),
       service,
-      logger: silentLogger as unknown as pino.Logger,
+      logger: silentLogger,
+      transitionReviewState,
       concurrency: 1,
     });
-    const queue = getReviewQueue();
     await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
 
     const active = once(worker, "active");
@@ -244,6 +250,7 @@ describe("real BullMQ worker drain", () => {
       releasePrepare();
       await stopPromise?.catch(() => {});
       await stopReviewWorker(worker).catch(() => {});
+      await disconnectRedis(workerConnection);
       await queueJob.remove().catch(() => {});
     }
   }, 30_000);
@@ -272,13 +279,14 @@ describe("real BullMQ worker permanent payload failure", () => {
       rootDir,
       tokenProvider: new NullTokenProvider(),
     });
-    const worker = startReviewWorker(process.env.REDIS_URL ?? "redis://localhost:6379", {
+    const workerConnection = createWorkerConnection(testEnv.REDIS_URL);
+    const worker = startReviewWorker(workerConnection, {
       repositories: createIngestionRepositories(prisma),
       service,
-      logger: pino({ level: "silent" }),
+      logger: silentLogger,
+      transitionReviewState,
       concurrency: 1,
     });
-    const queue = getReviewQueue();
     await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
 
     const failed = new Promise<{ attemptsMade: number | undefined; message: string }>((resolve) => {
@@ -315,6 +323,7 @@ describe("real BullMQ worker permanent payload failure", () => {
     } finally {
       await queueJob.remove().catch(() => {});
       await stopReviewWorker(worker).catch(() => {});
+      await disconnectRedis(workerConnection);
       fs.rmSync(rootDir, { recursive: true, force: true });
     }
   }, 30_000);

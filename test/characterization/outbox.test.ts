@@ -1,7 +1,7 @@
-import type { Queue } from "bullmq";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
-import { publishOutboxEvent, recoverOutbox } from "../../src/ingestion/index.js";
-import { closeReviewQueue, getReviewQueue, type ReviewJobPayload } from "../../src/ingestion/queue.js";
+import { createReviewQueue } from "../../src/ingestion/queue.js";
+import { testEnv } from "../helpers/db.js";
+import { createTestIngestion } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
 
 /**
@@ -14,7 +14,9 @@ import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./su
  * queue so the observable state is the Redis-visible one.
  */
 
-const queue = getReviewQueue();
+const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
+const queue = reviewQueue.queue;
+const ingestion = createTestIngestion({ queue });
 
 async function jobsWithId(jobId: string) {
   const jobs = await queue.getJobs(["waiting", "paused", "delayed", "active", "completed", "failed"]);
@@ -33,7 +35,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await closeReviewQueue();
+  await reviewQueue.close();
   await cleanDatabase();
   await disconnectDatabase();
 });
@@ -46,7 +48,7 @@ describe("outbox publication (§12.2)", () => {
       outbox: { status: "pending" },
     });
 
-    await expect(publishOutboxEvent(chain.outboxEventId!, queue)).resolves.toBe("published");
+    await expect(ingestion.services.publishOutboxEvent(chain.outboxEventId!)).resolves.toBe("published");
 
     const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
     expect(job.status).toBe("enqueued");
@@ -78,9 +80,10 @@ describe("outbox publication (§12.2)", () => {
       add: async () => {
         throw new Error("connect ECONNREFUSED 127.0.0.1:6379");
       },
-    } as unknown as Queue<ReviewJobPayload>;
+    };
+    const offlineIngestion = createTestIngestion({ queue: unavailableQueue });
 
-    await expect(publishOutboxEvent(chain.outboxEventId!, unavailableQueue)).resolves.toBe("failed");
+    await expect(offlineIngestion.services.publishOutboxEvent(chain.outboxEventId!)).resolves.toBe("failed");
 
     const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
     expect(job.status).toBe("pending_outbox");
@@ -100,7 +103,7 @@ describe("outbox publication (§12.2)", () => {
       outbox: { status: "pending" },
     });
 
-    await expect(publishOutboxEvent(chain.outboxEventId!, queue)).resolves.toBe("published");
+    await expect(ingestion.services.publishOutboxEvent(chain.outboxEventId!)).resolves.toBe("published");
     expect(await jobsWithId(chain.jobId!)).toHaveLength(1);
 
     // Simulate a recovery re-publication of the same durable event.
@@ -108,7 +111,7 @@ describe("outbox publication (§12.2)", () => {
       where: { id: chain.outboxEventId! },
       data: { status: "pending", publishedAt: null },
     });
-    await expect(publishOutboxEvent(chain.outboxEventId!, queue)).resolves.toBe("published");
+    await expect(ingestion.services.publishOutboxEvent(chain.outboxEventId!)).resolves.toBe("published");
 
     const event = await prisma.outboxEvent.findUniqueOrThrow({ where: { id: chain.outboxEventId! } });
     expect(event.status).toBe("published");
@@ -123,7 +126,7 @@ describe("outbox publication (§12.2)", () => {
       outbox: { status: "pending" },
     });
 
-    await expect(publishOutboxEvent(chain.outboxEventId!, queue)).resolves.toBe("discarded");
+    await expect(ingestion.services.publishOutboxEvent(chain.outboxEventId!)).resolves.toBe("discarded");
 
     const event = await prisma.outboxEvent.findUniqueOrThrow({ where: { id: chain.outboxEventId! } });
     expect(event.status).toBe("discarded");
@@ -151,7 +154,7 @@ describe("outbox publication (§12.2)", () => {
       },
     });
 
-    await expect(publishOutboxEvent(chain.outboxEventId, queue)).resolves.toBe("discarded");
+    await expect(ingestion.services.publishOutboxEvent(chain.outboxEventId)).resolves.toBe("discarded");
 
     // Permanent data error: the event is terminal (no retry loop) and records
     // the stable code. Reconciliation can still rebuild the review payload
@@ -180,7 +183,7 @@ describe("outbox publication (§12.2)", () => {
       outbox: { status: "pending" },
     });
 
-    const summary = await recoverOutbox(100, queue);
+    const summary = await ingestion.services.recoverOutbox(100);
     expect(summary).toEqual({ scanned: 2, published: 1, discarded: 1, failed: 0 });
 
     const publishedEvent = await prisma.outboxEvent.findUniqueOrThrow({

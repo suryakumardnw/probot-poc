@@ -8,7 +8,7 @@ import { DockerSandboxExecutor, DEFAULT_SANDBOX_IMAGE } from "../src/execution/d
 import { ExecutionService } from "../src/execution/index.js";
 import { evaluateCommand } from "../src/execution/policy.js";
 import { ExecutionPolicyError, type CommandRequest, type ReviewExecutionConfig } from "../src/execution/types.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
+import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 /**
  * Ticket 11 integration tests: secure execution and resource isolation.
@@ -22,7 +22,6 @@ import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
 const execFileAsync = promisify(execFile);
-const prisma = getPrisma();
 const ACTOR = "test:ticket-11";
 
 function execConfig(overrides: Partial<ReviewExecutionConfig> = {}): ReviewExecutionConfig {
@@ -74,7 +73,7 @@ const docker = describe.skipIf(!dockerAvailable)("docker sandbox", () => {});
 
 afterAll(async () => {
   fs.rmSync(workspace, { recursive: true, force: true });
-  await disconnectPrisma();
+  await disconnectDatabase();
 });
 
 // 1. Allowed command -----------------------------------------------------------

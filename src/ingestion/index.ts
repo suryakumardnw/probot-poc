@@ -22,13 +22,14 @@
  * services receive them and never touch Prisma.
  */
 
+import type { Clock } from "../ports/clock.js";
+import type { Logger } from "../ports/logger.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";
 import { createIngestionReadService, type IngestionReadService } from "./ingestion-read.service.js";
 import { createIngestionService, type IngestionService } from "./ingestion.service.js";
+import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 import { createOutboxService, type OutboxService } from "./outbox.service.js";
-import type { PrismaRootClient } from "./prisma-ingestion.repository.js";
-import { createIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
-import { closeReviewQueue } from "./queue.js";
+import type { ReviewQueueWriter } from "./queue.js";
 import { createOutboxRecoveryService, type OutboxRecoveryService } from "./recovery.service.js";
 import { createReviewStateService, type ReviewStateService } from "./review-state.service.js";
 
@@ -36,8 +37,6 @@ export { REVIEW_TYPES } from "../contracts/queue.js";
 export type { IngestOutcome, ReviewTypeValue } from "../contracts/queue.js";
 export {
   createIngestionReadService,
-  getReviewStatus,
-  ingestManualReview,
   type IngestionReadService,
   type IngestionReadServiceDependencies,
   type ReviewComparisonInput,
@@ -49,7 +48,6 @@ export {
 export {
   buildJobKey,
   createIngestionService,
-  ingestReviewRequest,
   type IngestionService,
   type IngestionServiceDependencies,
 } from "./ingestion.service.js";
@@ -63,14 +61,12 @@ export {
 export type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 export {
   createOutboxService,
-  publishOutboxEvent,
   type OutboxService,
   type OutboxServiceDependencies,
   type PublishResult,
 } from "./outbox.service.js";
 export {
   createOutboxRecoveryService,
-  recoverOutbox,
   type OutboxRecoveryService,
   type OutboxRecoveryServiceDependencies,
   type OutboxRecoverySummary,
@@ -82,43 +78,49 @@ export {
   canTransition,
   createReviewStateService,
   isTerminalReviewState,
-  transitionReviewState,
   type ReviewStateService,
   type ReviewStateServiceDependencies,
   type TransitionOptions,
 } from "./review-state.service.js";
 
 // ---------------------------------------------------------------------------
-// Temporary module-edge composition (PR 2.1 → PR 2.6)
+// Composition
 // ---------------------------------------------------------------------------
 
 export interface IngestionServices
   extends IngestionService, IngestionReadService, OutboxService, OutboxRecoveryService, ReviewStateService {}
 
+export interface IngestionServicesDependencies {
+  repositories: IngestionRepositories;
+  unitOfWork: IngestionUnitOfWork;
+  config: ReviewConfigStore;
+  queue: ReviewQueueWriter;
+  logger: Logger;
+  clock: Clock;
+}
+
 /**
- * Build the ingestion module's services for one Prisma client.
+ * Build the ingestion module's services for one set of injected dependencies.
  *
- * Temporary for PR 2.1: the bootstrap composition root replaces this factory
- * in PR 2.6. Services themselves never read the Prisma singleton.
+ * Bootstrap constructs the repositories and the BullMQ queue once and passes
+ * them in; tests use the same factory with their own clients. No service
+ * reaches for a process-wide singleton.
  */
-export function createIngestionServices(prisma: PrismaRootClient, config?: ReviewConfigStore): IngestionServices {
-  const dependencies = createIngestionDependencies(prisma, config);
-  const { repositories } = dependencies;
-  const outbox = createOutboxService(dependencies);
+export function createIngestionServices(deps: IngestionServicesDependencies): IngestionServices {
+  const { repositories, unitOfWork, config, queue, logger, clock } = deps;
+  const outbox = createOutboxService({ repositories, unitOfWork, config, queue, logger });
   const recovery = createOutboxRecoveryService({
     repositories,
-    publish: (eventId, queue) => outbox.publishOutboxEvent(eventId, queue),
+    publish: (eventId) => outbox.publishOutboxEvent(eventId),
   });
-  const reviewState = createReviewStateService({ unitOfWork: dependencies.unitOfWork });
+  const reviewState = createReviewStateService({ unitOfWork, clock });
   const ingestion = createIngestionService({
-    ...dependencies,
+    repositories,
+    unitOfWork,
+    config,
+    logger,
     publish: (eventId) => outbox.publishOutboxEvent(eventId),
   });
   const read = createIngestionReadService({ repositories, ingestion });
   return { ...ingestion, ...read, ...outbox, ...recovery, ...reviewState };
-}
-
-/** Used by the worker on shutdown and tests on teardown. */
-export async function closeIngestion(): Promise<void> {
-  await closeReviewQueue();
 }

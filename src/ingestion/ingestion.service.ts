@@ -1,20 +1,15 @@
-import type pino from "pino";
-import { loadEnv } from "../config/env.js";
 import { REVIEW_TYPES, outboxPayloadSchema, type ReviewModeValue, type ReviewTypeValue } from "../contracts/queue.js";
-import { createLogger } from "../lib/logger.js";
+import type { Logger } from "../ports/logger.js";
 import type { LoadedReviewConfig, ReviewConfigStore } from "../ports/review-config.js";
 import type { IngestReviewRequestInput, IngestReviewRequestResult } from "./ingestion.types.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
-import { publishOutboxEvent, type PublishResult } from "./outbox.service.js";
-import { getDefaultIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
+import type { PublishResult } from "./outbox.service.js";
 import { TERMINAL_REVIEW_STATES } from "./review-state.service.js";
 
 /**
  * Durable review intake (ARCHITECTURE.md §4, §12, §13.1). The full idempotency
  * contract is documented on the module entry point (`index.ts`).
  */
-
-const logger: pino.Logger = createLogger(loadEnv());
 
 export function buildJobKey(parts: {
   installationId: string;
@@ -38,6 +33,7 @@ export type IngestionServiceDependencies = {
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
   config: ReviewConfigStore;
+  logger: Logger;
   /** Publish one committed outbox event; never throws. */
   publish: (eventId: string) => Promise<PublishResult>;
 };
@@ -57,7 +53,7 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
     if (input.deliveryId) {
       const existing = await deps.repositories.webhookDeliveries.findByDeliveryId(input.deliveryId);
       if (existing) {
-        logger.debug({ deliveryId: input.deliveryId }, "Duplicate webhook delivery ignored");
+        deps.logger.debug({ deliveryId: input.deliveryId }, "Duplicate webhook delivery ignored");
         return { outcome: "duplicate_delivery" };
       }
     }
@@ -66,7 +62,7 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
     try {
       loaded = deps.config.load();
     } catch (error) {
-      logger.error(
+      deps.logger.error(
         { err: error instanceof Error ? error.message : String(error) },
         "Review configuration unavailable; ignoring review request",
       );
@@ -86,7 +82,7 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
 
     // Draft pull requests are skipped unless explicitly enabled (§4.1).
     if (input.draft && !config.github.draftPullRequests.enabled) {
-      logger.info(
+      deps.logger.info(
         { pr: input.pullRequestNumber, repo: input.repositoryName },
         "Draft pull request skipped: github.draftPullRequests.enabled is false",
       );
@@ -290,7 +286,7 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
     // pending and recoverOutbox() retries (§12.2).
     const publishResult = await deps.publish(result.outboxEventId);
     if (publishResult === "failed") {
-      logger.info({ reviewId: result.reviewId }, "Review queued durably; enqueue deferred to outbox recovery");
+      deps.logger.info({ reviewId: result.reviewId }, "Review queued durably; enqueue deferred to outbox recovery");
     }
 
     return {
@@ -303,23 +299,4 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
   }
 
   return { ingestReviewRequest };
-}
-
-let defaultIngestionService: IngestionService | undefined;
-
-/** Internal module-edge instance shared with the read service and wrappers. */
-export function getDefaultIngestionService(): IngestionService {
-  defaultIngestionService ??= createIngestionService({
-    ...getDefaultIngestionDependencies(),
-    publish: (eventId) => publishOutboxEvent(eventId),
-  });
-  return defaultIngestionService;
-}
-
-/**
- * Module-edge compatibility function for existing callers. PR 2.6 wires the
- * composition root and removes this wrapper.
- */
-export async function ingestReviewRequest(input: IngestReviewRequestInput): Promise<IngestReviewRequestResult> {
-  return getDefaultIngestionService().ingestReviewRequest(input);
 }

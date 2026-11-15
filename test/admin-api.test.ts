@@ -13,9 +13,9 @@ import { createReviewConfigStore } from "../src/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH } from "../src/config/review-loader.js";
 import { ADMIN_REVIEW_STATES, adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../src/contracts/admin.js";
 import { REVIEW_STATES } from "../src/ingestion/index.js";
-import { createIngestionServices } from "../src/ingestion/index.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
-import { disconnectRedis } from "../src/lib/redis.js";
+import { createReviewQueue } from "../src/ingestion/queue.js";
+import { prisma, disconnectDatabase, testEnv } from "./helpers/db.js";
+import { createTestIngestion } from "./helpers/ingestion.js";
 
 /**
  * Ticket 10 integration tests: admin authentication + configuration API.
@@ -32,7 +32,7 @@ process.env.MODEL_BASE_URL ??= "http://localhost:8000";
 // admin configuration round-trip assertions (they expect the default model).
 process.env.MODEL_NAME ??= "glm-4.7-flash";
 
-const prisma = getPrisma();
+const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 
 // Environment -----------------------------------------------------------------
 
@@ -206,7 +206,7 @@ function makeHandler(env: Env, configPath?: string) {
   const handler = createAdminApi({
     env,
     audit: createPrismaAuditRepository(prisma, logger),
-    ingestion: createIngestionServices(prisma, config),
+    ingestion: createTestIngestion({ queue: reviewQueue.queue, config }).services,
     config,
     logger,
   });
@@ -275,8 +275,8 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await disconnectPrisma();
-  await disconnectRedis();
+  await reviewQueue.close();
+  await disconnectDatabase();
 });
 
 describe("admin api (ticket 10)", () => {

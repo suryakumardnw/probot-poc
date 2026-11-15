@@ -1,4 +1,3 @@
-import { getPrisma } from "../lib/prisma.js";
 import type { FindingsRepositories, FindingsUnitOfWork } from "./findings.unit-of-work.js";
 import { createFindingsRepositories, type PrismaRootClient } from "./prisma-findings.repository.js";
 
@@ -10,9 +9,8 @@ import { createFindingsRepositories, type PrismaRootClient } from "./prisma-find
  * bound to the transaction client, so persist and supersede each commit or roll
  * back as a unit.
  *
- * The default-dependency helpers below are the temporary module-edge wiring for
- * PR 2.3. They are the only place in this module that reads the Prisma
- * singleton; PR 2.6 replaces them with the bootstrap composition root.
+ * Factories take every dependency explicitly; bootstrap constructs the client
+ * once and injects it.
  */
 
 export function createFindingsUnitOfWork(prisma: PrismaRootClient): FindingsUnitOfWork {
@@ -29,17 +27,9 @@ export type FindingsServiceDependencies = {
 };
 
 /** Build the service dependencies for one Prisma client. */
-export function createFindingsDependencies(prisma: PrismaRootClient = getPrisma()): FindingsServiceDependencies {
+export function createFindingsDependencies(prisma: PrismaRootClient): FindingsServiceDependencies {
   return {
     repositories: createFindingsRepositories(prisma),
     unitOfWork: createFindingsUnitOfWork(prisma),
   };
-}
-
-let defaultDependencies: FindingsServiceDependencies | undefined;
-
-/** Temporary lazy singleton wiring used by the exported module-edge functions. */
-export function getDefaultFindingsDependencies(): FindingsServiceDependencies {
-  defaultDependencies ??= createFindingsDependencies(getPrisma());
-  return defaultDependencies;
 }

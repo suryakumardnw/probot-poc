@@ -20,7 +20,7 @@ function mapAuditRecord(row: AuditLog): AuditRecord {
 }
 
 export interface AuditLogger {
-  warn?: (obj: unknown, msg: string) => void;
+  warn?: (obj: object, msg: string) => void;
 }
 
 export function createPrismaAuditRepository(prisma: PrismaClient, logger?: AuditLogger): AuditRepository {

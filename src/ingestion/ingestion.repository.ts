@@ -331,10 +331,16 @@ export type RepositoryFullNameRecord = {
 
 export interface InstallationRepository {
   upsertActive(input: UpsertInstallationInput): Promise<InstallationRecord>;
+  /** Mark a registered installation deleted. Throws when it was never registered. */
+  markDeleted(githubInstallationId: bigint): Promise<InstallationRecord>;
 }
 
 export interface RepositoryRepository {
   upsertActive(input: UpsertRepositoryInput): Promise<RepositoryRecord>;
+  /** Internal lookup by GitHub's numeric repository id. */
+  findByGithubId(githubRepositoryId: bigint): Promise<RepositoryRecord | null>;
+  /** Disable every repository belonging to one installation. Returns the count. */
+  disableByInstallation(installationId: string): Promise<number>;
   findActiveByFullName(fullName: string): Promise<RepositoryWithInstallation | null>;
   /** Administrative lookup by full name, regardless of repository status. */
   findByFullName(fullName: string): Promise<RepositoryRecord | null>;

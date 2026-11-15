@@ -12,13 +12,13 @@
  * Failure semantics: any AgentRuntimeError / ReviewEngineError propagates so
  * the processor fails the review immediately (fail-immediately; §8.4).
  */
-import type pino from "pino";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
-import { transitionReviewState } from "../ingestion/index.js";
+import type { ReviewStateService } from "../ingestion/index.js";
 import type { ReviewJobPayload } from "../ingestion/queue.js";
 import { recordProviderCall, recordReviewFindings } from "../observability/metrics.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
+import type { Logger } from "../ports/logger.js";
 import { redactCredentials } from "../workspace/redact.js";
 import type { WorkspaceResult } from "../workspace/workspace.js";
 import { runReview } from "./engine.js";
@@ -27,7 +27,9 @@ import type { PromptInjection, RunReviewOutput } from "./types.js";
 export interface ReviewEngineHookDeps {
   runtime: AgentRuntime;
   config: ReviewConfig;
-  logger: pino.Logger;
+  logger: Logger;
+  /** Review-state transition boundary (durable, injected by bootstrap). */
+  transitionReviewState: ReviewStateService["transitionReviewState"];
 }
 
 /**
@@ -52,7 +54,7 @@ export function createReviewEngineHook(deps: ReviewEngineHookDeps): ReviewEngine
     const { logger } = deps;
     const { workspace } = ctx;
     const reviewId = ctx.payload.reviewId;
-    await transitionReviewState(reviewId, "investigating");
+    await deps.transitionReviewState(reviewId, "investigating");
 
     const span = startSpan("agent.started", {
       attributes: {
@@ -90,7 +92,7 @@ export function createReviewEngineHook(deps: ReviewEngineHookDeps): ReviewEngine
       throw error;
     }
     endSpan(modelSpan);
-    await transitionReviewState(reviewId, "validating");
+    await deps.transitionReviewState(reviewId, "validating");
 
     // Ticket 12: provider latency / token usage metrics, one record per
     // model call reported by the engine.

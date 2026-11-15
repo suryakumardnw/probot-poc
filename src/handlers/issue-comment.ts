@@ -1,7 +1,11 @@
 import type { Probot } from "probot";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
-import { ingestReviewRequest, REVIEW_TYPES, type ReviewTypeValue } from "../ingestion/index.js";
-import { getPrisma } from "../lib/prisma.js";
+import {
+  REVIEW_TYPES,
+  type IngestionRepositories,
+  type IngestionService,
+  type ReviewTypeValue,
+} from "../ingestion/index.js";
 
 /**
  * Manual review trigger (ARCHITECTURE.md §4.1 `issue_comment`).
@@ -38,7 +42,12 @@ import { getPrisma } from "../lib/prisma.js";
  * and any API failure only skips the acknowledgment comment — never the
  * ingestion itself.
  */
-export function registerIssueCommentHandlers(app: Probot): void {
+export interface IssueCommentHandlerDeps {
+  ingestion: IngestionService;
+  repositories: IngestionRepositories;
+}
+
+export function registerIssueCommentHandlers(app: Probot, deps: IssueCommentHandlerDeps): void {
   app.on("issue_comment.created", async (context) => {
     const { issue, comment, repository } = context.payload;
 
@@ -134,19 +143,15 @@ export function registerIssueCommentHandlers(app: Probot): void {
     // then the GitHub API as a fallback for PRs this app has never seen. The
     // base SHA is required to compute the diff; a `/review` comment payload
     // does not carry it, so it must come from the row or the API.
-    const prisma = getPrisma();
     let headSha: string | null = null;
     let baseSha: string | null = null;
     let draft = issue.draft ?? false;
-    const storedRepository = await prisma.repository
-      .findUnique({ where: { githubRepositoryId: BigInt(repository.id) }, select: { id: true } })
+    const storedRepository = await deps.repositories.repositories
+      .findByGithubId(BigInt(repository.id))
       .catch(() => null);
     const stored = storedRepository
-      ? await prisma.pullRequest
-          .findUnique({
-            where: { repositoryId_githubPrNumber: { repositoryId: storedRepository.id, githubPrNumber: issue.number } },
-            select: { headSha: true, baseSha: true, draft: true },
-          })
+      ? await deps.repositories.pullRequests
+          .findByRepositoryAndNumber(storedRepository.id, issue.number)
           .catch(() => null)
       : null;
     if (stored?.headSha) {
@@ -185,7 +190,7 @@ export function registerIssueCommentHandlers(app: Probot): void {
     }
 
     try {
-      const result = await ingestReviewRequest({
+      const result = await deps.ingestion.ingestReviewRequest({
         trigger: "manual",
         reviewType,
         // A /review comment always re-runs the review, even if this exact

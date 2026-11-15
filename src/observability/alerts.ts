@@ -1,4 +1,4 @@
-import type pino from "pino";
+import type { Logger } from "../ports/logger.js";
 import { getMetricsRegistry } from "./metrics.js";
 
 /**
@@ -99,7 +99,7 @@ export class AlertManager {
   private hooks: Array<(event: AlertEvent) => void> = [];
 
   constructor(
-    private readonly logger: pino.Logger,
+    private readonly logger: Logger,
     private readonly thresholds: AlertThresholds = loadAlertThresholds(),
   ) {}
 

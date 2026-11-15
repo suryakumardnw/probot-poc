@@ -1,4 +1,4 @@
-import type pino from "pino";
+import type { Logger } from "../ports/logger.js";
 
 /**
  * Review-lifecycle correlation logging (§16.1).
@@ -20,13 +20,13 @@ export interface ReviewCorrelation {
   model?: string;
 }
 
-export type ReviewLogger = pino.Logger;
+export type ReviewLogger = Logger;
 
 /**
  * Build a pino child logger carrying the review correlation fields. All
  * downstream pipeline log calls inherit them automatically.
  */
-export function createReviewLogger(logger: pino.Logger, correlation: ReviewCorrelation): ReviewLogger {
+export function createReviewLogger(logger: Logger, correlation: ReviewCorrelation): ReviewLogger {
   // Defensive: tolerate simplified logger stubs (no `child`) in tests.
   if (typeof (logger as unknown as { child?: unknown }).child !== "function") {
     return logger;

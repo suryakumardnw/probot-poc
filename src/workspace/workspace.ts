@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type pino from "pino";
+import type { Logger } from "../ports/logger.js";
 import { buildCloneUrl, type InstallationTokenProvider } from "./credentials.js";
 import { parseNameStatus, type ChangedFile } from "./files.js";
 import { runGit } from "./git.js";
@@ -107,7 +107,7 @@ export interface ReviewWorkspaceServiceOptions {
   tokenProvider: InstallationTokenProvider;
   /** Persistence for the ReviewWorkspace aggregate; absent = filesystem only. */
   workspaceRepository?: WorkspaceRepository;
-  logger?: pino.Logger;
+  logger?: Logger;
   /** Test seam: override clone URL construction (e.g. local fixture path). */
   cloneUrlBuilder?: (ctx: { repositoryFullName: string; token: string }) => string;
 }

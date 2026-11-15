@@ -1,5 +1,5 @@
 import type { Probot } from "probot";
-import { ingestReviewRequest, type IngestTrigger } from "../ingestion/index.js";
+import type { IngestionService, IngestTrigger } from "../ingestion/index.js";
 
 /**
  * Pull request webhook handlers (ARCHITECTURE.md §4, §13.1).
@@ -16,7 +16,11 @@ const TRIGGERS: Record<string, IngestTrigger> = {
   ready_for_review: "ready_for_review",
 };
 
-export function registerPullRequestHandlers(app: Probot): void {
+export interface PullRequestHandlerDeps {
+  ingestion: IngestionService;
+}
+
+export function registerPullRequestHandlers(app: Probot, deps: PullRequestHandlerDeps): void {
   app.on(["pull_request.opened", "pull_request.synchronize", "pull_request.ready_for_review"], async (context) => {
     const action = context.payload.action;
     const trigger = action ? TRIGGERS[action] : undefined;
@@ -40,7 +44,7 @@ export function registerPullRequestHandlers(app: Probot): void {
     }
 
     try {
-      const result = await ingestReviewRequest({
+      const result = await deps.ingestion.ingestReviewRequest({
         trigger,
         installationId: installation.id,
         repositoryId: repository.id,

@@ -2,22 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ReviewState } from "@prisma/client";
-import type { Queue } from "bullmq";
 import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import myProbotApp from "../src/index.js";
-import {
-  InvalidStateTransitionError,
-  getReviewStatus,
-  ingestManualReview,
-  publishOutboxEvent,
-  recoverOutbox,
-  transitionReviewState,
-} from "../src/ingestion/index.js";
-import { closeReviewQueue, getReviewQueue, getQueueConnection } from "../src/ingestion/queue.js";
-import type { ReviewJobPayload } from "../src/ingestion/queue.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
-import { checkRedis, disconnectRedis } from "../src/lib/redis.js";
+import { createApp } from "../src/index.js";
+import { InvalidStateTransitionError } from "../src/ingestion/index.js";
+import { createReviewQueue, type ReviewJobPayload } from "../src/ingestion/queue.js";
+import { createRedis, checkRedis, disconnectRedis } from "../src/lib/redis.js";
+import { disconnectDatabase, prisma, testEnv } from "./helpers/db.js";
+import { createTestIngestion } from "./helpers/ingestion.js";
 
 /**
  * Ticket 03 integration tests: durable review ingestion.
@@ -53,8 +45,6 @@ vi.mock("../src/config/review-loader.js", async (importOriginal) => {
       actual.loadReviewConfig(configPathHolder.path ?? path, ...(rest as []))) as typeof actual.loadReviewConfig,
   };
 });
-
-const prisma = getPrisma();
 
 // Webhook payload factory -----------------------------------------------------
 
@@ -185,21 +175,39 @@ async function receiveDelivery(
  * while disconnected (enableOfflineQueue: false), so a delivery arriving
  * before the TCP handshake completes would leave its outbox event pending.
  */
+const healthRedis = createRedis(testEnv);
+let reviewQueue = createReviewQueue(testEnv.REDIS_URL);
+let ingestion = createTestIngestion({ queue: reviewQueue.queue });
+
+function makeTestApp() {
+  return createApp({
+    ingestion: ingestion.services,
+    ingestionRepositories: ingestion.repositories,
+    ingestionUnitOfWork: ingestion.unitOfWork,
+  });
+}
+let testApp = makeTestApp();
+
+/**
+ * Ensure the BullMQ queue connection is actually connected before any
+ * webhook delivery. The dedicated outbox connection fails commands fast
+ * while disconnected (enableOfflineQueue: false), so a delivery arriving
+ * before the TCP handshake completes would leave its outbox event pending.
+ * A connection that gave up (after a Redis outage) is recreated, along with
+ * the services bound to it.
+ */
 async function ensureQueueReady(timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    let conn = getQueueConnection();
-    if (conn && (conn.status === "end" || conn.status === "close")) {
-      // Connection gave up (e.g. after a Redis outage): recreate it.
-      await closeReviewQueue();
-      getReviewQueue();
-      conn = getQueueConnection();
-    }
-    if (conn?.status === "ready") {
+    const status = reviewQueue.connection.status;
+    if (status === "ready") {
       return;
     }
-    if (!conn) {
-      getReviewQueue();
+    if (status === "end" || status === "close") {
+      await reviewQueue.close().catch(() => {});
+      reviewQueue = createReviewQueue(testEnv.REDIS_URL);
+      ingestion = createTestIngestion({ queue: reviewQueue.queue });
+      testApp = makeTestApp();
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -212,9 +220,10 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await closeReviewQueue();
-  await disconnectRedis();
-  await disconnectPrisma();
+  await reviewQueue.close();
+  await disconnectRedis(healthRedis);
+  await cleanDatabase();
+  await disconnectDatabase();
 });
 
 describe("review ingestion", () => {
@@ -230,7 +239,7 @@ describe("review ingestion", () => {
         throttle: { enabled: false },
       })),
     });
-    probot.load(myProbotApp);
+    probot.load(testApp);
   });
 
   afterEach(async () => {
@@ -604,7 +613,7 @@ describe("review ingestion", () => {
       },
     });
 
-    const result = await ingestManualReview({ repository: "octo-org/gamma", pullRequestNumber: 7 });
+    const result = await ingestion.services.ingestManualReview({ repository: "octo-org/gamma", pullRequestNumber: 7 });
     expect(result.outcome).toBe("created");
     expect(result.reviewId).toBeDefined();
 
@@ -615,7 +624,7 @@ describe("review ingestion", () => {
 
     // Manual ingestion accepts a review type (§4.1): same PR/SHA, independent
     // identity.
-    const skillResult = await ingestManualReview({
+    const skillResult = await ingestion.services.ingestManualReview({
       repository: "octo-org/gamma",
       pullRequestNumber: 7,
       reviewType: "skill",
@@ -624,17 +633,19 @@ describe("review ingestion", () => {
     const skillReview = await prisma.review.findUniqueOrThrow({ where: { id: skillResult.reviewId! } });
     expect(skillReview.reviewType).toBe("skill");
 
-    const status = await getReviewStatus(result.reviewId!);
+    const status = await ingestion.services.getReviewStatus(result.reviewId!);
     expect(status?.review.state).toBe("queued");
     expect(status?.job?.jobKey).toContain(":7:dddd4444dddd4444dddd4444dddd4444dddd4444:adaptive");
     expect(status?.transitions).toHaveLength(1);
 
     // Unknown repository -> ManualIngestionError surface
-    await expect(ingestManualReview({ repository: "octo-org/missing", pullRequestNumber: 1 })).rejects.toMatchObject({
+    await expect(
+      ingestion.services.ingestManualReview({ repository: "octo-org/missing", pullRequestNumber: 1 }),
+    ).rejects.toMatchObject({
       name: "ManualIngestionError",
     });
 
-    await expect(getReviewStatus("nonexistent-id")).resolves.toBeNull();
+    await expect(ingestion.services.getReviewStatus("nonexistent-id")).resolves.toBeNull();
   });
 });
 
@@ -664,12 +675,12 @@ describe("review state machine", () => {
       },
     });
 
-    await expect(transitionReviewState(review.id, "preparing" as ReviewState)).rejects.toBeInstanceOf(
-      InvalidStateTransitionError,
-    );
-    await expect(transitionReviewState(review.id, "superseded" as ReviewState)).rejects.toBeInstanceOf(
-      InvalidStateTransitionError,
-    );
+    await expect(
+      ingestion.services.transitionReviewState(review.id, "preparing" as ReviewState),
+    ).rejects.toBeInstanceOf(InvalidStateTransitionError);
+    await expect(
+      ingestion.services.transitionReviewState(review.id, "superseded" as ReviewState),
+    ).rejects.toBeInstanceOf(InvalidStateTransitionError);
 
     // Valid transition still works from a non-terminal state.
     const review2 = await prisma.review.create({
@@ -682,7 +693,7 @@ describe("review state machine", () => {
         trigger: "opened",
       },
     });
-    const moved = await transitionReviewState(review2.id, "preparing" as ReviewState);
+    const moved = await ingestion.services.transitionReviewState(review2.id, "preparing" as ReviewState);
     expect(moved.state).toBe("preparing");
     const transitions = await prisma.reviewStateTransition.findMany({
       where: { reviewId: review2.id },
@@ -697,7 +708,7 @@ describe("transactional outbox recovery (§12.2)", () => {
     // Stop Redis so the enqueue fails and the event stays pending.
     await shell("docker stop ticket01-redis");
     try {
-      const prisma1 = getPrisma();
+      const prisma1 = prisma;
       // Webhook path with Redis unavailable: probot app instance.
       const offlineProbot = new Probot({
         appId: 123,
@@ -708,7 +719,7 @@ describe("transactional outbox recovery (§12.2)", () => {
           throttle: { enabled: false },
         })),
       });
-      offlineProbot.load(myProbotApp);
+      offlineProbot.load(testApp);
       await receiveDelivery(
         offlineProbot,
         "pull_request",
@@ -731,7 +742,7 @@ describe("transactional outbox recovery (§12.2)", () => {
       // The queue connection gave up during the outage; recreate it.
       await ensureQueueReady();
 
-      const summary = await recoverOutbox();
+      const summary = await ingestion.services.recoverOutbox();
       expect(summary.scanned).toBeGreaterThanOrEqual(1);
       expect(summary.published).toBeGreaterThanOrEqual(1);
 
@@ -741,7 +752,7 @@ describe("transactional outbox recovery (§12.2)", () => {
       expect(eventAfter.status).toBe("published");
     } finally {
       // Ensure Redis is back up even on failure.
-      const redisUp = await checkRedis();
+      const redisUp = await checkRedis(healthRedis);
       if (redisUp.status !== "ok") {
         await shell("docker start ticket01-redis");
         await waitRedisUp();
@@ -816,9 +827,9 @@ describe("outbox publish ordering", () => {
         expect(opts.jobId).toBe(jobId);
         return { id: jobId };
       },
-    } as unknown as Queue<ReviewJobPayload>;
+    };
 
-    await expect(publishOutboxEvent(eventId, queue)).resolves.toBe("published");
+    await expect(createTestIngestion({ queue }).services.publishOutboxEvent(eventId)).resolves.toBe("published");
 
     expect(statusAtAdd).toEqual(["enqueued"]);
     const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
@@ -835,9 +846,9 @@ describe("outbox publish ordering", () => {
       add: async () => {
         throw new Error("connect ECONNREFUSED 127.0.0.1:6379");
       },
-    } as unknown as Queue<ReviewJobPayload>;
+    };
 
-    await expect(publishOutboxEvent(eventId, queue)).resolves.toBe("failed");
+    await expect(createTestIngestion({ queue }).services.publishOutboxEvent(eventId)).resolves.toBe("failed");
 
     const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     expect(job.status).toBe("pending_outbox");
@@ -866,7 +877,7 @@ async function shell(command: string): Promise<string> {
 async function waitRedisUp(timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const check = await checkRedis();
+    const check = await checkRedis(healthRedis);
     if (check.status === "ok") {
       return;
     }

@@ -13,7 +13,6 @@ import {
   supersedeFindingsForReview,
 } from "../src/findings/index.js";
 import type { ReviewJobPayload } from "../src/ingestion/queue.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { parseUnifiedDiff, resolveInlinePosition } from "../src/publishing/diff-positions.js";
 import { finalizeReview, type ReviewPipelineDeps } from "../src/publishing/pipeline.js";
 import { createPublishingRepositories } from "../src/publishing/prisma-publishing.repository.js";
@@ -37,6 +36,8 @@ import {
 import type { Finding, FindingEvidence, ReviewResult } from "../src/review-engine/index.js";
 import type { ReviewRunMetadata } from "../src/review-engine/types.js";
 import type { WorkspaceResult } from "../src/workspace/workspace.js";
+import { prisma, disconnectDatabase } from "./helpers/db.js";
+import { createTestReviewState } from "./helpers/ingestion.js";
 
 /**
  * Ticket 09 tests: diff position resolution, review body generation,
@@ -55,7 +56,6 @@ vi.mock("../src/findings/index.js", async (importOriginal) => {
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
-const prisma = getPrisma();
 const publishing = createPublishingRepositories(prisma);
 
 const REPO_FULL_NAME = "fixture/publish-repo";
@@ -431,6 +431,7 @@ function makeDeps(state: FakeState, overrides: Partial<ReviewPipelineDeps> = {})
     runtime: {} as AgentRuntime,
     config,
     logger: fakeLogger,
+    transitionReviewState: createTestReviewState().transitionReviewState,
     publishing,
     findings: createFindingsDependencies(prisma),
     knowledge: {
@@ -457,7 +458,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await fsp.rm(workspacePath, { recursive: true, force: true }).catch(() => {});
-  await disconnectPrisma();
+  await disconnectDatabase();
 });
 
 beforeEach(async () => {
@@ -1120,7 +1121,7 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
     expect(review.completedAt).not.toBeNull();
 
     // Findings persisted (ticket 08) and publication rows recorded (ticket 09).
-    const findings = await getFindingsForReview(seed.reviewId);
+    const findings = await getFindingsForReview(seed.reviewId, makeDeps(state).findings);
     expect(findings).toHaveLength(1);
     expect(findings[0].status).toBe("new");
     const rows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId } });

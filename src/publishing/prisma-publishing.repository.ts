@@ -127,8 +127,7 @@ function createReviewPublicationRepository(client: PrismaRootClient): ReviewPubl
 /**
  * Build the publishing repository bundle for one root Prisma client.
  *
- * This is the temporary module-edge wiring for PR 2.4; PR 2.6 replaces it with
- * the bootstrap composition root (same role as `createFindingsDependencies`).
+ * Bootstrap constructs the client once and injects the repositories.
  */
 export function createPublishingRepositories(prisma: PrismaRootClient): PublishingRepositories {
   return {

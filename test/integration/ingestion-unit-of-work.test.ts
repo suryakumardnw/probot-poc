@@ -1,18 +1,10 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import {
-  createIngestionService,
-  createIngestionServices,
-  type IngestReviewRequestInput,
-} from "../../src/ingestion/index.js";
+import { createReviewConfigStore } from "../../src/config/review-config-store.js";
+import { createIngestionService, type IngestReviewRequestInput } from "../../src/ingestion/index.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "../../src/ingestion/ingestion.unit-of-work.js";
-import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
-import {
-  createIngestionDependencies,
-  createIngestionUnitOfWork,
-} from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
-import { closeReviewQueue } from "../../src/ingestion/queue.js";
-import { getPrisma, disconnectPrisma } from "../../src/lib/prisma.js";
 import { cleanDatabase } from "../characterization/support.js";
+import { disconnectDatabase, prisma } from "../helpers/db.js";
+import { createTestIngestion, silentLogger } from "../helpers/ingestion.js";
 
 /**
  * Integration: ingestion unit of work against real PostgreSQL.
@@ -26,9 +18,8 @@ process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/review
 process.env.REDIS_URL ??= "redis://localhost:6379";
 process.env.MODEL_BASE_URL ??= "http://localhost:8000";
 
-const prisma = getPrisma();
-const repositories = createIngestionRepositories(prisma);
-const unitOfWork = createIngestionUnitOfWork(prisma);
+const ingestion = createTestIngestion();
+const { repositories, unitOfWork } = ingestion;
 
 function intakeInput(overrides: Partial<IngestReviewRequestInput> = {}): IngestReviewRequestInput {
   return {
@@ -51,9 +42,9 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await closeReviewQueue();
+  await ingestion.close();
   await cleanDatabase();
-  await disconnectPrisma();
+  await disconnectDatabase();
 });
 
 describe("IngestionUnitOfWork", () => {
@@ -119,10 +110,9 @@ describe("IngestionUnitOfWork", () => {
   });
 
   test("rolls back the multi-write review intake when any write fails", async () => {
-    const dependencies = createIngestionDependencies(prisma);
     const failingUnitOfWork: IngestionUnitOfWork = {
       execute<T>(work: (repos: IngestionRepositories) => Promise<T>): Promise<T> {
-        return dependencies.unitOfWork.execute((repos) =>
+        return unitOfWork.execute((repos) =>
           work({
             ...repos,
             outboxEvents: {
@@ -136,9 +126,10 @@ describe("IngestionUnitOfWork", () => {
       },
     };
     const service = createIngestionService({
-      repositories: dependencies.repositories,
+      repositories,
       unitOfWork: failingUnitOfWork,
-      config: dependencies.config,
+      config: createReviewConfigStore(),
+      logger: silentLogger,
       publish: async () => "published",
     });
 
@@ -159,7 +150,7 @@ describe("IngestionUnitOfWork", () => {
 
 describe("createIngestionServices", () => {
   test("wires the service bundle and commits one complete durable intake", async () => {
-    const services = createIngestionServices(prisma);
+    const services = ingestion.services;
     const input = intakeInput({ deliveryId: "uow-delivery-1" });
 
     const result = await services.ingestReviewRequest(input);
@@ -208,7 +199,7 @@ describe("createIngestionServices", () => {
   });
 
   test("exposes the review state machine through the same service bundle", async () => {
-    const services = createIngestionServices(prisma);
+    const services = ingestion.services;
     const result = await services.ingestReviewRequest(intakeInput({ deliveryId: "uow-delivery-2" }));
     if (!result.reviewId) {
       throw new Error("ingestion did not create a review");

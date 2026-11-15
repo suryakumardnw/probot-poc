@@ -5,10 +5,9 @@ import type {
   ReviewState,
   ReviewTrigger,
 } from "./ingestion.repository.js";
-import { getDefaultIngestionService, type IngestionService } from "./ingestion.service.js";
+import type { IngestionService } from "./ingestion.service.js";
 import { ManualIngestionError, type IngestReviewRequestResult, type ManualIngestionInput } from "./ingestion.types.js";
 import type { IngestionRepositories } from "./ingestion.unit-of-work.js";
-import { getDefaultIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
 
 /**
  * Read-side ingestion use cases: review status tracking and manual `/review`
@@ -175,30 +174,4 @@ export function createIngestionReadService(deps: IngestionReadServiceDependencie
   }
 
   return { ingestManualReview, getReviewStatus, listReviews, getReviewComparison };
-}
-
-let defaultReadService: IngestionReadService | undefined;
-
-function getDefaultIngestionReadService(): IngestionReadService {
-  defaultReadService ??= createIngestionReadService({
-    repositories: getDefaultIngestionDependencies().repositories,
-    ingestion: getDefaultIngestionService(),
-  });
-  return defaultReadService;
-}
-
-/**
- * Module-edge compatibility function for existing callers. PR 2.6 wires the
- * composition root and removes this wrapper.
- */
-export async function ingestManualReview(input: ManualIngestionInput): Promise<IngestReviewRequestResult> {
-  return getDefaultIngestionReadService().ingestManualReview(input);
-}
-
-/**
- * Module-edge compatibility function for existing callers. PR 2.6 wires the
- * composition root and removes this wrapper.
- */
-export async function getReviewStatus(reviewId: string): Promise<ReviewStatusReport | null> {
-  return getDefaultIngestionReadService().getReviewStatus(reviewId);
 }

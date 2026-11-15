@@ -4,12 +4,9 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { AgentRuntimeError } from "../src/agent/types.js";
 import { createIngestionRepositories } from "../src/ingestion/prisma-ingestion.repository.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
-import { disconnectRedis } from "../src/lib/redis.js";
 import type { InstallationTokenProvider } from "../src/workspace/credentials.js";
 import {
   parseNameStatus,
@@ -28,6 +25,8 @@ import {
   CloneFailedError,
   DiffFailedError,
 } from "../src/workspace/workspace.js";
+import { prisma, disconnectDatabase } from "./helpers/db.js";
+import { createTestReviewState } from "./helpers/ingestion.js";
 
 /**
  * Ticket 04 integration tests: repository review workspace.
@@ -42,8 +41,6 @@ const run = promisify(execFile);
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 process.env.REDIS_URL ??= "redis://localhost:6379";
-
-const prisma = getPrisma();
 
 const INSTALLATION_ID = 77_001n;
 const REPO_FULL_NAME = "fixture/local-repo";
@@ -296,10 +293,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await fsp.rm(fixtureDir, { recursive: true, force: true }).catch(() => {});
-  await disconnectRedis();
-  await disconnectPrisma();
-  const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: false });
-  await redis.quit().catch(() => {});
+  await disconnectDatabase();
 });
 
 beforeEach(async () => {
@@ -544,8 +538,9 @@ describe("worker processor", () => {
     return {
       repositories: createIngestionRepositories(prisma),
       service,
-      concurrency: 1,
       logger: logger as unknown as ProcessReviewJobDeps["logger"],
+      transitionReviewState: createTestReviewState().transitionReviewState,
+      concurrency: 1,
     };
   }
 

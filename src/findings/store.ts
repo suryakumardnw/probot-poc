@@ -24,6 +24,7 @@
  */
 
 import type { ReviewConfig } from "../config/review-schema.js";
+import type { Logger } from "../ports/logger.js";
 import type { Finding } from "../review-engine/index.js";
 import {
   ACTIVE_FINDING_STATUSES,
@@ -35,7 +36,7 @@ import {
 } from "./findings.repository.js";
 import type { FindingsRepositories } from "./findings.unit-of-work.js";
 import { computeFindingFingerprint } from "./fingerprint.js";
-import { getDefaultFindingsDependencies, type FindingsServiceDependencies } from "./prisma-findings.unit-of-work.js";
+import type { FindingsServiceDependencies } from "./prisma-findings.unit-of-work.js";
 import { validateFindings, type FindingRejectionReason } from "./validation.js";
 
 export interface PersistReviewFindingsInput {
@@ -50,9 +51,9 @@ export interface PersistReviewFindingsInput {
   /** Engine result: low-confidence findings. */
   uncertainFindings: Finding[];
   config: ReviewConfig;
-  /** Persistence boundary override; defaults to the module-edge wiring. */
-  dependencies?: FindingsServiceDependencies;
-  logger?: { info: (obj: unknown, msg: string) => void; warn: (obj: unknown, msg: string) => void };
+  /** Persistence boundary built by the composition root (or a test fake). */
+  dependencies: FindingsServiceDependencies;
+  logger?: Logger;
 }
 
 export interface StoredFinding {
@@ -145,7 +146,7 @@ function mapStoredFinding(row: CreatedFindingRecord, reopened: boolean): StoredF
 
 export async function persistReviewFindings(input: PersistReviewFindingsInput): Promise<PersistReviewFindingsResult> {
   const { config, reviewId, repositoryId, repositoryFullName, workspacePath, logger } = input;
-  const dependencies = input.dependencies ?? getDefaultFindingsDependencies();
+  const dependencies = input.dependencies;
 
   // 1+2. Fingerprint everything, then validate/verify against the workspace.
   const candidates = [...input.findings, ...input.uncertainFindings].map((finding) => ({
@@ -316,7 +317,7 @@ export async function persistReviewFindings(input: PersistReviewFindingsInput): 
 export async function supersedeFindingsForReview(
   reviewId: string,
   supersededByReviewId: string,
-  dependencies: FindingsServiceDependencies = getDefaultFindingsDependencies(),
+  dependencies: FindingsServiceDependencies,
 ): Promise<number> {
   return dependencies.unitOfWork.execute(async (repositories) => {
     const active = await repositories.findings.findActiveByReview({
@@ -340,7 +341,7 @@ export async function supersedeFindingsForReview(
 /** All persisted findings for one review, for the publishing layer (ticket 09). */
 export async function getFindingsForReview(
   reviewId: string,
-  dependencies: FindingsServiceDependencies = getDefaultFindingsDependencies(),
+  dependencies: FindingsServiceDependencies,
 ): Promise<FindingRecord[]> {
   return dependencies.repositories.findings.findByReview(reviewId);
 }

@@ -3,8 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import myProbotApp from "../../src/index.js";
-import { closeReviewQueue, getReviewQueue } from "../../src/ingestion/queue.js";
+import { createApp } from "../../src/index.js";
+import { createReviewQueue } from "../../src/ingestion/queue.js";
+import { testEnv } from "../helpers/db.js";
+import { createTestIngestion } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
 /**
@@ -101,6 +103,14 @@ const jsonResponse = (data: unknown, status = 200): Response =>
 
 let captured: CapturedRequest[] = [];
 
+const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
+const ingestion = createTestIngestion({ queue: reviewQueue.queue });
+const testApp = createApp({
+  ingestion: ingestion.services,
+  ingestionRepositories: ingestion.repositories,
+  ingestionUnitOfWork: ingestion.unitOfWork,
+});
+
 function installFetchStub(): void {
   const stub = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = new URL(String((input as { url?: string })?.url ?? input));
@@ -125,8 +135,7 @@ function installFetchStub(): void {
 }
 
 async function ensureQueueReady(): Promise<void> {
-  const queue = getReviewQueue();
-  await queue.waitUntilReady();
+  await reviewQueue.queue.waitUntilReady();
 }
 
 async function receive(
@@ -153,7 +162,7 @@ function makeProbot(): Probot {
       throttle: { enabled: false },
     })),
   });
-  probot.load(myProbotApp);
+  probot.load(testApp);
   return probot;
 }
 
@@ -171,11 +180,10 @@ afterEach(() => {
 afterAll(async () => {
   // Leave Redis clean for the next suite: webhook tests only need their jobs
   // during the test, and no worker consumes them here.
-  const queue = getReviewQueue();
-  await queue.waitUntilReady().catch(() => {});
-  const jobs = await queue.getJobs(["waiting", "paused", "delayed", "failed"]).catch(() => []);
+  await reviewQueue.queue.waitUntilReady().catch(() => {});
+  const jobs = await reviewQueue.queue.getJobs(["waiting", "paused", "delayed", "failed"]).catch(() => []);
   await Promise.all(jobs.map((job) => job.remove().catch(() => {})));
-  await closeReviewQueue();
+  await reviewQueue.close();
   await cleanDatabase();
   await disconnectDatabase();
 });

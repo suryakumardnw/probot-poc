@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, test } from "vitest";
+import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { checkDependencies } from "../src/lib/health.js";
+import { createRedis, disconnectRedis } from "../src/lib/redis.js";
+import { prisma, testEnv } from "./helpers/db.js";
 
 /**
  * These tests run against localhost where Postgres/Redis are typically not
@@ -7,11 +9,17 @@ import { checkDependencies } from "../src/lib/health.js";
  * "unavailable" without the check throwing.
  */
 
+const healthRedis = createRedis(testEnv);
+
+afterAll(async () => {
+  await disconnectRedis(healthRedis);
+});
+
 describe("checkDependencies (degraded path)", () => {
   let result: Awaited<ReturnType<typeof checkDependencies>>;
 
   beforeEach(async () => {
-    result = await checkDependencies();
+    result = await checkDependencies({ prisma, redis: healthRedis });
   });
 
   test("reports both dependencies with a status", () => {

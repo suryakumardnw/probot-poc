@@ -1,0 +1,164 @@
+import type http from "node:http";
+import { createNodeMiddleware, createProbot, type Probot } from "probot";
+import { createAdminApi } from "../admin/api.js";
+import { createAdminPanel } from "../admin/panel.js";
+import { createPrismaAuditRepository } from "../admin/prisma-audit.repository.js";
+import { loadEnv, type Env } from "../config/env.js";
+import { createApp } from "../index.js";
+import { checkDependencies } from "../lib/health.js";
+import { createLogger, type PlatformLogger } from "../lib/logger.js";
+import { disconnectPrisma } from "../lib/prisma.js";
+import { disconnectRedis } from "../lib/redis.js";
+import { registerGracefulShutdown } from "../lib/shutdown.js";
+import type { Logger } from "../ports/logger.js";
+import { createConfigStore, createIngestionModule, createPlatformClients } from "./clients.js";
+import { createHttpServer } from "./http.js";
+
+/**
+ * Server composition root.
+ *
+ * Builds the complete HTTP graph exactly once:
+ *   env → logger → Postgres/Redis/queue clients → repositories → services
+ *   → HTTP handlers → server.
+ *
+ * `bootstrapServer` additionally starts the listener and registers graceful
+ * shutdown. `createServerRuntime` is the same graph without listening, used by
+ * the bootstrap smoke test.
+ */
+
+export interface ServerRuntime {
+  server: http.Server;
+  logger: PlatformLogger;
+  listen(): Promise<void>;
+  close(): Promise<void>;
+}
+
+/**
+ * Decode GITHUB_PRIVATE_KEY_BASE64 (single-line, base64-encoded PEM) into
+ * PRIVATE_KEY. Base64 is the deployment-friendly form: PEMs are multiline and
+ * many platforms (e.g. Dokploy env tabs) round-trip single-line values more
+ * reliably than quoted multiline ones.
+ */
+function materializePrivateKeyFromBase64(): void {
+  const base64 = process.env.GITHUB_PRIVATE_KEY_BASE64;
+  if (!base64 || process.env.PRIVATE_KEY || process.env.PRIVATE_KEY_PATH) {
+    return;
+  }
+  try {
+    const pem = Buffer.from(base64.replace(/\s+/g, ""), "base64").toString("utf8");
+    if (pem.includes("-----BEGIN")) {
+      process.env.PRIVATE_KEY = pem;
+    }
+  } catch {
+    // Invalid base64 — fall through; the missing-credential warning below
+    // surfaces the problem without leaking any key material.
+  }
+}
+
+function maybeCreateProbot(env: Env, logger: Logger): Probot | undefined {
+  // Probot requires APP_ID, PRIVATE_KEY and WEBHOOK_SECRET. When they are
+  // absent (e.g. local dev without a GitHub App), run HTTP-only so health
+  // and readiness endpoints remain available.
+  if (!process.env.APP_ID || (!process.env.PRIVATE_KEY && !process.env.PRIVATE_KEY_PATH)) {
+    logger.warn(
+      "APP_ID / PRIVATE_KEY not configured; starting without GitHub webhook processing. " +
+        "Health and readiness endpoints remain available.",
+    );
+    return undefined;
+  }
+  return createProbot({
+    overrides: {
+      port: env.PORT,
+      host: env.HOST,
+    },
+  });
+}
+
+export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerRuntime> {
+  const logger = createLogger(env);
+  const clients = createPlatformClients(env);
+  const config = createConfigStore(env);
+  const ingestion = createIngestionModule({
+    prisma: clients.prisma,
+    queue: clients.reviewQueue,
+    config,
+    logger,
+  });
+
+  // Admin API (ticket 10). The handler reports 503 (in the admin error
+  // envelope) when the OAuth app + session secret + org are not configured;
+  // the server dispatch below keeps that same envelope without invoking the
+  // handler.
+  const adminApi = createAdminApi({
+    env,
+    audit: createPrismaAuditRepository(clients.prisma, logger),
+    ingestion: ingestion.services,
+    config,
+    logger,
+  });
+
+  // Server-rendered admin HTML panel (ticket 14). Same session/CSRF
+  // primitives as the admin API; dispatched AFTER /api/admin/* so the JSON API
+  // keeps precedence for its paths.
+  const adminPanel = createAdminPanel({
+    env,
+    audit: createPrismaAuditRepository(clients.prisma, logger),
+    config,
+    logger,
+  });
+
+  materializePrivateKeyFromBase64();
+  const probot = maybeCreateProbot(env, logger);
+  const appFn = createApp({
+    ingestion: ingestion.services,
+    ingestionRepositories: ingestion.repositories,
+    ingestionUnitOfWork: ingestion.unitOfWork,
+  });
+  const probotMiddlewarePromise = probot ? createNodeMiddleware(appFn, { probot, webhooksPath: "/" }) : undefined;
+
+  const server = createHttpServer({
+    env,
+    logger,
+    ingestion: ingestion.services,
+    adminApi,
+    adminPanel,
+    ...(probotMiddlewarePromise ? { probotMiddlewarePromise } : {}),
+    checkDependencies: () => checkDependencies({ prisma: clients.prisma, redis: clients.redis }),
+  });
+
+  async function close(): Promise<void> {
+    if (server.listening) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await clients.reviewQueue.close();
+    await disconnectRedis(clients.redis);
+    await disconnectPrisma(clients.prisma);
+  }
+
+  return {
+    server,
+    logger,
+    async listen(): Promise<void> {
+      await new Promise<void>((resolve) => server.listen(env.PORT, env.HOST, resolve));
+      logger.info(
+        {
+          port: env.PORT,
+          host: env.HOST,
+          webhooks: Boolean(probotMiddlewarePromise),
+        },
+        "Probot application started",
+      );
+    },
+    close,
+  };
+}
+
+export async function bootstrapServer(): Promise<void> {
+  const runtime = await createServerRuntime();
+  await runtime.listen();
+
+  registerGracefulShutdown(runtime.logger, [
+    { name: "http-server", run: runtime.close },
+    { name: "logger-flush", run: async () => void runtime.logger.flush?.() },
+  ]);
+}

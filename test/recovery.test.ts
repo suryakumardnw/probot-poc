@@ -5,10 +5,10 @@ import { reviewJobPayloadSchema } from "../src/contracts/queue.js";
 import { createIngestionRepositories } from "../src/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../src/ingestion/prisma-ingestion.unit-of-work.js";
 import type { ReviewJobPayload } from "../src/ingestion/queue.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { getMetricsRegistry } from "../src/observability/metrics.js";
 import { reconcileIncompleteReviews, resetReviewForRecovery } from "../src/recovery/reconciliation.js";
 import { REDIS_PERSISTENCE_COMMANDLINE } from "../src/recovery/redis-persistence.js";
+import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 /**
  * Ticket 12 integration tests: startup reconciliation and recovery.
@@ -23,7 +23,6 @@ import { REDIS_PERSISTENCE_COMMANDLINE } from "../src/recovery/redis-persistence
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
-const prisma = getPrisma();
 const repositories = createIngestionRepositories(prisma);
 const unitOfWork = createIngestionUnitOfWork(prisma);
 const logger = pino({ level: "silent" });
@@ -73,7 +72,7 @@ afterAll(async () => {
   await prisma.pullRequest.deleteMany({ where: { id: pullRequestId } }).catch(() => {});
   await prisma.repository.deleteMany({ where: { id: repositoryId } }).catch(() => {});
   await prisma.installation.deleteMany({ where: { id: installationId } }).catch(() => {});
-  await disconnectPrisma();
+  await disconnectDatabase();
 });
 
 /** Create a review + durable job, then simulate a crashed in-flight worker. */

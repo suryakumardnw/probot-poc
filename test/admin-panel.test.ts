@@ -13,9 +13,9 @@ import { clearSessions, createSession, sessionCookieValue } from "../src/admin/s
 import { loadEnv, type Env } from "../src/config/env.js";
 import { createReviewConfigStore } from "../src/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH, LAST_KNOWN_GOOD_SUFFIX } from "../src/config/review-loader.js";
-import { createIngestionServices } from "../src/ingestion/index.js";
-import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
-import { disconnectRedis } from "../src/lib/redis.js";
+import { createReviewQueue } from "../src/ingestion/queue.js";
+import { prisma, disconnectDatabase, testEnv } from "./helpers/db.js";
+import { createTestIngestion } from "./helpers/ingestion.js";
 
 /**
  * Ticket 14 integration tests: server-rendered admin HTML panel.
@@ -32,7 +32,7 @@ process.env.MODEL_BASE_URL ??= "http://localhost:8000";
 // admin panel's configuration round-trip assertions.
 process.env.MODEL_NAME ??= "glm-4.7-flash";
 
-const prisma = getPrisma();
+const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 
 const ADMIN_ENV: Env = loadEnv({
   NODE_ENV: "test",
@@ -179,7 +179,7 @@ function makeHandlers(env: Env, configPath: string): Handlers {
     api: createAdminApi({
       env,
       audit,
-      ingestion: createIngestionServices(prisma, config),
+      ingestion: createTestIngestion({ queue: reviewQueue.queue, config }).services,
       config,
       logger,
     }),
@@ -250,8 +250,8 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await disconnectPrisma();
-  await disconnectRedis();
+  await reviewQueue.close();
+  await disconnectDatabase();
 });
 
 describe("admin panel (ticket 14)", () => {

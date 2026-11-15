@@ -1,5 +1,5 @@
 import type { Probot } from "probot";
-import { getPrisma } from "../lib/prisma.js";
+import type { IngestionUnitOfWork } from "../ingestion/index.js";
 
 /**
  * GitHub App installation lifecycle handlers (ARCHITECTURE.md §13.1).
@@ -7,9 +7,16 @@ import { getPrisma } from "../lib/prisma.js";
  * installation.created: register the installation and its repositories.
  * installation.deleted: mark the installation deleted and disable its
  * repositories (no further reviews are ingested for them).
+ *
+ * Durable writes go through the injected ingestion unit of work, so the
+ * handler never names a database client.
  */
 
-export function registerInstallationHandlers(app: Probot): void {
+export interface InstallationHandlerDeps {
+  unitOfWork: IngestionUnitOfWork;
+}
+
+export function registerInstallationHandlers(app: Probot, deps: InstallationHandlerDeps): void {
   app.on("installation.created", async (context) => {
     const installationPayload = context.payload;
     const { installation, repositories } = installationPayload;
@@ -17,36 +24,18 @@ export function registerInstallationHandlers(app: Probot): void {
     const organization =
       account && "login" in account ? account.login : ((account as { name?: string | null } | null)?.name ?? "unknown");
     try {
-      await getPrisma().$transaction(async (tx) => {
-        const record = await tx.installation.upsert({
-          where: { githubInstallationId: BigInt(installation.id) },
-          create: {
-            githubInstallationId: BigInt(installation.id),
-            organization,
-            status: "active",
-          },
-          update: {
-            organization,
-            status: "active",
-          },
+      await deps.unitOfWork.execute(async (repos) => {
+        const record = await repos.installations.upsertActive({
+          githubInstallationId: BigInt(installation.id),
+          organization,
         });
 
         for (const repo of repositories ?? []) {
-          await tx.repository.upsert({
-            where: { githubRepositoryId: BigInt(repo.id) },
-            create: {
-              githubRepositoryId: BigInt(repo.id),
-              installationId: record.id,
-              fullName: repo.full_name,
-              defaultBranch: (repo as { default_branch?: string }).default_branch ?? null,
-              status: "active",
-            },
-            update: {
-              fullName: repo.full_name,
-              defaultBranch: (repo as { default_branch?: string }).default_branch ?? null,
-              installationId: record.id,
-              status: "active",
-            },
+          await repos.repositories.upsertActive({
+            githubRepositoryId: BigInt(repo.id),
+            installationId: record.id,
+            fullName: repo.full_name,
+            defaultBranch: (repo as { default_branch?: string }).default_branch ?? null,
           });
         }
       });
@@ -62,15 +51,9 @@ export function registerInstallationHandlers(app: Probot): void {
   app.on("installation.deleted", async (context) => {
     const { installation } = context.payload;
     try {
-      await getPrisma().$transaction(async (tx) => {
-        const record = await tx.installation.update({
-          where: { githubInstallationId: BigInt(installation.id) },
-          data: { status: "deleted" },
-        });
-        await tx.repository.updateMany({
-          where: { installationId: record.id },
-          data: { status: "disabled" },
-        });
+      await deps.unitOfWork.execute(async (repos) => {
+        const record = await repos.installations.markDeleted(BigInt(installation.id));
+        await repos.repositories.disableByInstallation(record.id);
       });
       context.log.info({ installation: installation.id }, "Installation marked deleted");
     } catch (error) {

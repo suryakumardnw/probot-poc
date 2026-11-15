@@ -33,10 +33,10 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type pino from "pino";
 import type { ReviewConfig } from "../config/review-schema.js";
 import { handbookVariantDir } from "../knowledge/materialize.js";
 import type { KnowledgeHandbookVariant, KnowledgeSnapshot } from "../knowledge/types.js";
+import type { Logger } from "../ports/logger.js";
 import { HANDBOOK_REFERENCE_INSTRUCTIONS } from "./prompts/index.js";
 import {
   CHARS_PER_TOKEN,
@@ -274,7 +274,7 @@ async function injectHandbookFromSnapshot(
   snapshot: KnowledgeSnapshot,
   config: ReviewConfig,
   changedFiles: string[],
-  logger: pino.Logger,
+  logger: Logger,
 ): Promise<PromptInjection> {
   const detected = detectTechnologies(changedFiles);
   const variant = selectHandbookVariant(snapshot, detected);
@@ -412,5 +412,5 @@ export interface ResolveInjectionInput {
   knowledgeDir?: string | null;
   /** Boot-time knowledge snapshot (null when knowledge init never ran). */
   snapshot?: KnowledgeSnapshot | null;
-  logger: pino.Logger;
+  logger: Logger;
 }

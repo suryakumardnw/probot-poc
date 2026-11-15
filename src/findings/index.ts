@@ -46,6 +46,5 @@ export type { FindingsRepositories, FindingsUnitOfWork } from "./findings.unit-o
 export {
   createFindingsDependencies,
   createFindingsUnitOfWork,
-  getDefaultFindingsDependencies,
   type FindingsServiceDependencies,
 } from "./prisma-findings.unit-of-work.js";

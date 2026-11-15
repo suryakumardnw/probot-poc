@@ -1,4 +1,5 @@
-import type { DependencyCheck } from "./prisma.js";
+import type { PrismaClient } from "@prisma/client";
+import type { Redis } from "ioredis";
 import { checkPrisma } from "./prisma.js";
 import { checkRedis } from "./redis.js";
 
@@ -10,6 +11,9 @@ import { checkRedis } from "./redis.js";
  * - Readiness (/readyz): reports per-dependency status (Postgres, Redis).
  *   The app starts even when dependencies are down; readiness reports them
  *   as unavailable with HTTP 503 so orchestrators can gate traffic.
+ *
+ * Clients are injected by the composition root; this module never constructs
+ * or looks up a process-wide connection.
  */
 
 export type DependencyStatus = {
@@ -24,11 +28,13 @@ export type ReadinessReport = {
   dependencies: DependencyStatus[];
 };
 
-export async function checkDependencies(): Promise<ReadinessReport> {
-  const results = await Promise.all([
-    checkPrisma() as Promise<DependencyCheck>,
-    checkRedis() as Promise<DependencyCheck>,
-  ]);
+export type HealthDependencies = {
+  prisma: PrismaClient;
+  redis: Redis;
+};
+
+export async function checkDependencies(deps: HealthDependencies): Promise<ReadinessReport> {
+  const results = await Promise.all([checkPrisma(deps.prisma), checkRedis(deps.redis)]);
 
   const dependencies: DependencyStatus[] = [
     { name: "postgres", ...results[0] },

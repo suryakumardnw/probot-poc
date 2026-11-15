@@ -292,6 +292,14 @@ export function createInstallationRepository(client: PrismaDatabaseClient): Inst
       });
       return mapInstallation(row);
     },
+
+    async markDeleted(githubInstallationId: bigint): Promise<InstallationRecord> {
+      const row = await client.installation.update({
+        where: { githubInstallationId },
+        data: { status: "deleted" },
+      });
+      return mapInstallation(row);
+    },
   };
 }
 
@@ -316,6 +324,19 @@ export function createRepositoryRepository(client: PrismaDatabaseClient): Reposi
         },
       });
       return mapRepository(row);
+    },
+
+    async findByGithubId(githubRepositoryId: bigint): Promise<RepositoryRecord | null> {
+      const row = await client.repository.findUnique({ where: { githubRepositoryId } });
+      return row ? mapRepository(row) : null;
+    },
+
+    async disableByInstallation(installationId: string): Promise<number> {
+      const result = await client.repository.updateMany({
+        where: { installationId },
+        data: { status: "disabled" },
+      });
+      return result.count;
     },
 
     async findActiveByFullName(fullName: string): Promise<RepositoryWithInstallation | null> {

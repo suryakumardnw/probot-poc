@@ -1,8 +1,6 @@
 import type { Queue } from "bullmq";
-import type pino from "pino";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/config/review-loader.js";
-import { publishOutboxEvent } from "../../src/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
 import type { ReviewJobPayload } from "../../src/ingestion/queue.js";
@@ -10,7 +8,8 @@ import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } fr
 import { reconcileIncompleteReviews } from "../../src/recovery/reconciliation.js";
 import { processReviewJob } from "../../src/workspace/processor.js";
 import type { ReviewWorkspaceService } from "../../src/workspace/workspace.js";
-import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogger } from "./support.js";
+import { createTestIngestion, createTestReviewState, silentLogger } from "../helpers/ingestion.js";
+import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
 
 /**
  * Characterization: queue retry policy (ARCHITECTURE.md §12.4).
@@ -102,9 +101,11 @@ describe("retry policy from configuration (§12.4)", () => {
         added.push({ opts: opts as { attempts?: number; backoff?: { type: string; delay: number } } });
         return { id: chain.jobId };
       },
-    } as unknown as Queue<ReviewJobPayload>;
+    };
 
-    await expect(publishOutboxEvent(chain.outboxEventId!, capturingQueue)).resolves.toBe("published");
+    await expect(
+      createTestIngestion({ queue: capturingQueue }).services.publishOutboxEvent(chain.outboxEventId!),
+    ).resolves.toBe("published");
 
     expect(added).toHaveLength(1);
     expect(added[0]!.opts.attempts).toBe(3);
@@ -136,7 +137,7 @@ describe("job exhaustion (§12.4, §17.3)", () => {
     const summary = await reconcileIncompleteReviews({
       repositories,
       unitOfWork,
-      logger: silentLogger as unknown as pino.Logger,
+      logger: silentLogger,
       queue,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
@@ -163,7 +164,7 @@ describe("job exhaustion (§12.4, §17.3)", () => {
     const summary = await reconcileIncompleteReviews({
       repositories,
       unitOfWork,
-      logger: silentLogger as unknown as pino.Logger,
+      logger: silentLogger,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
     });
@@ -207,8 +208,9 @@ describe("job exhaustion (§12.4, §17.3)", () => {
       {
         repositories: createIngestionRepositories(prisma),
         service,
-        logger: silentLogger as unknown as pino.Logger,
+        logger: silentLogger,
         concurrency: 1,
+        transitionReviewState: createTestReviewState().transitionReviewState,
         retryPolicy: {
           infrastructure: { enabled: true, maxAttempts: 3, backoff: "exponential" },
           providerUnavailable: { enabled: false },

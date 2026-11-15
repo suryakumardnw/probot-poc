@@ -1,4 +1,4 @@
-import type pino from "pino";
+import type { Logger } from "../ports/logger.js";
 
 /**
  * Graceful shutdown helper.
@@ -14,7 +14,7 @@ export type ShutdownStep = {
 };
 
 export function registerGracefulShutdown(
-  logger: pino.Logger,
+  logger: Logger,
   steps: ShutdownStep[],
   options: { timeoutMs?: number; onExit?: () => void } = {},
 ): void {
