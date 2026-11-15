@@ -189,7 +189,9 @@ already reviewed. It accepts `standard`, `skill`, and `handbook` types.
 This is where the system becomes durable and idempotent.
 
 1. **Webhook delivery dedupe.** If `WebhookDelivery.deliveryId` already exists,
-   return `duplicate_delivery`.
+   return `duplicate_delivery`. The intake transaction claims the delivery id
+   itself with insert-on-conflict, so a concurrent duplicate cannot create a
+   second review even when both pre-checks miss.
 2. **Load configuration.** `config/review.json` is loaded and hashed. Invalid
    config returns `configuration_unavailable` instead of running a review.
 3. **Draft policy.** Draft PRs are skipped unless
@@ -201,6 +203,8 @@ This is where the system becomes durable and idempotent.
    Characterization pins automatic `opened` to `standard` and manual `/review`
    to `handbook`.
 5. **One PostgreSQL transaction:**
+   - Claim `WebhookDelivery` (insert-on-conflict). Losing a concurrent claim
+     returns `duplicate_delivery` with no other writes.
    - Upsert `Installation`, `Repository`, `PullRequest`.
    - Check the review identity
      `(pullRequestId, headSha, reviewMode, reviewType, attempt)`.
@@ -214,6 +218,7 @@ This is where the system becomes durable and idempotent.
    - Create a `ReviewStateTransition` row.
    - Create `ReviewJob` with a deterministic `jobKey`:
      `installation:repository:pr:sha:mode:type[:a<attempt>]`.
+   - Attach the review job to the claimed webhook delivery.
    - Create an `OutboxEvent` of type `review.requested`.
 6. **After commit:** `publishOutboxEvent` adds the job to the BullMQ
    `review-jobs` queue. The BullMQ `jobId` is the `ReviewJob.id`.

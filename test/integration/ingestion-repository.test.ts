@@ -236,22 +236,50 @@ describe("review repository", () => {
     expect(await repositories.reviews.findById("missing-review")).toBeNull();
   });
 
-  test("resets and fails reviews for recovery while exposing the state needed on each path", async () => {
+  test("resets and fails non-terminal reviews for recovery and rejects terminal ones", async () => {
     const { repositoryId } = await seedRepository();
     const pullRequestId = await seedPullRequest(repositoryId);
 
     const review = await seedReview(pullRequestId, { state: "publishing" });
-    await repositories.reviews.resetForRecovery(review.id);
+    const resetResult = await repositories.reviews.resetForRecovery(review.id);
+    expect(resetResult.outcome).toBe("reset");
     const reset = await repositories.reviews.findById(review.id);
     expect(reset?.state).toBe("queued");
     expect(reset?.errorCode).toBeNull();
     expect(reset?.errorMessage).toBeNull();
 
-    await repositories.reviews.markFailed(review.id, "recovery_exhausted", "attempts exhausted");
+    const failedResult = await repositories.reviews.markFailedForRecovery(
+      review.id,
+      "recovery_exhausted",
+      "attempts exhausted",
+    );
+    expect(failedResult.outcome).toBe("failed");
     const failed = await repositories.reviews.findById(review.id);
     expect(failed?.state).toBe("failed");
     expect(failed?.errorCode).toBe("recovery_exhausted");
     expect(failed?.errorMessage).toBe("attempts exhausted");
+    const transitions = await repositories.reviews.findStatusById(review.id);
+    expect(transitions?.transitions.map((entry) => `${entry.fromState}->${entry.toState}`)).toEqual([
+      "publishing->queued",
+      "queued->failed",
+    ]);
+
+    // A terminal review is a decided outcome: recovery may neither reset it
+    // nor overwrite it with a failure.
+    const superseded = await seedReview(pullRequestId, {
+      state: "superseded",
+      headSha: "cccc9300cccc9300cccc9300cccc9300cccc9300",
+    });
+    expect(await repositories.reviews.resetForRecovery(superseded.id)).toEqual({
+      outcome: "conflict",
+      currentState: "superseded",
+    });
+    expect(await repositories.reviews.markFailedForRecovery(superseded.id, "recovery_exhausted", "nope")).toEqual({
+      outcome: "conflict",
+      currentState: "superseded",
+    });
+    expect((await repositories.reviews.findById(superseded.id))?.state).toBe("superseded");
+    expect((await repositories.reviews.findStatusById(superseded.id))?.transitions).toHaveLength(0);
   });
 
   test("guarded transitions persist terminal timestamps and failure metadata", async () => {
@@ -361,22 +389,24 @@ describe("state transition and webhook delivery repositories", () => {
     expect(transition.fromState).toBe("queued");
     expect(transition.toState).toBe("preparing");
 
-    await repositories.webhookDeliveries.create({
+    const claimed = await repositories.webhookDeliveries.create({
       deliveryId: "delivery-1",
       event: "pull_request.opened",
       reviewJobId: null,
     });
+    expect(claimed).toBe(true);
     const delivery = await repositories.webhookDeliveries.findByDeliveryId("delivery-1");
     expect(delivery?.event).toBe("pull_request.opened");
     expect(await repositories.webhookDeliveries.findByDeliveryId("missing-delivery")).toBeNull();
 
-    await expect(
-      repositories.webhookDeliveries.create({
-        deliveryId: "delivery-1",
-        event: "pull_request.opened",
-        reviewJobId: null,
-      }),
-    ).rejects.toThrow();
+    // Insert-on-conflict: a duplicate delivery id is reported, not thrown, so
+    // the caller's transaction stays usable and can return duplicate_delivery.
+    const duplicate = await repositories.webhookDeliveries.create({
+      deliveryId: "delivery-1",
+      event: "pull_request.opened",
+      reviewJobId: null,
+    });
+    expect(duplicate).toBe(false);
   });
 });
 

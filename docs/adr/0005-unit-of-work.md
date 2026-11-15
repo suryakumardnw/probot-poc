@@ -44,9 +44,13 @@ interface IngestionUnitOfWork {
   in its tests.
 - Prisma remains an implementation detail; swapping the database later means
   replacing the UoW/repository adapters only.
-- A UoW callback must not perform network I/O or long-running work inside the
+- The UoW callback must not perform network I/O or long-running work inside the
   transaction. The intake path respects this: it commits durable rows and then
   publishes the outbox event after the transaction.
+- Intake claims the webhook delivery id with insert-on-conflict **inside** the
+  transaction. The delivery row, review, job, transition, and outbox event
+  therefore commit or roll back together; a concurrent duplicate loses the
+  claim and returns `duplicate_delivery` without any other write.
 - Repository bundles grow with the use case; each bundle is module-local, so
   unrelated modules do not share a god interface.
 

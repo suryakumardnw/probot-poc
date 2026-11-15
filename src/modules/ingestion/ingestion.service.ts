@@ -95,12 +95,17 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
    * never creates a duplicate review for the same (PR, head SHA, mode).
    */
   async function ingestReviewRequest(input: IngestReviewRequestInput): Promise<IngestReviewRequestResult> {
-    // Webhook delivery idempotency (§12.1): record the delivery first so
-    // duplicate deliveries short-circuit before any transaction.
-    if (input.deliveryId) {
-      const existing = await deps.repositories.webhookDeliveries.findByDeliveryId(input.deliveryId);
+    const deliveryId = input.deliveryId;
+    const deliveryEvent = input.deliveryEvent ?? `pull_request.${input.trigger}`;
+
+    // Webhook delivery idempotency (§12.1): cheap pre-check so a delivery that
+    // is already recorded never opens a transaction. The authoritative claim
+    // happens inside the transaction below, where a concurrent duplicate is
+    // serialized on the unique delivery id.
+    if (deliveryId) {
+      const existing = await deps.repositories.webhookDeliveries.findByDeliveryId(deliveryId);
       if (existing) {
-        deps.logger.debug({ deliveryId: input.deliveryId }, "Duplicate webhook delivery ignored");
+        deps.logger.debug({ deliveryId }, "Duplicate webhook delivery ignored");
         return { outcome: "duplicate_delivery" };
       }
     }
@@ -140,6 +145,22 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
     const repositoryId = BigInt(input.repositoryId);
 
     const result = await deps.unitOfWork.execute(async (repos) => {
+      // 0. Claim the webhook delivery in this same transaction (§12.1). The
+      //    insert-on-conflict is the authoritative race gate: concurrent
+      //    duplicates serialize on the unique delivery id, exactly one claims
+      //    it, and every loser returns `duplicate_delivery` with no review,
+      //    job, transition, or outbox write.
+      if (deliveryId) {
+        const claimed = await repos.webhookDeliveries.create({
+          deliveryId,
+          event: deliveryEvent,
+          reviewJobId: null,
+        });
+        if (!claimed) {
+          return { outcome: "duplicate_delivery" as const };
+        }
+      }
+
       // 1. Upsert installation + repository + pull request (§13.1).
       const installation = await repos.installations.upsertActive({
         githubInstallationId: installationId,
@@ -178,8 +199,13 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
             attempt: 0,
           });
       if (existingReview) {
+        if (deliveryId) {
+          // The delivery is still recorded: GitHub delivered it successfully
+          // and the review identity already exists. Attach its durable job.
+          await repos.webhookDeliveries.attachJob(deliveryId, existingReview.job?.id ?? null);
+        }
         return {
-          duplicate: true as const,
+          outcome: "duplicate" as const,
           reviewId: existingReview.review.id,
           jobId: existingReview.job?.id,
           state: existingReview.review.state,
@@ -316,8 +342,12 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
         }),
       });
 
+      if (deliveryId) {
+        await repos.webhookDeliveries.attachJob(deliveryId, job.id);
+      }
+
       return {
-        duplicate: false as const,
+        outcome: "created" as const,
         reviewId: review.id,
         jobId: job.id,
         outboxEventId: outboxEvent.id,
@@ -326,21 +356,12 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
       };
     });
 
-    // Record the webhook delivery only once durable state is committed.
-    if (input.deliveryId) {
-      await deps.repositories.webhookDeliveries
-        .create({
-          deliveryId: input.deliveryId,
-          event: input.deliveryEvent ?? `pull_request.${input.trigger}`,
-          reviewJobId: result.jobId ?? null,
-        })
-        .catch(() => {
-          // Concurrent duplicate delivery: the review identity check above
-          // still guarantees a single review.
-        });
+    if (result.outcome === "duplicate_delivery") {
+      deps.logger.debug({ deliveryId }, "Duplicate webhook delivery ignored (concurrent delivery lost the claim)");
+      return { outcome: "duplicate_delivery" };
     }
 
-    if (result.duplicate) {
+    if (result.outcome === "duplicate") {
       return {
         outcome: "duplicate",
         reason: "a review already exists for this commit",

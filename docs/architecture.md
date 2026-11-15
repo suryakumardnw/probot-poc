@@ -211,8 +211,11 @@ only that entry point.
 Webhook handlers are intentionally thin: verify the event, apply bot/draft
 policy through the ingestion service, then return. The ingestion transaction
 writes `Installation`, `Repository`, `PullRequest`, `Review`, `ReviewJob`,
-`WebhookDelivery`, and `OutboxEvent` atomically. Outbox publication to Redis is
-best-effort on the request path; recovery owns retries.
+`WebhookDelivery`, and `OutboxEvent` atomically. The delivery id is claimed with
+insert-on-conflict inside that transaction, so a concurrent duplicate delivery
+serializes on the unique id and loses without leaving any review/job/outbox
+rows. Outbox publication to Redis is best-effort on the request path; recovery
+owns retries.
 
 The one exception is **issue triage**: `issues.opened` (for non-PR, non-bot
 issues) calls the injected `ModelProvider` from `modules/triage` and posts the

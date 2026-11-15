@@ -21,6 +21,7 @@ import {
   parseReviewJobPayload,
   REVIEW_QUEUE_NAME,
   type IngestionRepositories,
+  type ResetReviewForRecoveryResult,
   type ReviewJobPayload,
   type ReviewState,
   type ReviewStateService,
@@ -109,6 +110,31 @@ export class ReviewJobRetryError extends Error {
   }
 }
 
+/** Bounded retries when a concurrent writer advances the review mid-reset. */
+const RECOVERY_RESET_MAX_ATTEMPTS = 3;
+
+/**
+ * Reset a mid-pipeline review before a retried attempt runs again. The
+ * repository guard refuses terminal reviews and only resets the state it
+ * observed, so a concurrent supersede/completion is never overwritten.
+ */
+async function resetReviewForProcessing(
+  repositories: IngestionRepositories,
+  reviewId: string,
+): Promise<ResetReviewForRecoveryResult> {
+  let result = await repositories.reviews.resetForRecovery(reviewId);
+  for (
+    let attempt = 1;
+    attempt < RECOVERY_RESET_MAX_ATTEMPTS &&
+    result.outcome === "conflict" &&
+    !isTerminalReviewState(result.currentState);
+    attempt += 1
+  ) {
+    result = await repositories.reviews.resetForRecovery(reviewId);
+  }
+  return result;
+}
+
 export async function processReviewJob(
   jobId: string,
   payload: ReviewJobPayload,
@@ -173,7 +199,26 @@ export async function processReviewJob(
     return "skipped_status";
   }
   if (reviewState !== "queued") {
-    await repositories.reviews.resetForRecovery(job.reviewId);
+    const reset = await resetReviewForProcessing(repositories, job.reviewId);
+    if (reset.outcome === "not_found") {
+      throw new UnrecoverableError(`Review '${job.reviewId}' not found`);
+    }
+    if (reset.outcome === "conflict") {
+      if (isTerminalReviewState(reset.currentState)) {
+        logger.info(
+          { jobId, reviewId: job.reviewId, state: reset.currentState },
+          "Review became terminal before recovery reset; skipping queue job",
+        );
+        // Keep the durable row consistent with the decided review.
+        await repositories.reviewJobs.update(job.id, { status: terminalJobStatus(reset.currentState) }).catch(() => {
+          /* row already gone or concurrently updated */
+        });
+        return "skipped_status";
+      }
+      // A concurrent writer kept advancing the review. Do not drive the
+      // forward state machine from an unknown predecessor; let BullMQ retry.
+      throw new ReviewJobRetryError(`review '${job.reviewId}' kept advancing before recovery reset`, "unknown");
+    }
   }
 
   let span: ReviewSpan | undefined;
@@ -312,9 +357,14 @@ export async function processReviewJob(
         /* row already gone; the queue retry still owns the work */
       });
       if (currentState !== null && currentState !== "queued") {
-        await repositories.reviews.resetForRecovery(job.reviewId).catch(() => {
-          /* next attempt normalizes the state again */
-        });
+        const reset = await repositories.reviews.resetForRecovery(job.reviewId).catch(() => null);
+        if (reset?.outcome === "conflict" && isTerminalReviewState(reset.currentState)) {
+          logger.info(
+            { jobId, reviewId: job.reviewId, state: reset.currentState },
+            "Review became terminal before retry reset; not retrying",
+          );
+          throw new UnrecoverableError(message);
+        }
       }
       throw new ReviewJobRetryError(message, decision.failureClass);
     }

@@ -585,6 +585,55 @@ describe("worker processor", () => {
     expect(await prisma.reviewWorkspace.count({ where: { reviewId: chain.reviewId } })).toBe(0);
   });
 
+  test("a review superseded before the recovery reset is not processed", async () => {
+    const { service } = makeService();
+    const chain = await createReviewChain();
+    // The preflight state read sees a live review; the concurrent supersede
+    // lands immediately before the guarded reset.
+    await prisma.review.update({ where: { id: chain.reviewId }, data: { state: "analyzing" } });
+
+    const repositories = createIngestionRepositories(prisma);
+    const racingRepositories = {
+      ...repositories,
+      reviews: {
+        ...repositories.reviews,
+        resetForRecovery: async (reviewId: string) => {
+          await repositories.reviews.transitionState({
+            reviewId,
+            toState: "superseded",
+            allowedFromStates: ["analyzing"],
+            patch: {},
+          });
+          return repositories.reviews.resetForRecovery(reviewId);
+        },
+      },
+    };
+
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        reviewMode: "adaptive",
+        reviewType: "standard",
+        trigger: "opened",
+      },
+      { ...makeDeps(service, silentLogger), repositories: racingRepositories },
+    );
+
+    expect(outcome).toBe("skipped_status");
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+    expect(review.state).toBe("superseded");
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+    expect(job.status).toBe("superseded");
+    expect(await prisma.reviewWorkspace.count({ where: { reviewId: chain.reviewId } })).toBe(0);
+  });
+
   test("enqueued job is processed end-to-end and cleaned up", async () => {
     const { service, root } = makeService();
     const chain = await createReviewChain();

@@ -80,6 +80,46 @@ describe("IngestionUnitOfWork", () => {
     expect(pullRequest?.id).toBe(written.pullRequest.id);
   });
 
+  test("rolls back every intake write when the in-transaction delivery write fails", async () => {
+    const failingUnitOfWork: IngestionUnitOfWork = {
+      execute<T>(work: (repos: IngestionRepositories) => Promise<T>): Promise<T> {
+        return unitOfWork.execute((repos) =>
+          work({
+            ...repos,
+            webhookDeliveries: {
+              ...repos.webhookDeliveries,
+              // Fails after the review, job, transition, and outbox writes:
+              // the delivery and every other intake row must roll back together.
+              attachJob: async () => {
+                throw new Error("forced delivery failure");
+              },
+            },
+          }),
+        );
+      },
+    };
+    const service = createIngestionService({
+      repositories,
+      unitOfWork: failingUnitOfWork,
+      config: createReviewConfigStore(),
+      logger: silentLogger,
+      publish: async () => "published",
+    });
+
+    await expect(service.ingestReviewRequest(intakeInput({ deliveryId: "uow-delivery-failure" }))).rejects.toThrow(
+      "forced delivery failure",
+    );
+
+    expect(await prisma.installation.findUnique({ where: { githubInstallationId: 9_300_101n } })).toBeNull();
+    expect(await prisma.repository.findUnique({ where: { githubRepositoryId: 8_300_101n } })).toBeNull();
+    expect(await prisma.pullRequest.count()).toBe(0);
+    expect(await prisma.review.count()).toBe(0);
+    expect(await prisma.reviewJob.count()).toBe(0);
+    expect(await prisma.reviewStateTransition.count()).toBe(0);
+    expect(await prisma.outboxEvent.count()).toBe(0);
+    expect(await prisma.webhookDelivery.count()).toBe(0);
+  });
+
   test("rolls back every repository write when the callback throws", async () => {
     const existing = await repositories.installations.upsertActive({
       githubInstallationId: 9_300_202n,
@@ -196,6 +236,26 @@ describe("createIngestionServices", () => {
     const duplicate = await services.ingestReviewRequest(input);
     expect(duplicate.outcome).toBe("duplicate_delivery");
     expect(await prisma.review.count()).toBe(1);
+  });
+
+  test("concurrent duplicate deliveries create exactly one review and one delivery row", async () => {
+    const services = ingestion.services;
+    const input = intakeInput({ deliveryId: "uow-delivery-race" });
+
+    const results = await Promise.all([services.ingestReviewRequest(input), services.ingestReviewRequest(input)]);
+    expect(results.map((result) => result.outcome).sort()).toEqual(["created", "duplicate_delivery"]);
+
+    expect(await prisma.review.count()).toBe(1);
+    expect(await prisma.reviewJob.count()).toBe(1);
+    expect(await prisma.reviewStateTransition.count()).toBe(1);
+    expect(await prisma.outboxEvent.count()).toBe(1);
+    expect(await prisma.webhookDelivery.count({ where: { deliveryId: "uow-delivery-race" } })).toBe(1);
+
+    const delivery = await prisma.webhookDelivery.findUniqueOrThrow({
+      where: { deliveryId: "uow-delivery-race" },
+    });
+    const job = await prisma.reviewJob.findFirstOrThrow();
+    expect(delivery.reviewJobId).toBe(job.id);
   });
 
   test("exposes the review state machine through the same service bundle", async () => {

@@ -14,6 +14,7 @@ import type {
   CreateReviewJobInput,
   CreateReviewStateTransitionInput,
   CreateWebhookDeliveryInput,
+  FailReviewForRecoveryResult,
   FindInFlightReviewsInput,
   FindIncompleteJobsInput,
   FindReviewIdentityInput,
@@ -27,6 +28,7 @@ import type {
   RepositoryRecord,
   RepositoryRepository,
   RepositoryWithInstallation,
+  ResetReviewForRecoveryResult,
   ReviewComparisonRecord,
   ReviewJobRecord,
   ReviewJobRepository,
@@ -52,6 +54,7 @@ import type {
 } from "./ingestion.repository.js";
 import type { IngestionRepositories } from "./ingestion.unit-of-work.js";
 import { createOutboxRepository } from "./prisma-outbox.repository.js";
+import { TERMINAL_REVIEW_STATES } from "./review-state.service.js";
 
 /**
  * Prisma implementation of the ingestion repository ports.
@@ -557,30 +560,82 @@ export function createReviewRepository(client: PrismaDatabaseClient): ReviewRepo
       return runInTransaction(client, (tx) => applyReviewTransition(tx, input));
     },
 
-    async resetForRecovery(reviewId: string): Promise<void> {
-      await runInTransaction(client, async (tx) => {
-        const current = await tx.review.findUnique({
-          where: { id: reviewId },
-          select: { state: true },
-        });
+    async resetForRecovery(reviewId: string): Promise<ResetReviewForRecoveryResult> {
+      return runInTransaction(client, async (tx) => {
+        const current = await tx.review.findUnique({ where: { id: reviewId } });
         if (!current) {
-          throw new Error(`Review '${reviewId}' not found`);
+          return { outcome: "not_found" };
         }
-        await tx.review.update({
-          where: { id: reviewId },
+        // Recovery is a sanctioned backward move, but it may only move a
+        // NON-terminal review. A terminal review is a decided outcome and is
+        // never resurrected (re-checked here and enforced by the guarded
+        // update below, which loses against a concurrent terminal move).
+        if (TERMINAL_REVIEW_STATES.includes(current.state)) {
+          return { outcome: "conflict", currentState: current.state };
+        }
+        if (current.state === "queued") {
+          return { outcome: "unchanged", review: mapReview(current) };
+        }
+
+        // The predecessor-state guard is the race boundary. Two callers can
+        // both read `analyzing`; only the first still matches after the row
+        // lock is released. A concurrent supersede/completion always wins.
+        const moved = await tx.review.updateMany({
+          where: { id: reviewId, state: current.state },
           data: { state: "queued", errorCode: null, errorMessage: null },
         });
-        // Recovery is the one sanctioned backward move; keep the audit trail.
+        if (moved.count === 0) {
+          const latest = await tx.review.findUnique({ where: { id: reviewId } });
+          if (!latest) {
+            return { outcome: "not_found" };
+          }
+          return latest.state === "queued"
+            ? { outcome: "unchanged", review: mapReview(latest) }
+            : { outcome: "conflict", currentState: latest.state };
+        }
+
+        // Keep the audit trail: recovery stays visible as a deliberate move.
         await tx.reviewStateTransition.create({
           data: { reviewId, fromState: current.state, toState: "queued" },
         });
+        const updated = await tx.review.findUniqueOrThrow({ where: { id: reviewId } });
+        return { outcome: "reset", review: mapReview(updated) };
       });
     },
 
-    async markFailed(reviewId: string, errorCode: string, errorMessage: string | null): Promise<void> {
-      await client.review.update({
-        where: { id: reviewId },
-        data: { state: "failed", errorCode, errorMessage },
+    async markFailedForRecovery(
+      reviewId: string,
+      errorCode: string,
+      errorMessage: string | null,
+    ): Promise<FailReviewForRecoveryResult> {
+      return runInTransaction(client, async (tx) => {
+        const current = await tx.review.findUnique({ where: { id: reviewId } });
+        if (!current) {
+          return { outcome: "not_found" };
+        }
+        if (TERMINAL_REVIEW_STATES.includes(current.state)) {
+          return { outcome: "conflict", currentState: current.state };
+        }
+
+        // Same predecessor-state guard as every other move: recovery must not
+        // overwrite a review that became terminal after the scan.
+        const moved = await tx.review.updateMany({
+          where: { id: reviewId, state: current.state },
+          data: { state: "failed", errorCode, errorMessage },
+        });
+        if (moved.count === 0) {
+          const latest = await tx.review.findUnique({ where: { id: reviewId } });
+          if (!latest) {
+            return { outcome: "not_found" };
+          }
+          return { outcome: "conflict", currentState: latest.state };
+        }
+
+        await tx.reviewStateTransition.create({
+          data: { reviewId, fromState: current.state, toState: "failed" },
+        });
+        const updated = await tx.review.findUniqueOrThrow({ where: { id: reviewId } });
+        return { outcome: "failed", review: mapReview(updated) };
       });
     },
 
@@ -718,9 +773,25 @@ export function createWebhookDeliveryRepository(client: PrismaDatabaseClient): W
       return row ? mapWebhookDelivery(row) : null;
     },
 
-    async create(input: CreateWebhookDeliveryInput): Promise<void> {
-      await client.webhookDelivery.create({
-        data: { deliveryId: input.deliveryId, event: input.event, reviewJobId: input.reviewJobId },
+    async create(input: CreateWebhookDeliveryInput): Promise<boolean> {
+      // `skipDuplicates` compiles to INSERT ... ON CONFLICT DO NOTHING. A
+      // conflicting delivery id (even one still uncommitted in another
+      // transaction) yields count 0 instead of aborting the caller's
+      // transaction, so ingestion can treat the race as a duplicate delivery.
+      const inserted = await client.webhookDelivery.createMany({
+        data: [{ deliveryId: input.deliveryId, event: input.event, reviewJobId: input.reviewJobId }],
+        skipDuplicates: true,
+      });
+      return inserted.count > 0;
+    },
+
+    async attachJob(deliveryId: string, reviewJobId: string | null): Promise<void> {
+      if (reviewJobId === null) {
+        return;
+      }
+      await client.webhookDelivery.update({
+        where: { deliveryId },
+        data: { reviewJobId },
       });
     },
   };

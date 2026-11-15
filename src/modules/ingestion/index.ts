@@ -10,6 +10,9 @@
  * Idempotency (§12.3):
  * - Webhook delivery: unique WebhookDelivery.deliveryId collapses duplicate
  *   webhook deliveries (GitHub retries with the same X-GitHub-Delivery id).
+ *   The delivery id is claimed inside the intake transaction with
+ *   insert-on-conflict, so even concurrent duplicates commit exactly one
+ *   delivery row and only the winner writes a review/job/outbox.
  * - Review identity: unique (pullRequestId, headSha, reviewMode, reviewType,
  *   attempt) means one review per commit per type; forced manual re-reviews
  *   (`/review` command) increment `attempt` instead of deduping.
@@ -36,7 +39,7 @@ import { createReviewStateService, type ReviewStateService } from "./review-stat
 export { REVIEW_TYPES } from "../../contracts/queue.js";
 export type { IngestOutcome, ReviewJobPayload, ReviewTypeValue } from "../../contracts/queue.js";
 export { REVIEW_QUEUE_NAME, parseReviewJobPayload } from "../../shared/queue-payload.js";
-export type { ReviewState } from "./ingestion.repository.js";
+export type { FailReviewForRecoveryResult, ResetReviewForRecoveryResult, ReviewState } from "./ingestion.repository.js";
 export {
   createIngestionReadService,
   type IngestionReadService,

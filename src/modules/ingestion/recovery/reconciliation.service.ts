@@ -27,7 +27,13 @@ import { outboxPayloadSchema, reviewJobPayloadSchema, type ReviewJobPayload } fr
 import type { Logger } from "../../../ports/logger.js";
 import type { Observability } from "../../../ports/observability.js";
 import { AppError, ValidationError } from "../../../shared/errors/index.js";
-import type { ReviewJobRecord, ReviewJobWithReview, ReviewRecord } from "../ingestion.repository.js";
+import type {
+  FailReviewForRecoveryResult,
+  ResetReviewForRecoveryResult,
+  ReviewJobRecord,
+  ReviewJobWithReview,
+  ReviewRecord,
+} from "../ingestion.repository.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "../ingestion.unit-of-work.js";
 import { TERMINAL_REVIEW_STATES } from "../review-state.service.js";
 
@@ -116,42 +122,43 @@ function buildPayloadFromRows(
 /**
  * Reset a review to `queued` for reprocessing (recovery path, §17.3). This
  * intentionally bypasses the forward-only state machine — recovery is the
- * one sanctioned way to move a review backwards — but still records a
- * durable transition row (`fromState -> queued`) so the history stays
- * auditable.
+ * one sanctioned way to move a review backwards — but the repository guard
+ * still refuses terminal reviews and records a durable transition row
+ * (`fromState -> queued`) so the history stays auditable.
+ *
+ * The result is returned instead of thrown so callers can distinguish a
+ * review that became terminal concurrently (`conflict`) from a genuine reset.
  */
-export async function resetReviewForRecovery(unitOfWork: IngestionUnitOfWork, reviewId: string): Promise<void> {
-  await unitOfWork.execute(async (repos) => {
-    const currentState = await repos.reviews.findStateById(reviewId);
-    if (currentState === null) {
-      throw new Error(`Review '${reviewId}' not found`);
-    }
-    // The repository performs the reset and its audit transition atomically.
-    await repos.reviews.resetForRecovery(reviewId);
-  });
+export async function resetReviewForRecovery(
+  unitOfWork: IngestionUnitOfWork,
+  reviewId: string,
+): Promise<ResetReviewForRecoveryResult> {
+  return unitOfWork.execute(async (repos) => repos.reviews.resetForRecovery(reviewId));
 }
 
 /**
- * Terminal recovery failure: reset the review to `queued` (so the transition
- * history remains auditable), mark it failed with the given stable code, and
- * fail the durable job row.
+ * Terminal recovery failure: fail the review with the given stable code and
+ * fail the durable job row. Both writes plus the review's audit transition
+ * commit in one guarded transaction: a concurrent supersede/completion wins
+ * and leaves the review untouched.
  */
 async function failReviewForRecovery(
-  repositories: IngestionRepositories,
   unitOfWork: IngestionUnitOfWork,
   reviewId: string,
   jobId: string,
   reason: string,
   errorCode: string,
-): Promise<void> {
-  await resetReviewForRecovery(unitOfWork, reviewId);
-  await repositories.reviews.markFailed(reviewId, errorCode, reason.slice(0, 500));
-  await repositories.stateTransitions.create({
-    reviewId,
-    fromState: "queued",
-    toState: "failed",
+): Promise<FailReviewForRecoveryResult> {
+  const message = reason.slice(0, 500);
+  return unitOfWork.execute(async (repos) => {
+    const failed = await repos.reviews.markFailedForRecovery(reviewId, errorCode, message);
+    if (failed.outcome === "failed") {
+      // A concurrent supersede may already have retired the job; never
+      // overwrite that outcome with a failure write.
+      await repos.reviewJobs.markFailedUnlessTerminal(jobId, message);
+    }
+    return failed;
   });
-  await repositories.reviewJobs.markFailed(jobId, reason.slice(0, 500));
 }
 
 /**
@@ -243,9 +250,22 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         "Failing stale incomplete review during reconciliation",
       );
       try {
-        await failReviewForRecovery(repositories, unitOfWork, review.id, job.id, reason, "recovery_exhausted");
-        deps.observability.metrics.recordReviewFailed("recovery_exhausted");
-        summary.failed += 1;
+        const failed = await failReviewForRecovery(unitOfWork, review.id, job.id, reason, "recovery_exhausted");
+        if (failed.outcome === "failed") {
+          deps.observability.metrics.recordReviewFailed("recovery_exhausted");
+          summary.failed += 1;
+        } else {
+          // A concurrent worker or supersede decided the review first.
+          logger.info(
+            {
+              reviewId: review.id,
+              jobId: job.id,
+              outcome: failed.outcome,
+              ...(failed.outcome === "conflict" ? { currentState: failed.currentState } : {}),
+            },
+            "Skipped recovery failure: review is no longer fail-able",
+          );
+        }
       } catch (error) {
         logger.error(
           { reviewId: review.id, err: error instanceof Error ? error.message : String(error) },
@@ -283,6 +303,24 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
           }
         : fallback;
 
+      // Requeue only after the guarded reset wins. A review that became
+      // terminal after the scan must never be requeued; the repository guard
+      // returns `conflict` instead of moving a superseded/completed review
+      // backwards.
+      const reset = await resetReviewForRecovery(unitOfWork, review.id);
+      if (reset.outcome === "conflict" || reset.outcome === "not_found") {
+        logger.info(
+          {
+            reviewId: review.id,
+            jobId: job.id,
+            outcome: reset.outcome,
+            ...(reset.outcome === "conflict" ? { currentState: reset.currentState } : {}),
+          },
+          "Skipped re-enqueue: review is no longer recoverable",
+        );
+        continue;
+      }
+
       // A terminal BullMQ job (completed/failed) with this id is retained by
       // removeOnComplete/removeOnFail, and `queue.add` with an existing jobId
       // is a silent no-op. Without clearing it, recovery would flip the review
@@ -297,7 +335,6 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         }
       }
 
-      await resetReviewForRecovery(unitOfWork, review.id);
       await repositories.reviewJobs.update(job.id, { status: "enqueued" });
       // Idempotent identity: jobId = ReviewJob.id (ticket 03 contract).
       await queue.add("review", payload, {
@@ -319,13 +356,25 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         // every reconciliation pass.
         const reason = `${error.code}: ${error.message}`;
         try {
-          await failReviewForRecovery(repositories, unitOfWork, review.id, job.id, reason, error.code);
-          deps.observability.metrics.recordReviewFailed("review_payload_invalid");
-          summary.failed += 1;
-          logger.error(
-            { reviewId: review.id, jobId: job.id, code: error.code },
-            "Failing review with invalid durable payload",
-          );
+          const failed = await failReviewForRecovery(unitOfWork, review.id, job.id, reason, error.code);
+          if (failed.outcome === "failed") {
+            deps.observability.metrics.recordReviewFailed("review_payload_invalid");
+            summary.failed += 1;
+            logger.error(
+              { reviewId: review.id, jobId: job.id, code: error.code },
+              "Failing review with invalid durable payload",
+            );
+          } else {
+            logger.info(
+              {
+                reviewId: review.id,
+                jobId: job.id,
+                outcome: failed.outcome,
+                ...(failed.outcome === "conflict" ? { currentState: failed.currentState } : {}),
+              },
+              "Skipped invalid-payload failure: review is no longer fail-able",
+            );
+          }
         } catch (failure) {
           logger.error(
             { reviewId: review.id, err: failure instanceof Error ? failure.message : String(failure) },

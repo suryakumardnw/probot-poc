@@ -21,6 +21,11 @@ idempotent, and Postgres — not Redis — is the source of truth.
 identity: recovery re-enqueues with the **same** BullMQ job id, so a crash can
 never create a second queue job for the same review.
 
+The webhook delivery row is claimed with insert-on-conflict inside the intake
+transaction. A duplicate delivery that races the first one loses the unique-id
+claim and commits nothing; the winning transaction commits the delivery,
+review, job, transition, and outbox rows together.
+
 ## Enqueue and Redis outages
 
 1. Ingestion commits the review, durable job (`pending_outbox`) and outbox event
@@ -93,7 +98,9 @@ enqueue time; `enabled: false` means `attempts: 1` (no retries).
 - **throws `ReviewJobRetryError`** when the decision is retryable and BullMQ has
   attempts remaining. The durable job stays `processing` (claimable by the next
   attempt), `lastError` is recorded, and the review is reset to `queued` (an
-  audited recovery move) so the forward state machine can run again; or
+  audited recovery move). The reset is guarded by the observed non-terminal
+  predecessor, so a review that became `superseded`/`completed` concurrently is
+  never moved backwards; or
 - **marks the durable job and review failed** and throws
   `UnrecoverableError` when the failure is permanent or the attempt budget is
   exhausted. The review records `retry_exhausted` for an exhausted transient
@@ -122,6 +129,14 @@ Reconciliation runs at startup and every 60 s. It scans
 terminal, honors `queue.retry.infrastructure.maxAttempts`, and only removes a
 retained BullMQ job when it is already terminal (`completed`/`failed`) so
 re-adding with the same id actually runs.
+
+Both recovery writes are guarded by the state the reconciliation scan observed:
+
+- the requeue reset only succeeds from a non-terminal predecessor and returns
+  `conflict` (skipping the queue add) when a concurrent supersede/completion won;
+- the failure path marks the review failed, writes its audit transition, and
+  marks the durable job failed in one transaction. A concurrent terminal
+  transition wins and the whole failure write rolls back/no-ops.
 
 Reconciliation re-enqueue currently uses a fixed `exponential` backoff with a
 5000 ms base delay, not `queue.retry.infrastructure.backoff`. The attempt count

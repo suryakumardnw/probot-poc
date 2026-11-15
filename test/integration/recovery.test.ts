@@ -7,6 +7,9 @@ import {
   REDIS_PERSISTENCE_COMMANDLINE,
   reconcileIncompleteReviews,
   resetReviewForRecovery,
+  type IngestionRepositories,
+  type IngestionUnitOfWork,
+  type ReviewState,
 } from "../../src/modules/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
@@ -82,7 +85,7 @@ afterAll(async () => {
 
 /** Create a review + durable job, then simulate a crashed in-flight worker. */
 async function createStuckReview(
-  overrides: { state?: "queued" | "analyzing" | "publishing"; attempts?: number } = {},
+  overrides: { state?: ReviewState; attempts?: number } = {},
 ): Promise<{ reviewId: string; jobId: string }> {
   // Unique per call: (pull_request_id, head_sha, review_mode) is unique.
   const headSha = `cccc7712cccc7712cccc7712${Date.now().toString(36).padStart(12, "0")}${Math.floor(Math.random() * 1e6)
@@ -349,6 +352,48 @@ describe("reconciliation", () => {
     expect(review?.state).toBe("failed");
   });
 
+  test("a failure while writing the job rolls back the whole recovery failure transaction", async () => {
+    const { reviewId } = await createStuckReview({ state: "analyzing", attempts: 0 });
+    // The review failure write and the job failure write share one guarded
+    // transaction; a late job-write error must leave the review untouched.
+    const failingUnitOfWork: IngestionUnitOfWork = {
+      execute<T>(work: (repos: IngestionRepositories) => Promise<T>): Promise<T> {
+        return unitOfWork.execute((repos) =>
+          work({
+            ...repos,
+            reviewJobs: {
+              ...repos.reviewJobs,
+              markFailedUnlessTerminal: async () => {
+                throw new Error("forced job failure write");
+              },
+            },
+          }),
+        );
+      },
+    };
+
+    const summary = await reconcileIncompleteReviews({
+      repositories,
+      unitOfWork: failingUnitOfWork,
+      logger,
+      observability: createObservability(),
+      queue: fakeQueue().queue,
+      policy: "fail",
+      staleThresholdMs: 15 * 60_000,
+    });
+
+    expect(summary.failed).toBe(0);
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: reviewId } });
+    expect(review.state).toBe("analyzing");
+    expect(review.errorCode).toBeNull();
+    expect(await prisma.reviewStateTransition.count({ where: { reviewId, toState: "failed" } })).toBe(0);
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { reviewId } });
+    expect(job.status).toBe("processing");
+
+    // Keep this still-stale fixture out of later reconciliation passes.
+    await prisma.reviewJob.updateMany({ where: { reviewId }, data: { updatedAt: new Date() } });
+  });
+
   test("skips fresh (still-progressing) reviews", async () => {
     const { reviewId } = await createStuckReview({ state: "queued" });
     // Undo the artificial staleness.
@@ -415,9 +460,10 @@ describe("reconciliation", () => {
 });
 
 describe("resetReviewForRecovery", () => {
-  test("resets a review to queued and records an auditable transition", async () => {
+  test("resets a stuck non-terminal review to queued and records an auditable transition", async () => {
     const { reviewId } = await createStuckReview({ state: "publishing" });
-    await resetReviewForRecovery(unitOfWork, reviewId);
+    const result = await resetReviewForRecovery(unitOfWork, reviewId);
+    expect(result.outcome).toBe("reset");
 
     const review = await prisma.review.findUnique({ where: { id: reviewId } });
     expect(review?.state).toBe("queued");
@@ -430,6 +476,55 @@ describe("resetReviewForRecovery", () => {
     const last = transitions[transitions.length - 1];
     expect(last?.fromState).toBe("publishing");
     expect(last?.toState).toBe("queued");
+  });
+
+  test("never moves a terminal review backwards", async () => {
+    for (const state of ["completed", "superseded"] as const) {
+      const { reviewId } = await createStuckReview({ state });
+
+      const result = await resetReviewForRecovery(unitOfWork, reviewId);
+      expect(result).toEqual({ outcome: "conflict", currentState: state });
+
+      const review = await prisma.review.findUniqueOrThrow({ where: { id: reviewId } });
+      expect(review.state).toBe(state);
+      expect(await prisma.reviewStateTransition.count({ where: { reviewId, toState: "queued" } })).toBe(0);
+    }
+  });
+
+  test("a concurrent supersede wins over a recovery reset", async () => {
+    const { reviewId } = await createStuckReview({ state: "analyzing" });
+
+    // Deterministic interleaving: the supersede commits immediately before the
+    // reset observes the row, so the guard must refuse the backward move.
+    const racingUnitOfWork: IngestionUnitOfWork = {
+      execute<T>(work: (repos: IngestionRepositories) => Promise<T>): Promise<T> {
+        return unitOfWork.execute((repos) =>
+          work({
+            ...repos,
+            reviews: {
+              ...repos.reviews,
+              resetForRecovery: async (id) => {
+                await repos.reviews.transitionState({
+                  reviewId: id,
+                  toState: "superseded",
+                  allowedFromStates: ["analyzing"],
+                  patch: {},
+                });
+                return repos.reviews.resetForRecovery(id);
+              },
+            },
+          }),
+        );
+      },
+    };
+
+    const result = await resetReviewForRecovery(racingUnitOfWork, reviewId);
+    expect(result).toEqual({ outcome: "conflict", currentState: "superseded" });
+
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: reviewId } });
+    expect(review.state).toBe("superseded");
+    const transitions = await prisma.reviewStateTransition.findMany({ where: { reviewId } });
+    expect(transitions.map((entry) => `${entry.fromState}->${entry.toState}`)).toEqual(["analyzing->superseded"]);
   });
 });
 

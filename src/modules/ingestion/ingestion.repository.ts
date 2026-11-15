@@ -306,6 +306,20 @@ export type TransitionReviewStateResult =
   /** The review is in a state that does not allow this move. */
   | { outcome: "conflict"; currentState: ReviewState };
 
+export type ResetReviewForRecoveryResult =
+  | { outcome: "reset"; review: ReviewRecord }
+  /** The review was already `queued`; no write or audit row was needed. */
+  | { outcome: "unchanged"; review: ReviewRecord }
+  | { outcome: "not_found" }
+  /** A terminal review won the race; recovery never moves it backwards. */
+  | { outcome: "conflict"; currentState: ReviewState };
+
+export type FailReviewForRecoveryResult =
+  | { outcome: "failed"; review: ReviewRecord }
+  | { outcome: "not_found" }
+  /** A terminal review won the race; recovery never overwrites it. */
+  | { outcome: "conflict"; currentState: ReviewState };
+
 export type CreateReviewJobInput = {
   reviewId: string;
   status: JobStatus;
@@ -394,11 +408,22 @@ export interface ReviewRepository {
   transitionState(input: TransitionReviewStateInput): Promise<TransitionReviewStateResult>;
   /**
    * Sanctioned backward move: recovery requeues a stuck review explicitly.
-   * Resets the row to `queued` and appends one audit transition atomically.
+   * The write is guarded by the observed non-terminal predecessor, so a
+   * concurrent supersede/completion always wins; a terminal review is never
+   * moved backwards. Resets the row to `queued`, clears failure metadata, and
+   * appends one audit transition atomically.
    */
-  resetForRecovery(reviewId: string): Promise<void>;
-  /** Recovery-only terminal write: fail a review after requeue exhaustion. */
-  markFailed(reviewId: string, errorCode: string, errorMessage: string | null): Promise<void>;
+  resetForRecovery(reviewId: string): Promise<ResetReviewForRecoveryResult>;
+  /**
+   * Recovery-only terminal write: fail a review after requeue exhaustion.
+   * Guarded by the observed non-terminal predecessor and atomic with its audit
+   * transition, so a concurrent terminal transition is never overwritten.
+   */
+  markFailedForRecovery(
+    reviewId: string,
+    errorCode: string,
+    errorMessage: string | null,
+  ): Promise<FailReviewForRecoveryResult>;
   findStatusById(reviewId: string): Promise<ReviewStatusRecord | null>;
   /** Newest-first administrative review list with repository names. */
   listPage(input: ListReviewPageInput): Promise<ReviewListPageRecord>;
@@ -437,5 +462,13 @@ export interface ReviewStateTransitionRepository {
 
 export interface WebhookDeliveryRepository {
   findByDeliveryId(deliveryId: string): Promise<WebhookDeliveryRecord | null>;
-  create(input: CreateWebhookDeliveryInput): Promise<void>;
+  /**
+   * Claim a delivery id inside the caller's transaction. Returns `false` when
+   * the id is already recorded (including a concurrent delivery that has not
+   * committed yet), using insert-on-conflict semantics so the surrounding
+   * transaction stays usable and can return `duplicate_delivery`.
+   */
+  create(input: CreateWebhookDeliveryInput): Promise<boolean>;
+  /** Attach the durable job to a delivery claimed earlier in the same transaction. */
+  attachJob(deliveryId: string, reviewJobId: string | null): Promise<void>;
 }
