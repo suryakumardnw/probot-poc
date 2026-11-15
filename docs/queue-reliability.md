@@ -38,12 +38,34 @@ decides whether a failed attempt may retry. It composes the two existing
 classifiers rather than re-implementing them:
 
 - `classifyAppFailure` (shared `AppError` family) owns the retryability of
-  validation/auth/conflict/provider errors. An `AppError` retries only when it is
-  explicitly `retryable` **and** the configuration allows an infrastructure
-  retry.
-- `classifyFailure` + `retryPolicyFor` own operational errors outside that
-  family (`ReviewRetrievalError`, `AgentRuntimeError`, unknown throws) and supply
-  the §12.4 failure class and the configured attempt budget.
+  validation/auth/conflict/provider errors **and the normalized
+  `AgentRuntimeError`/`ModelProviderError` classes**. An `AppError` retries only
+  when it is explicitly `retryable` **and** the configuration allows an
+  infrastructure retry.
+- `classifyFailure` + `retryPolicyFor` supply the §12.4 failure class and the
+  configured attempt budget for every error. They also own errors outside the
+  family (`ReviewRetrievalError`, unknown throws); for an `AppError`, the
+  normalized code is authoritative and the message-pattern fallback does not
+  override it.
+
+### Agent-runtime failure ruling
+
+`AgentRuntimeError` extends `AppError`; when no explicit `errorCode` is passed,
+`classifyQueueFailure` uses `error.code`. `crash`, `spawn`, and
+`provider_unavailable` are transient (still ANDed with the configured policy);
+`timeout`, `invalid_output`, `config`, `permission_denied`,
+`workspace_modified`, and `unknown` are terminal.
+
+`unknown` is terminal **by code**, regardless of
+`queue.retry.providerUnavailable.enabled` or whether the message looks
+transient (for example, contains `503`). Before PR 3.9 the error was outside the
+`AppError` family and the message-pattern fallback could retry it; that fallback
+no longer overrides an `AppError` code. This is deliberate: an unclassified
+runtime failure is a blind retry and conflicts with the runtime's
+fail-immediately policy (§8.4/§12.4). The failure class recorded for metrics can
+still reflect a message pattern, but retryability is governed by the `AppError`
+flag. Strict pre-PR parity via message matching is intentionally not
+implemented because it would preserve a retry path the design rejects.
 
 The attempt budget comes from `config/review.json`
 (`queue.retry.infrastructure`): `attempts` and `backoff` are passed to BullMQ at
@@ -60,7 +82,7 @@ enqueue time; `enabled: false` means `attempts: 1` (no retries).
 | `invalid_model_output`   | schema/validation failure                                  | Terminal                             |
 | `resource_limit_exceeded`| timeout, OOM, disk quota                                   | Terminal                             |
 | `stale_commit`           | PR head moved / results rejected                           | Terminal                             |
-| `unknown`                | unclassified internal error                                | Terminal (never retry blindly)       |
+| `unknown`                | unclassified internal error, `AgentRuntimeError("unknown")` | Terminal (by code; never retry blindly) |
 | transient `AppError`     | `RateLimitError`, retryable `ProviderError`, 5xx           | Retry within the configured budget; a retryable `ProviderError` still maps to `model_unavailable`, so `queue.retry.providerUnavailable.enabled` must also be true |
 | permanent `AppError`     | `ValidationError`, `AuthError`, `ForbiddenError`, conflict | Terminal                             |
 

@@ -147,6 +147,39 @@ describe("agent runtime selection and error contract", () => {
     expect(queueDecision("permission_denied").retryable).toBe(false);
     expect(queueDecision("workspace_modified").retryable).toBe(false);
   });
+
+  it("treats unknown agent runtime failures as terminal by code", () => {
+    // Ruling: `unknown` means the runtime could not classify the failure.
+    // Retrying is blind, so it is terminal regardless of the provider retry
+    // setting (matching the §12.4 `unknown` row and the runtime's
+    // fail-immediately policy).
+    expect(queueDecision("unknown")).toMatchObject({ failureClass: "unknown", retryable: false });
+    expect(queueDecision("unknown", providerRetryEnabled)).toMatchObject({
+      failureClass: "unknown",
+      retryable: false,
+    });
+  });
+
+  it("does not fall back to message patterns for unknown AppError codes", () => {
+    // Before PR 3.9 this error was outside the AppError family and the
+    // classifier could retry it because "503" matched a transient message
+    // pattern. Now the AppError code ("unknown") owns the disposition.
+    const error = new AgentRuntimeError("unknown", "upstream returned 503 after retry");
+    const decision = classifyQueueFailure({ error, message: error.message, policy: providerRetryEnabled });
+    expect(decision).toMatchObject({ errorCode: "unknown", retryable: false });
+    expect(decision.failureClass).toBe("github_api_transient");
+  });
+
+  it("falls back to the AppError code when no explicit errorCode is supplied", () => {
+    const error = new AgentRuntimeError("crash", "agent runtime exited with code 1");
+    const decision = classifyQueueFailure({ error, message: error.message });
+    expect(decision).toMatchObject({
+      errorCode: "crash",
+      failureClass: "agent_crash",
+      retryable: true,
+      maxAttempts: DEFAULT_RETRY_POLICY_CONFIG.infrastructure.maxAttempts,
+    });
+  });
 });
 
 describe("model provider error contract", () => {

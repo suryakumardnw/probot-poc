@@ -62,8 +62,10 @@ export class AgentRuntimeError extends AppError {
 /**
  * No agent-runtime failure is projected to an HTTP response today; the status
  * is the closest safe default for the shared failure family. Timeouts and
- * provider outages are transient availability failures; everything else is an
- * internal execution failure.
+ * provider outages are transient availability failures (504/503); everything
+ * else is an internal execution failure. The model-provider taxonomy differs
+ * deliberately: a provider-level timeout is 502, because it is an upstream
+ * request failure, not the gateway deadline represented by an agent timeout.
  */
 function agentRuntimeStatusCode(code: AgentErrorCode): number {
   switch (code) {

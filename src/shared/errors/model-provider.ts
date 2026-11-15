@@ -62,6 +62,12 @@ export class ModelProviderError extends AppError {
  * Aligns with `ProviderError` (the shared HTTP-facing provider failure):
  * availability failures are 503, every other upstream failure is 502. An
  * explicit upstream status always wins.
+ *
+ * A provider-level timeout stays 502: the request reached an upstream endpoint
+ * that did not answer in time. The agent-runtime timeout uses 504 instead
+ * because the runtime is the execution gateway rather than the provider
+ * endpoint. Neither status is projected to HTTP today; they exist for the
+ * shared error family.
  */
 function modelProviderStatusCode(code: ModelErrorCode): number {
   switch (code) {

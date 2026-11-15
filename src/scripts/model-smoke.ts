@@ -110,7 +110,11 @@ async function main(): Promise<void> {
           smoke: "result",
           ok: false,
           code: error.code,
-          statusCode: error.statusCode ?? null,
+          // PR 3.9: ModelProviderError extends AppError, whose contract requires
+          // a numeric statusCode. Programmatic failures (no upstream response)
+          // therefore report the shared default (502/503) instead of the old
+          // `null`; HTTP failures still report the real upstream status.
+          statusCode: error.statusCode,
           providerDetail: error.providerDetail ?? null,
         }),
       );
