@@ -18,7 +18,11 @@ import {
   looksBinary,
 } from "../src/modules/workspace/files.js";
 import { createPrismaWorkspaceRepository } from "../src/modules/workspace/prisma-workspace.repository.js";
-import { ReviewJobRetryError, processReviewJob, type ProcessReviewJobDeps } from "../src/modules/workspace/processor.js";
+import {
+  ReviewJobRetryError,
+  processReviewJob,
+  type ProcessReviewJobDeps,
+} from "../src/modules/workspace/processor.js";
 import { redactCredentials, sanitizeGitUrl } from "../src/modules/workspace/redact.js";
 import {
   ReviewWorkspaceService,

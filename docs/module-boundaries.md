@@ -25,7 +25,7 @@ descriptor and are therefore `bootstrap`.
 | `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | `src/{admin,agent,config,controllers,eval,lib,models,observability,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
+| `legacy` | `src/{agent,config,controllers,eval,lib,models,observability,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -52,7 +52,8 @@ cross-element dependency needs a policy.
 
 External and Node core packages are allowed from every element except
 `contracts`. `contracts` may import only `zod`; test-category files are exempt.
-No module may import another module's internal file or a platform adapter.
+No module may import another module's internal file or a platform adapter,
+except the explicit temporary admin allowance listed below.
 
 `import/no-cycle` remains enabled for every source file.
 
@@ -89,7 +90,6 @@ removal.
 
 | Path | Removed by |
 |---|---|
-| `src/admin` | PR 3.6 |
 | `src/controllers`, `src/services`, `src/views` | PR 3.7 (triage moves out of the MVC layout) |
 | `src/agent`, `src/models` | PR 3.9 |
 | `src/config`, `src/lib`, `src/observability` | PR 3.10 |
@@ -105,6 +105,7 @@ removal.
 | `module` -> `src/observability` | Modules emit metrics before observability becomes `platform/observability`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `ports` -> `src/config` | `ports/review-config.ts` re-exports `ConfigValidationError` and the `ReviewConfig` type from the concrete loader. | PR 3.10 |
 | `contracts/review.ts` -> `src/modules/review` | `FINDING_CATEGORIES` still lives in the review module's `types.ts`. The move PR is move-only, so PR 3.12 moves the constant into `contracts/review.ts`. | PR 3.12 |
+| `modules/admin` -> `platform/http/error-mapper.ts` | The admin API and panel render failures through the platform HTTP projection. PR 3.12 injects the projection from the composition root or makes it a shared helper. | PR 3.12 |
 
 ### `process.env` allowances
 
@@ -118,7 +119,7 @@ the allowance.
 |---|---|
 | `src/config/**` | PR 3.10; PR 3.12 final |
 | `src/bootstrap/**` | PR 3.10; PR 3.12 final |
-| `src/admin/**` | PR 3.6; PR 3.12 final |
+| `src/modules/admin/**` | PR 3.12 final (development-only login reads `ADMIN_DEV_LOGIN`) |
 | `src/agent/**` | PR 3.9; PR 3.12 final |
 | `src/modules/execution/**` | PR 3.12 final (sandbox and process environment reads) |
 | `src/modules/knowledge/**` | PR 3.12 final (GitHub token reads) |
@@ -147,7 +148,7 @@ Permanent: `src/platform/**`.
 
 | Temporary path | Removed by |
 |---|---|
-| `src/admin/**` | PR 3.6 (GitHub identity client moves behind a port) |
+| `src/modules/admin/**` | PR 3.12 replaces the OAuth client with a platform-owned identity client |
 | `src/modules/knowledge/**` | PR 3.12 replaces the client with a platform-owned client or port |
 | `src/services/**` | PR 3.7 (triage uses the model-provider port) |
 

@@ -1,5 +1,6 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { Env } from "../config/env.js";
+import { createHmac, randomBytes } from "node:crypto";
+import type { Env } from "../../../config/env.js";
+import { safeEqual } from "./csrf.js";
 
 /**
  * Admin session management (ticket 10, §14.2).
@@ -14,11 +15,10 @@ import type { Env } from "../config/env.js";
  *   (widened in ticket 14 so the server-rendered panel at /admin shares the
  *   session with the /api/admin endpoints).
  * - Each session carries a CSRF token that must be echoed in the
- *   `X-CSRF-Token` header on every unsafe request.
+ *   `X-CSRF-Token` header on every unsafe request (see `auth/csrf.ts`).
  */
 
 export const SESSION_COOKIE = "admin_session";
-export const CSRF_HEADER = "x-csrf-token";
 
 export interface AdminSession {
   id: string;
@@ -39,15 +39,6 @@ export function clearSessions(): void {
 
 function sign(value: string, secret: string): string {
   return createHmac("sha256", secret).update(value).digest("base64url");
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) {
-    return false;
-  }
-  return timingSafeEqual(bufA, bufB);
 }
 
 export interface SessionDeps {
@@ -145,11 +136,6 @@ export function getSessionFromCookie(
     return null;
   }
   return session;
-}
-
-/** Validate the CSRF token of a mutating request against the session. */
-export function verifyCsrfToken(session: AdminSession, headerValue: string | undefined): boolean {
-  return typeof headerValue === "string" && headerValue.length > 0 && safeEqual(headerValue, session.csrfToken);
 }
 
 export function destroySession(sessionId: string): void {

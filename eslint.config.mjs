@@ -11,7 +11,6 @@ import tseslint from "typescript-eslint";
  * removal PR in docs/module-boundaries.md; PR 3.12 deletes this list.
  */
 const LEGACY_ELEMENT_PATHS = [
-  "src/admin",
   "src/agent",
   "src/config",
   "src/controllers",
@@ -40,8 +39,9 @@ const PROCESS_ENV_ALLOWED_FILES = [
   "src/bootstrap/**/*.ts",
   // TODO(PR 3.11; PR 3.12 final): CLI scripts read environment directly.
   "src/scripts/**/*.ts",
-  // TODO(PR 3.6; PR 3.12 final): admin moves into a module.
-  "src/admin/**/*.ts",
+  // TODO(PR 3.12): the admin panel still reads ADMIN_DEV_LOGIN directly for
+  // the development-only login.
+  "src/modules/admin/**/*.ts",
   // TODO(PR 3.9; PR 3.12 final): agent runtimes move to platform/agents.
   "src/agent/**/*.ts",
   // TODO(PR 3.12): the execution module still reads sandbox and process
@@ -95,9 +95,9 @@ const PRISMA_ALLOWED_FILES = [
  */
 const FETCH_ALLOWED_FILES = [
   "src/platform/**/*.ts",
-  // TODO(PR 3.6): the admin OAuth client moves into the admin module behind a
-  // GitHub identity port.
-  "src/admin/**/*.ts",
+  // TODO(PR 3.12): the admin OAuth client still calls GitHub directly; replace
+  // it with a platform-owned identity client.
+  "src/modules/admin/**/*.ts",
   // TODO(PR 3.12): the knowledge module fetches its sources directly; replace
   // this with a platform-owned knowledge client.
   "src/modules/knowledge/**/*.ts",
@@ -253,6 +253,14 @@ export default tseslint.config(
               allow: { to: { element: { type: "module", fileInternalPath: "index.ts" } } },
             },
             {
+              // TODO(PR 3.12): the admin module renders failures through the
+              // platform HTTP projection. Inject it from the composition root
+              // or make the projection a shared helper before removing the
+              // temporary allowances.
+              from: { element: { type: "module", path: "src/modules/admin" } },
+              allow: { to: { element: { type: "platform", fileInternalPath: "http/error-mapper.ts" } } },
+            },
+            {
               // TODO(PR 3.9/3.10): modules still reach un-moved top-level
               // directories directly. Each path is removed when its directory
               // moves (or becomes a port-backed platform adapter).
@@ -404,11 +412,10 @@ export default tseslint.config(
     // flow, so it is out of scope for the tooling PR. The rule stays on for
     // every other source file, and PR 4.2 removes the remaining assertions.
     files: [
-      "src/admin/api.ts",
-      "src/admin/github-client.ts",
-      "src/admin/panel.ts",
-      "src/admin/rate-limit.ts",
-      "src/admin/session.ts",
+      "src/modules/admin/admin.auth.http.ts",
+      "src/modules/admin/auth/github-oauth.ts",
+      "src/modules/admin/auth/session.ts",
+      "src/modules/admin/rate-limit.ts",
       "src/config/review-loader.ts",
       "src/modules/execution/local-executor.ts",
       "src/modules/execution/policy.ts",

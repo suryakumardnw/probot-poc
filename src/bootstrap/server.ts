@@ -1,8 +1,5 @@
 import type http from "node:http";
 import { createNodeMiddleware, createProbot, type Probot } from "probot";
-import { createAdminApi } from "../admin/api.js";
-import { createAdminPanel } from "../admin/panel.js";
-import { createPrismaAuditRepository } from "../admin/prisma-audit.repository.js";
 import { loadEnv, type Env } from "../config/env.js";
 import { createApp } from "../index.js";
 import { checkDependencies } from "../lib/health.js";
@@ -10,6 +7,7 @@ import { createLogger, type PlatformLogger } from "../lib/logger.js";
 import { disconnectPrisma } from "../lib/prisma.js";
 import { disconnectRedis } from "../lib/redis.js";
 import { registerGracefulShutdown } from "../lib/shutdown.js";
+import { createAdminApi, createAdminPanel, createPrismaAuditRepository } from "../modules/admin/index.js";
 import type { Logger } from "../ports/logger.js";
 import { createConfigStore, createIngestionModule, createPlatformClients } from "./clients.js";
 import { createHttpServer } from "./http.js";

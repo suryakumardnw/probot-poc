@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { createPrismaAuditRepository } from "../../src/admin/prisma-audit.repository.js";
+import { createPrismaAuditRepository } from "../../src/modules/admin/index.js";
 import { cleanDatabase, disconnectDatabase, prisma, silentLogger } from "../characterization/support.js";
 
 /**
