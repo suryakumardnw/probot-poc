@@ -239,8 +239,8 @@ export default tseslint.config(
     },
   },
   {
-    // Approved exceptions for the rules above. Every temporary entry is listed
-    // with its removal PR in docs/module-boundaries.md.
+    // Approved exceptions for the vendor rules above. The permanent entries are
+    // documented in docs/module-boundaries.md.
     files: PRISMA_ALLOWED_FILES,
     rules: {
       "no-restricted-imports": "off",

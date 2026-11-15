@@ -2,7 +2,7 @@ import type http from "node:http";
 import { createNodeMiddleware, createProbot, type Probot } from "probot";
 import { createApp } from "../index.js";
 import { createAdminApi, createAdminPanel, createPrismaAuditRepository } from "../modules/admin/index.js";
-import { loadEnv, readEnv, readProcessEnv, type Env } from "../platform/config/env.js";
+import { loadEnv, readProcessEnv, type Env } from "../platform/config/env.js";
 import { checkPrisma, disconnectPrisma } from "../platform/db/prisma.js";
 import { createGithubOAuthClient } from "../platform/github/oauth-client.js";
 import { checkDependencies } from "../platform/health.js";
@@ -86,6 +86,17 @@ function maybeCreateProbot(
   });
 }
 
+/**
+ * Development-only admin login gate.
+ *
+ * Active only when `NODE_ENV=development`, `ADMIN_DEV_LOGIN=1`, and a session
+ * secret is configured. The composition root evaluates this once and passes
+ * the boolean to the admin panel, which no longer reads the environment.
+ */
+export function isAdminDevLoginEnabled(env: Env, processEnv: NodeJS.ProcessEnv): boolean {
+  return env.NODE_ENV === "development" && processEnv.ADMIN_DEV_LOGIN === "1" && Boolean(env.SESSION_SECRET);
+}
+
 export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerRuntime> {
   const processEnv = readProcessEnv();
   const logger = createLogger(env);
@@ -119,8 +130,7 @@ export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerR
     audit: createPrismaAuditRepository(clients.prisma, logger),
     config,
     logger,
-    devLoginEnabled:
-      env.NODE_ENV === "development" && readEnv("ADMIN_DEV_LOGIN") === "1" && Boolean(env.SESSION_SECRET),
+    devLoginEnabled: isAdminDevLoginEnabled(env, processEnv),
   });
 
   const privateKeyOverride = privateKeyFromBase64(processEnv);

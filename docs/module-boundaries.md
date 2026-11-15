@@ -153,16 +153,17 @@ worker container; it is CommonJS, outside the package, and never imported by the
 application. It is deliberately linted by these rules, with one permanent
 `process.env` exception because reading the mounted key is its entire purpose.
 
-No module imports `@prisma/client`, calls global `fetch`, or reads
-`process.env`. Modules depend on ports supplied by bootstrap:
+No module imports `@prisma/client` outside `*.repository.ts` adapters. No
+module calls global `fetch` or reads `process.env`. Modules depend on ports
+supplied by bootstrap:
 
-| Module | Port / injected value | Platform adapter |
+| Module | Port / injected value | Implementation / wiring |
 |---|---|---|
-| `execution` | `ExecutionAuditRepository`, `appEnv` | `prisma-execution-audit.repository.ts`, bootstrap |
+| `execution` | `ExecutionAuditRepository`, `appEnv` | `prisma-execution-audit.repository.ts`; bootstrap supplies `appEnv` |
 | `knowledge` | `KnowledgeFetcher`, `ReviewKnowledgeStore`, `env` | `platform/knowledge/fetch.ts`, `prisma-knowledge.repository.ts` |
-| `admin` | `GithubOAuthClient`, `devLoginEnabled` | `platform/github/oauth-client.ts`, bootstrap |
-| `workspace` | `appEnv`, `InstallationTokenProvider` | bootstrap |
-| `publishing` | `env` | bootstrap |
+| `admin` | `GithubOAuthClient`, `devLoginEnabled` | `platform/github/oauth-client.ts`; bootstrap computes the flag |
+| `workspace` | `appEnv`, `InstallationTokenProvider` | bootstrap supplies `appEnv`; the provider is built in `workspace/processor.ts` |
+| `publishing` | `env` | bootstrap supplies `env` |
 
 ## Negative checks
 

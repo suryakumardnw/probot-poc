@@ -14,7 +14,9 @@ import { readEnv } from "../config/env.js";
 
 /** Resolve a GitHub API bearer token when one is configured (never logged). */
 function authHeader(): Record<string, string> {
-  const token = readEnv("KNOWLEDGE_GITHUB_TOKEN") ?? readEnv("GITHUB_TOKEN") ?? "";
+  // Truthiness, not nullish coalescing: `.env.example` ships an empty
+  // `KNOWLEDGE_GITHUB_TOKEN=`, which must fall through to `GITHUB_TOKEN`.
+  const token = readEnv("KNOWLEDGE_GITHUB_TOKEN") || readEnv("GITHUB_TOKEN") || "";
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

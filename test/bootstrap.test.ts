@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createServerRuntime } from "../src/bootstrap/server.js";
+import { createServerRuntime, isAdminDevLoginEnabled } from "../src/bootstrap/server.js";
 import { createWorkerRuntime } from "../src/bootstrap/worker.js";
+import type { Env } from "../src/platform/config/env.js";
 import { testEnv } from "./helpers/env.js";
 
 /**
@@ -52,6 +53,22 @@ describe("server composition root", () => {
     } finally {
       await runtime.close();
     }
+  });
+});
+
+describe("admin dev-login gate", () => {
+  const devEnv: Env = {
+    ...testEnv,
+    NODE_ENV: "development",
+    SESSION_SECRET: "dev-only-session-secret",
+  };
+
+  test("enabled only in development with explicit opt-in and a session secret", () => {
+    expect(isAdminDevLoginEnabled(devEnv, { ADMIN_DEV_LOGIN: "1" })).toBe(true);
+    expect(isAdminDevLoginEnabled(devEnv, {})).toBe(false);
+    expect(isAdminDevLoginEnabled(devEnv, { ADMIN_DEV_LOGIN: "" })).toBe(false);
+    expect(isAdminDevLoginEnabled({ ...devEnv, NODE_ENV: "production" }, { ADMIN_DEV_LOGIN: "1" })).toBe(false);
+    expect(isAdminDevLoginEnabled({ ...devEnv, SESSION_SECRET: undefined }, { ADMIN_DEV_LOGIN: "1" })).toBe(false);
   });
 });
 
