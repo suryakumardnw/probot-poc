@@ -19,19 +19,24 @@
  * review can never produce a second queue job for the same review.
  */
 
-import type { PrismaClient, Review, ReviewJob, ReviewState } from "@prisma/client";
 import type { Queue } from "bullmq";
 import type pino from "pino";
 import { ERROR_CODES } from "../contracts/errors.js";
 import { outboxPayloadSchema, reviewJobPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
+import type { ReviewJobRecord, ReviewJobWithReview, ReviewRecord } from "../ingestion/ingestion.repository.js";
+import type { IngestionRepositories, IngestionUnitOfWork } from "../ingestion/ingestion.unit-of-work.js";
 import { TERMINAL_REVIEW_STATES } from "../ingestion/review-state.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
 import { AppError, ValidationError } from "../shared/errors/index.js";
 
 export type RecoveryPolicy = "requeue" | "fail";
 
-export interface ReconciliationDeps {
-  prisma: PrismaClient;
+export type ReconciliationDependencies = {
+  repositories: IngestionRepositories;
+  unitOfWork: IngestionUnitOfWork;
+};
+
+export interface ReconciliationDeps extends ReconciliationDependencies {
   logger: pino.Logger;
   /** BullMQ queue used to re-enqueue recovered reviews. */
   queue?: Queue<ReviewJobPayload>;
@@ -73,7 +78,11 @@ const DEFAULT_MAX_JOB_ATTEMPTS = 3;
  * same contract as a published payload, so a row value outside the contract
  * fails loudly instead of being enqueued as an invalid job.
  */
-function buildPayloadFromRows(review: Review, job: ReviewJob, repositoryFullName?: string): ReviewJobPayload {
+function buildPayloadFromRows(
+  review: ReviewRecord,
+  job: ReviewJobRecord,
+  repositoryFullName?: string,
+): ReviewJobPayload {
   const parsed = reviewJobPayloadSchema.safeParse({
     reviewId: review.id,
     jobKey: job.jobKey,
@@ -107,20 +116,19 @@ function buildPayloadFromRows(review: Review, job: ReviewJob, repositoryFullName
  * durable transition row (`fromState -> queued`) so the history stays
  * auditable.
  */
-export async function resetReviewForRecovery(prisma: PrismaClient, reviewId: string): Promise<void> {
-  const review = await prisma.review.findUnique({ where: { id: reviewId }, select: { state: true } });
-  if (!review) {
-    throw new Error(`Review '${reviewId}' not found`);
-  }
-  await prisma.$transaction([
-    prisma.review.update({
-      where: { id: reviewId },
-      data: { state: "queued", errorCode: null, errorMessage: null },
-    }),
-    prisma.reviewStateTransition.create({
-      data: { reviewId, fromState: review.state as ReviewState, toState: "queued" },
-    }),
-  ]);
+export async function resetReviewForRecovery(unitOfWork: IngestionUnitOfWork, reviewId: string): Promise<void> {
+  await unitOfWork.execute(async (repos) => {
+    const currentState = await repos.reviews.findStateById(reviewId);
+    if (currentState === null) {
+      throw new Error(`Review '${reviewId}' not found`);
+    }
+    await repos.reviews.resetForRecovery(reviewId);
+    await repos.stateTransitions.create({
+      reviewId,
+      fromState: currentState,
+      toState: "queued",
+    });
+  });
 }
 
 /**
@@ -129,39 +137,33 @@ export async function resetReviewForRecovery(prisma: PrismaClient, reviewId: str
  * fail the durable job row.
  */
 async function failReviewForRecovery(
-  prisma: PrismaClient,
+  repositories: IngestionRepositories,
+  unitOfWork: IngestionUnitOfWork,
   reviewId: string,
   jobId: string,
   reason: string,
   errorCode: string,
 ): Promise<void> {
-  await resetReviewForRecovery(prisma, reviewId);
-  await prisma.review.update({
-    where: { id: reviewId },
-    data: {
-      state: "failed",
-      errorCode,
-      errorMessage: reason.slice(0, 500),
-    },
+  await resetReviewForRecovery(unitOfWork, reviewId);
+  await repositories.reviews.markFailed(reviewId, errorCode, reason.slice(0, 500));
+  await repositories.stateTransitions.create({
+    reviewId,
+    fromState: "queued",
+    toState: "failed",
   });
-  await prisma.reviewStateTransition.create({
-    data: { reviewId, fromState: "queued", toState: "failed" },
-  });
-  await prisma.reviewJob.update({
-    where: { id: jobId },
-    data: { status: "failed", lastError: reason.slice(0, 500) },
-  });
+  await repositories.reviewJobs.markFailed(jobId, reason.slice(0, 500));
 }
 
 /**
  * Reconcile incomplete reviews. Never throws per-review: individual failures
- * are logged and reflected in the summary; only a Prisma-level outage (which
+ * are logged and reflected in the summary; only a database-level outage (which
  * the §12.4 postgres_unavailable policy treats as "recover state later")
  * surfaces through the returned summary of 0 with a warning.
  */
 export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Promise<ReconciliationSummary> {
   const {
-    prisma,
+    repositories,
+    unitOfWork,
     logger,
     queue,
     policy = "requeue",
@@ -180,16 +182,12 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
     workspacesSwept: 0,
   };
 
-  let jobs: Array<ReviewJob & { review: Review }>;
+  let jobs: ReviewJobWithReview[];
   try {
-    jobs = await prisma.reviewJob.findMany({
-      where: {
-        status: { in: ["pending_outbox", "enqueued", "processing"] },
-        review: { state: { notIn: [...TERMINAL_REVIEW_STATES] } },
-      },
-      include: { review: true },
-      orderBy: { createdAt: "asc" },
-      take: 200,
+    jobs = await repositories.reviewJobs.findIncompleteWithReviews({
+      statuses: ["pending_outbox", "enqueued", "processing"],
+      notInReviewStates: TERMINAL_REVIEW_STATES,
+      limit: 200,
     });
   } catch (error) {
     logger.warn(
@@ -206,12 +204,9 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
   // repository row is gone).
   const fullNames = new Map<string, string>();
   try {
-    const repositoryIds = [...new Set(jobs.map((j) => j.review.githubRepositoryId))];
-    const repositories = await prisma.repository.findMany({
-      where: { githubRepositoryId: { in: repositoryIds } },
-      select: { githubRepositoryId: true, fullName: true },
-    });
-    for (const repository of repositories) {
+    const repositoryIds = [...new Set(jobs.map(({ review }) => review.githubRepositoryId))];
+    const repositoryRows = await repositories.repositories.findFullNamesByGithubIds(repositoryIds);
+    for (const repository of repositoryRows) {
       fullNames.set(repository.githubRepositoryId.toString(), repository.fullName);
     }
   } catch (error) {
@@ -221,7 +216,7 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
     );
   }
 
-  for (const job of jobs) {
+  for (const { job, review } of jobs) {
     const staleAt = new Date(job.updatedAt.getTime() + staleThresholdMs);
     const isStale = staleAt.getTime() <= now.getTime();
     if (!isStale) {
@@ -229,7 +224,6 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
       continue;
     }
     summary.staleSessions += 1;
-    const review = job.review;
     const staleForMs = now.getTime() - job.updatedAt.getTime();
 
     const attemptsExhausted = job.attempts >= maxJobAttempts;
@@ -246,7 +240,7 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         "Failing stale incomplete review during reconciliation",
       );
       try {
-        await failReviewForRecovery(prisma, review.id, job.id, reason, "recovery_exhausted");
+        await failReviewForRecovery(repositories, unitOfWork, review.id, job.id, reason, "recovery_exhausted");
         getMetricsRegistry().reviewsFailed.inc(1, { failure_class: "recovery_exhausted" });
         summary.failed += 1;
       } catch (error) {
@@ -261,10 +255,7 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
     // Recoverable: reset the durable state and re-enqueue with the SAME
     // BullMQ job id (ReviewJob.id) — no duplicate job can be created.
     try {
-      const outboxEvent = await prisma.outboxEvent.findFirst({
-        where: { reviewJobId: job.id },
-        orderBy: { createdAt: "desc" },
-      });
+      const outboxEvent = await repositories.outboxEvents.findLatestForJob(job.id);
       const stored = outboxEvent ? outboxPayloadSchema.safeParse(outboxEvent.payload) : undefined;
       if (stored && !stored.success) {
         logger.warn(
@@ -303,11 +294,8 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         }
       }
 
-      await resetReviewForRecovery(prisma, review.id);
-      await prisma.reviewJob.update({
-        where: { id: job.id },
-        data: { status: "enqueued" },
-      });
+      await resetReviewForRecovery(unitOfWork, review.id);
+      await repositories.reviewJobs.update(job.id, { status: "enqueued" });
       // Idempotent identity: jobId = ReviewJob.id (ticket 03 contract).
       await queue.add("review", payload, {
         jobId: job.id,
@@ -328,7 +316,7 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         // every reconciliation pass.
         const reason = `${error.code}: ${error.message}`;
         try {
-          await failReviewForRecovery(prisma, review.id, job.id, reason, error.code);
+          await failReviewForRecovery(repositories, unitOfWork, review.id, job.id, reason, error.code);
           getMetricsRegistry().reviewsFailed.inc(1, { failure_class: "review_payload_invalid" });
           summary.failed += 1;
           logger.error(

@@ -1,5 +1,6 @@
-import type { ReviewState } from "@prisma/client";
-import { getPrisma } from "../lib/prisma.js";
+import { REVIEW_STATES, type ReviewState, type ReviewStatePatch } from "./ingestion.repository.js";
+import type { IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
+import { getDefaultIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
 
 /**
  * Review lifecycle state machine (ARCHITECTURE.md §4.3).
@@ -8,22 +9,12 @@ import { getPrisma } from "../lib/prisma.js";
  * history of a review is auditable. Terminal states accept no further
  * transitions — in particular a `superseded` review can never be resumed or
  * published.
+ *
+ * The state machine itself is pure; persistence goes through the ingestion
+ * unit of work so the review row and its audit transition commit together.
  */
 
-export const REVIEW_STATES = [
-  "queued",
-  "preparing",
-  "cloning",
-  "analyzing",
-  "investigating",
-  "validating",
-  "publishing",
-  "completed",
-  "completed_with_warnings",
-  "failed",
-  "cancelled",
-  "superseded",
-] as const satisfies readonly ReviewState[];
+export { REVIEW_STATES };
 
 export const TERMINAL_REVIEW_STATES: readonly ReviewState[] = [
   "completed",
@@ -75,47 +66,84 @@ export type TransitionOptions = {
   supersededByReviewId?: string;
 };
 
+export interface ReviewStateService {
+  /**
+   * Move a review to `toState` and persist the transition row. Throws
+   * InvalidStateTransitionError when the move is not allowed. Terminal states
+   * can never be left.
+   */
+  transitionReviewState(
+    reviewId: string,
+    toState: ReviewState,
+    options?: TransitionOptions,
+  ): Promise<{ id: string; state: ReviewState }>;
+}
+
+export type ReviewStateServiceDependencies = {
+  unitOfWork: IngestionUnitOfWork;
+};
+
+export function createReviewStateService(deps: ReviewStateServiceDependencies): ReviewStateService {
+  return {
+    async transitionReviewState(
+      reviewId: string,
+      toState: ReviewState,
+      options: TransitionOptions = {},
+    ): Promise<{ id: string; state: ReviewState }> {
+      return deps.unitOfWork.execute(async (repos) => {
+        const review = await repos.reviews.findById(reviewId);
+        if (!review) {
+          throw new Error(`Review '${reviewId}' not found`);
+        }
+        if (review.state === toState) {
+          return { id: review.id, state: review.state };
+        }
+        if (!canTransition(review.state, toState)) {
+          throw new InvalidStateTransitionError(review.state, toState);
+        }
+
+        const patch: ReviewStatePatch = {
+          state: toState,
+          ...(toState === "completed" || toState === "completed_with_warnings" ? { completedAt: new Date() } : {}),
+          ...(toState === "failed"
+            ? { errorCode: options.errorCode ?? "REVIEW_FAILED", errorMessage: options.errorMessage ?? null }
+            : {}),
+          ...(toState === "superseded" && options.supersededByReviewId
+            ? { supersededByReviewId: options.supersededByReviewId, supersededAt: new Date() }
+            : {}),
+        };
+
+        const updated = await repos.reviews.updateState(review.id, patch);
+        await repos.stateTransitions.create({
+          reviewId: review.id,
+          fromState: review.state,
+          toState,
+        });
+
+        return { id: updated.id, state: updated.state };
+      });
+    },
+  };
+}
+
+let defaultReviewStateService: ReviewStateService | undefined;
+
+function getDefaultReviewStateService(): ReviewStateService {
+  defaultReviewStateService ??= createReviewStateService({
+    unitOfWork: getDefaultIngestionDependencies().unitOfWork,
+  });
+  return defaultReviewStateService;
+}
+
 /**
- * Move a review to `toState` and persist the transition row. Throws
- * InvalidStateTransitionError when the move is not allowed. Terminal states
- * can never be left.
+ * Module-edge compatibility function for existing callers. The implementation
+ * receives its unit of work; PR 2.6 wires the composition root and removes this
+ * wrapper.
  */
 export async function transitionReviewState(
   reviewId: string,
   toState: ReviewState,
   options: TransitionOptions = {},
 ): Promise<{ id: string; state: ReviewState }> {
-  const prisma = getPrisma();
-  return prisma.$transaction(async (tx) => {
-    const review = await tx.review.findUnique({ where: { id: reviewId } });
-    if (!review) {
-      throw new Error(`Review '${reviewId}' not found`);
-    }
-    if (review.state === toState) {
-      return { id: review.id, state: review.state };
-    }
-    if (!canTransition(review.state, toState)) {
-      throw new InvalidStateTransitionError(review.state, toState);
-    }
-
-    const updated = await tx.review.update({
-      where: { id: review.id },
-      data: {
-        state: toState,
-        ...(toState === "completed" || toState === "completed_with_warnings" ? { completedAt: new Date() } : {}),
-        ...(toState === "failed"
-          ? { errorCode: options.errorCode ?? "REVIEW_FAILED", errorMessage: options.errorMessage ?? null }
-          : {}),
-        ...(toState === "superseded" && options.supersededByReviewId
-          ? { supersededByReviewId: options.supersededByReviewId, supersededAt: new Date() }
-          : {}),
-      },
-    });
-
-    await tx.reviewStateTransition.create({
-      data: { reviewId: review.id, fromState: review.state, toState },
-    });
-
-    return { id: updated.id, state: updated.state };
-  });
+  return getDefaultReviewStateService().transitionReviewState(reviewId, toState, options);
 }

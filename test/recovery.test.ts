@@ -2,6 +2,8 @@ import type { Queue } from "bullmq";
 import pino from "pino";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { reviewJobPayloadSchema } from "../src/contracts/queue.js";
+import { createIngestionRepositories } from "../src/ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "../src/ingestion/prisma-ingestion.unit-of-work.js";
 import type { ReviewJobPayload } from "../src/ingestion/queue.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { getMetricsRegistry } from "../src/observability/metrics.js";
@@ -22,6 +24,8 @@ import { REDIS_PERSISTENCE_COMMANDLINE } from "../src/recovery/redis-persistence
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
 const prisma = getPrisma();
+const repositories = createIngestionRepositories(prisma);
+const unitOfWork = createIngestionUnitOfWork(prisma);
 const logger = pino({ level: "silent" });
 
 // Fixture rows ---------------------------------------------------------------
@@ -141,7 +145,8 @@ describe("reconciliation", () => {
     const { queue, added } = fakeQueue();
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -167,7 +172,8 @@ describe("reconciliation", () => {
     // duplicate queue job. The review is queued again but its job row is
     // fresh (updatedAt just advanced) → skipped.
     const second = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -192,7 +198,8 @@ describe("reconciliation", () => {
     const { queue, added } = fakeQueue();
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -224,7 +231,8 @@ describe("reconciliation", () => {
     const { queue, added } = fakeQueue();
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -252,7 +260,8 @@ describe("reconciliation", () => {
     const { queue, added, events } = fakeQueue("completed");
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -270,7 +279,8 @@ describe("reconciliation", () => {
     const { queue, added, events } = fakeQueue("active");
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -287,7 +297,8 @@ describe("reconciliation", () => {
     const { queue, added } = fakeQueue();
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -310,7 +321,8 @@ describe("reconciliation", () => {
     const { queue, added } = fakeQueue();
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       policy: "fail",
@@ -331,7 +343,8 @@ describe("reconciliation", () => {
 
     const { queue, added } = fakeQueue();
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -348,7 +361,8 @@ describe("reconciliation", () => {
     await createStuckReview({ attempts: 3 });
     let swept = 0;
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger,
       policy: "fail",
       staleThresholdMs: 15 * 60_000,
@@ -368,7 +382,8 @@ describe("reconciliation", () => {
     } as unknown as typeof prisma;
 
     const summary = await reconcileIncompleteReviews({
-      prisma: brokenPrisma,
+      repositories: createIngestionRepositories(brokenPrisma),
+      unitOfWork: createIngestionUnitOfWork(brokenPrisma),
       logger,
       staleThresholdMs: 15 * 60_000,
     });
@@ -386,7 +401,7 @@ describe("reconciliation", () => {
 describe("resetReviewForRecovery", () => {
   test("resets a review to queued and records an auditable transition", async () => {
     const { reviewId } = await createStuckReview({ state: "publishing" });
-    await resetReviewForRecovery(prisma, reviewId);
+    await resetReviewForRecovery(unitOfWork, reviewId);
 
     const review = await prisma.review.findUnique({ where: { id: reviewId } });
     expect(review?.state).toBe("queued");

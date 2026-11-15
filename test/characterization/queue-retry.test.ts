@@ -3,6 +3,8 @@ import type pino from "pino";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/config/review-loader.js";
 import { publishOutboxEvent } from "../../src/ingestion/outbox.js";
+import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
 import type { ReviewJobPayload } from "../../src/ingestion/queue.js";
 import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/observability/retry.js";
 import { reconcileIncompleteReviews } from "../../src/recovery/reconciliation.js";
@@ -27,6 +29,9 @@ import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogge
 async function ageJobRow(jobId: string): Promise<void> {
   await prisma.$executeRaw`UPDATE review_jobs SET updated_at = now() - interval '30 minutes' WHERE id = ${jobId}`;
 }
+
+const repositories = createIngestionRepositories(prisma);
+const unitOfWork = createIngestionUnitOfWork(prisma);
 
 beforeEach(async () => {
   await cleanDatabase();
@@ -129,7 +134,8 @@ describe("job exhaustion (§12.4, §17.3)", () => {
     } as unknown as Queue<ReviewJobPayload>;
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger: silentLogger as unknown as pino.Logger,
       queue,
       staleThresholdMs: 15 * 60_000,
@@ -155,7 +161,8 @@ describe("job exhaustion (§12.4, §17.3)", () => {
     await ageJobRow(chain.jobId!);
 
     const summary = await reconcileIncompleteReviews({
-      prisma,
+      repositories,
+      unitOfWork,
       logger: silentLogger as unknown as pino.Logger,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,

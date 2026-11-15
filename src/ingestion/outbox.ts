@@ -1,4 +1,3 @@
-import type { OutboxEvent } from "@prisma/client";
 import type { Queue } from "bullmq";
 import type pino from "pino";
 import { loadEnv } from "../config/env.js";
@@ -6,8 +5,10 @@ import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.j
 import { ERROR_CODES } from "../contracts/errors.js";
 import { outboxPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
 import { createLogger } from "../lib/logger.js";
-import { getPrisma } from "../lib/prisma.js";
 import { AppError, ValidationError } from "../shared/errors/index.js";
+import type { OutboxEventRecord } from "./ingestion.repository.js";
+import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
+import { getDefaultIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
 import { getReviewQueue } from "./queue.js";
 
 /**
@@ -20,6 +21,9 @@ import { getReviewQueue } from "./queue.js";
  *
  * Enqueue idempotency: the BullMQ jobId equals the ReviewJob.id, so repeated
  * publish attempts of the same event collapse into a single job.
+ *
+ * Persistence goes through the outbox/review-job repositories; the service
+ * receives them (plus the unit of work) and never reads a Prisma singleton.
  */
 
 export type PublishResult = "published" | "discarded" | "skipped" | "failed";
@@ -35,7 +39,7 @@ const logger: pino.Logger = createLogger(loadEnv());
  * event instead of retrying it forever; reconciliation still rebuilds the
  * queue payload from the durable review/job rows.
  */
-function buildPayload(event: OutboxEvent): ReviewJobPayload {
+function buildPayload(event: OutboxEventRecord): ReviewJobPayload {
   const parsed = outboxPayloadSchema.safeParse(event.payload);
   if (!parsed.success) {
     throw new ValidationError("Outbox event payload does not match the review job contract", {
@@ -66,116 +70,137 @@ function jobRetryOptions(): { attempts: number; backoff: { type: "exponential" |
   }
 }
 
-/**
- * Publish a single outbox event to the BullMQ queue. Never throws: the
- * result reports what happened so the recovery loop can retry later.
- */
-export async function publishOutboxEvent(
-  eventId: string,
-  queue: Queue<ReviewJobPayload> = getReviewQueue(),
-): Promise<PublishResult> {
-  const prisma = getPrisma();
-  try {
-    const event = await prisma.outboxEvent.findUnique({ where: { id: eventId }, include: { reviewJob: true } });
-    if (!event || event.status !== "pending") {
-      return "skipped";
-    }
-    const job = event.reviewJob;
+export type OutboxServiceDependencies = {
+  repositories: IngestionRepositories;
+  unitOfWork: IngestionUnitOfWork;
+};
 
-    // A superseded job must not be enqueued; discard its pending event.
-    if (job.status === "superseded") {
-      await prisma.outboxEvent.update({
-        where: { id: event.id },
-        data: { status: "discarded", lastError: "review job superseded" },
-      });
-      return "discarded";
-    }
+export interface OutboxService {
+  /**
+   * Publish a single outbox event to the BullMQ queue. Never throws: the
+   * result reports what happened so the recovery loop can retry later.
+   */
+  publishOutboxEvent(eventId: string, queue?: Queue<ReviewJobPayload>): Promise<PublishResult>;
+  /**
+   * Re-publish pending outbox events (oldest first). Called periodically by
+   * the worker and right after startup. Never throws.
+   */
+  recoverOutbox(limit?: number, queue?: Queue<ReviewJobPayload>): Promise<OutboxRecoverySummary>;
+}
 
-    const payload = buildPayload(event);
-    const retry = jobRetryOptions();
+export function createOutboxService(deps: OutboxServiceDependencies): OutboxService {
+  /**
+   * Publish a single outbox event to the BullMQ queue. Never throws: the
+   * result reports what happened so the recovery loop can retry later.
+   */
+  async function publishOutboxEvent(
+    eventId: string,
+    queue: Queue<ReviewJobPayload> = getReviewQueue(),
+  ): Promise<PublishResult> {
+    try {
+      const event = await deps.repositories.outboxEvents.findByIdWithJob(eventId);
+      if (!event || event.status !== "pending") {
+        return "skipped";
+      }
+      const job = event.reviewJob;
 
-    // Commit the durable `enqueued` state BEFORE the job becomes visible to
-    // consumers. Adding to Redis first opens a race where an idle worker picks
-    // the job up while the row still says `pending_outbox`; the worker then
-    // skips it, BullMQ records the skip as success, and the review never runs.
-    // A failed publish is rolled back to `pending_outbox` below so the outbox
-    // event and job row stay consistent for recovery.
-    await prisma.reviewJob.update({
-      where: { id: job.id },
-      data: { status: "enqueued" },
-    });
+      // A superseded job must not be enqueued; discard its pending event.
+      if (job.status === "superseded") {
+        await deps.repositories.outboxEvents.discard(event.id, "review job superseded");
+        return "discarded";
+      }
 
-    const queueJob = await (async () => {
-      try {
-        return await queue.add("review", payload, {
-          jobId: job.id, // idempotent: same ReviewJob.id never enqueued twice
-          attempts: retry.attempts,
-          backoff: retry.backoff,
-          removeOnComplete: 1000,
-          removeOnFail: 5000,
-        });
-      } catch (error) {
-        // Publish failed (e.g. Redis down): restore the durable pre-publish
-        // state so the outbox event and job row agree. The `queueJobId: null`
-        // guard keeps a concurrent successful publisher's state intact.
-        await prisma.reviewJob
-          .updateMany({
-            where: { id: job.id, status: "enqueued", queueJobId: null },
-            data: { status: "pending_outbox" },
-          })
-          .catch(() => {
+      const payload = buildPayload(event);
+      const retry = jobRetryOptions();
+
+      // Commit the durable `enqueued` state BEFORE the job becomes visible to
+      // consumers. Adding to Redis first opens a race where an idle worker picks
+      // the job up while the row still says `pending_outbox`; the worker then
+      // skips it, BullMQ records the skip as success, and the review never runs.
+      // A failed publish is rolled back to `pending_outbox` below so the outbox
+      // event and job row stay consistent for recovery.
+      await deps.repositories.reviewJobs.update(job.id, { status: "enqueued" });
+
+      const queueJob = await (async () => {
+        try {
+          return await queue.add("review", payload, {
+            jobId: job.id, // idempotent: same ReviewJob.id never enqueued twice
+            attempts: retry.attempts,
+            backoff: retry.backoff,
+            removeOnComplete: 1000,
+            removeOnFail: 5000,
+          });
+        } catch (error) {
+          // Publish failed (e.g. Redis down): restore the durable pre-publish
+          // state so the outbox event and job row agree. The `queueJobId: null`
+          // guard keeps a concurrent successful publisher's state intact.
+          await deps.repositories.reviewJobs.restorePendingOutbox(job.id).catch(() => {
             /* Postgres may be unreachable too; recovery retries either way. */
           });
-        throw error;
-      }
-    })();
-
-    await prisma.$transaction([
-      prisma.outboxEvent.update({
-        where: { id: event.id },
-        data: { status: "published", publishedAt: new Date(), lastError: null },
-      }),
-      prisma.reviewJob.update({
-        where: { id: job.id },
-        data: { queueJobId: queueJob.id ?? job.id },
-      }),
-    ]);
-    return "published";
-  } catch (error) {
-    const code = error instanceof AppError ? error.code : undefined;
-    const detail = error instanceof Error ? error.message : String(error);
-    const message = code ? `${code}: ${detail}` : detail;
-
-    if (error instanceof AppError && error.code === ERROR_CODES.OUTBOX_PAYLOAD_INVALID) {
-      // A malformed durable snapshot can never become valid by retrying.
-      // Discard it so the recovery loop stops rescanning it; reconciliation
-      // rebuilds the queue payload from the review/job rows, which remain the
-      // source of truth.
-      try {
-        const discarded = await prisma.outboxEvent.updateMany({
-          where: { id: eventId, status: "pending" },
-          data: { status: "discarded", lastError: message },
-        });
-        if (discarded.count > 0) {
-          logger.error({ err: message, code, outboxEventId: eventId }, "Outbox payload invalid; event discarded");
-          return "discarded";
+          throw error;
         }
-      } catch {
-        // Postgres may be unreachable; fall through to the retryable failure.
+      })();
+
+      // The outbox row and the job's queue identity commit together.
+      await deps.unitOfWork.execute(async (repos) => {
+        await repos.outboxEvents.markPublished(event.id, new Date());
+        await repos.reviewJobs.update(job.id, { queueJobId: queueJob.id ?? job.id });
+      });
+      return "published";
+    } catch (error) {
+      const code = error instanceof AppError ? error.code : undefined;
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = code ? `${code}: ${detail}` : detail;
+
+      if (error instanceof AppError && error.code === ERROR_CODES.OUTBOX_PAYLOAD_INVALID) {
+        // A malformed durable snapshot can never become valid by retrying.
+        // Discard it so the recovery loop stops rescanning it; reconciliation
+        // rebuilds the queue payload from the review/job rows, which remain the
+        // source of truth.
+        try {
+          const discarded = await deps.repositories.outboxEvents.discardIfPending(eventId, message);
+          if (discarded) {
+            logger.error({ err: message, code, outboxEventId: eventId }, "Outbox payload invalid; event discarded");
+            return "discarded";
+          }
+        } catch {
+          // Postgres may be unreachable; fall through to the retryable failure.
+        }
       }
+
+      try {
+        await deps.repositories.outboxEvents.incrementAttemptsIfPending(eventId, message);
+      } catch {
+        // Postgres may be unreachable too; the event stays pending.
+      }
+      logger.warn({ err: message, code, outboxEventId: eventId }, "Outbox publish failed; event stays pending");
+      return "failed";
+    }
+  }
+
+  async function recoverOutbox(limit = 100, queue?: Queue<ReviewJobPayload>): Promise<OutboxRecoverySummary> {
+    let pending: string[] = [];
+    try {
+      pending = await deps.repositories.outboxEvents.findPendingIds(limit);
+    } catch {
+      pending = [];
     }
 
-    try {
-      await prisma.outboxEvent.updateMany({
-        where: { id: eventId, status: "pending" },
-        data: { attempts: { increment: 1 }, lastError: message },
-      });
-    } catch {
-      // Postgres may be unreachable too; the event stays pending.
+    const summary: OutboxRecoverySummary = { scanned: pending.length, published: 0, discarded: 0, failed: 0 };
+    for (const eventId of pending) {
+      const result = await publishOutboxEvent(eventId, queue);
+      if (result === "published") {
+        summary.published += 1;
+      } else if (result === "discarded") {
+        summary.discarded += 1;
+      } else if (result === "failed") {
+        summary.failed += 1;
+      }
     }
-    logger.warn({ err: message, code, outboxEventId: eventId }, "Outbox publish failed; event stays pending");
-    return "failed";
+    return summary;
   }
+
+  return { publishOutboxEvent, recoverOutbox };
 }
 
 export type OutboxRecoverySummary = {
@@ -185,31 +210,28 @@ export type OutboxRecoverySummary = {
   failed: number;
 };
 
+let defaultOutboxService: OutboxService | undefined;
+
+function getDefaultOutboxService(): OutboxService {
+  defaultOutboxService ??= createOutboxService(getDefaultIngestionDependencies());
+  return defaultOutboxService;
+}
+
 /**
- * Re-publish pending outbox events (oldest first). Called periodically by
- * the worker and right after startup. Never throws.
+ * Module-edge compatibility function for existing callers. PR 2.6 wires the
+ * composition root and removes this wrapper.
+ */
+export async function publishOutboxEvent(
+  eventId: string,
+  queue: Queue<ReviewJobPayload> = getReviewQueue(),
+): Promise<PublishResult> {
+  return getDefaultOutboxService().publishOutboxEvent(eventId, queue);
+}
+
+/**
+ * Module-edge compatibility function for existing callers. PR 2.6 wires the
+ * composition root and removes this wrapper.
  */
 export async function recoverOutbox(limit = 100, queue?: Queue<ReviewJobPayload>): Promise<OutboxRecoverySummary> {
-  const prisma = getPrisma();
-  const pending = await prisma.outboxEvent
-    .findMany({
-      where: { status: "pending" },
-      orderBy: { createdAt: "asc" },
-      take: limit,
-      select: { id: true },
-    })
-    .catch(() => [] as Array<{ id: string }>);
-
-  const summary: OutboxRecoverySummary = { scanned: pending.length, published: 0, discarded: 0, failed: 0 };
-  for (const event of pending) {
-    const result = await publishOutboxEvent(event.id, queue);
-    if (result === "published") {
-      summary.published += 1;
-    } else if (result === "discarded") {
-      summary.discarded += 1;
-    } else if (result === "failed") {
-      summary.failed += 1;
-    }
-  }
-  return summary;
+  return getDefaultOutboxService().recoverOutbox(limit, queue);
 }

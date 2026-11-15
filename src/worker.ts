@@ -5,6 +5,8 @@ import { createAgentRuntime } from "./agent/index.js";
 import { loadEnv } from "./config/env.js";
 import { loadIngestionConfig } from "./ingestion/orchestrator.js";
 import { recoverOutbox } from "./ingestion/outbox.js";
+import { createIngestionRepositories } from "./ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "./ingestion/prisma-ingestion.unit-of-work.js";
 import { closeReviewQueue } from "./ingestion/queue.js";
 import { getReviewQueue } from "./ingestion/queue.js";
 import { ensureKnowledgeSources, setKnowledgeSnapshot } from "./knowledge/index.js";
@@ -44,7 +46,7 @@ async function main(): Promise<void> {
 
   // Initiate connections. Failures here must not crash the process:
   // the worker starts, and dependency checks report what is unavailable.
-  getPrisma(env);
+  const prismaClient = getPrisma(env);
   getRedis(env);
   // Give Redis a bounded moment to complete its initial connection so the
   // "worker ready" status is meaningful. Never hangs: bounded by timeout.
@@ -177,7 +179,8 @@ async function main(): Promise<void> {
   const runReconciliation = async (phase: "startup" | "periodic"): Promise<void> => {
     try {
       const summary = await reconcileIncompleteReviews({
-        prisma: getPrisma(env),
+        repositories: createIngestionRepositories(prismaClient),
+        unitOfWork: createIngestionUnitOfWork(prismaClient),
         logger,
         queue: recoveryQueue,
         staleThresholdMs: Number(process.env.RECOVERY_STALE_THRESHOLD_MS) || undefined,
