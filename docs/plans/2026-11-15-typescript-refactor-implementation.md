@@ -1,5 +1,10 @@
 # TypeScript Refactor Implementation Plan
 
+> **Historical document.** This plan records the task sequence as executed. Task
+> lists name files by their pre-move paths (for example `src/handlers/`,
+> `src/ingestion/`, `src/review-engine/`); those paths are historical. The
+> implemented layout is in [docs/architecture.md](../architecture.md).
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development
 > (recommended) or executing-plans to implement this plan task-by-task. Steps
 > use checkbox (`- [ ]`) syntax for tracking.

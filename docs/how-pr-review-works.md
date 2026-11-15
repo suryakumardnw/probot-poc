@@ -1,7 +1,7 @@
 # How a PR Review Works — A Teaching Guide
 
 This document follows **one pull request** from the GitHub webhook to the comment
-posted on the PR. It is based on the current code, not the architecture draft.
+posted on the PR. It is based on the current code, not the design baseline.
 When this document and `docs/architecture.md` disagree, trust the code paths
 named here.
 
@@ -38,18 +38,18 @@ The one-line pipeline:
 
 ```text
 GitHub webhook
-  → src/handlers/pull-request.ts
-  → src/ingestion/orchestrator.ts          (Postgres transaction + outbox)
+  → src/modules/webhooks/pull-request.ts
+  → src/modules/ingestion/ingestion.service.ts          (Postgres transaction + outbox)
   → Redis "review-jobs" queue
   → src/worker.ts
-  → src/workspace/processor.ts
-  → src/workspace/workspace.ts             (shallow clone + diff)
-  → src/publishing/pipeline.ts             (knowledge injection + orchestration)
-  → src/review-engine/engine.ts            (3-stage prompts)
-  → src/agent/opencode-runtime.ts          ("opencode run")
-  → src/review-engine/result-schema.ts     (strict JSON validation)
-  → src/findings/store.ts                  (verify + persist)
-  → src/publishing/publisher.ts            (GitHub COMMENT review)
+  → src/modules/workspace/processor.ts
+  → src/modules/workspace/workspace.ts             (shallow clone + diff)
+  → src/modules/publishing/pipeline.ts             (knowledge injection + orchestration)
+  → src/modules/review/engine.ts            (3-stage prompts)
+  → src/platform/agents/opencode-runtime.ts          ("opencode run")
+  → src/contracts/review.ts     (strict JSON validation)
+  → src/modules/findings/store.ts                  (verify + persist)
+  → src/modules/publishing/publisher.ts            (GitHub COMMENT review)
 ```
 
 ---
@@ -80,11 +80,11 @@ registerInstallationHandlers(app);
 The worker is started separately with `npm run start:worker` (or its own
 container), so a slow review can never block webhook delivery.
 
-> **Gotcha:** `src/controllers/pull-request.controller.ts` and
-> `src/services/review.service.ts` are an older direct-review path. They are
-> **not registered** in `src/index.ts` and are not part of the production flow.
-> If someone points at `handlePullRequest`, they are looking at dead code for
-> this flow.
+> **Historical note:** the pre-refactor
+> `src/controllers/pull-request.controller.ts` and
+> `src/services/review.service.ts` direct-review path was deleted in PR 0.5.
+> If an older branch points at `handlePullRequest`, it is not part of this
+> flow.
 
 ---
 
@@ -145,7 +145,7 @@ sequenceDiagram
 
 ### Step 1 — GitHub webhook arrives
 
-**File:** `src/handlers/pull-request.ts`
+**File:** `src/modules/webhooks/pull-request.ts`
 
 Registered events:
 
@@ -178,13 +178,13 @@ const result = await ingestReviewRequest({
 });
 ```
 
-**Manual trigger:** `src/handlers/issue-comment.ts` does the same ingestion for a
+**Manual trigger:** `src/modules/webhooks/issue-comment.ts` does the same ingestion for a
 `/review` comment, with `force: true` so it re-reviews even if that commit was
 already reviewed. It accepts `standard`, `skill`, and `handbook` types.
 
 ### Step 2 — Durable ingestion (the important transaction)
 
-**File:** `src/ingestion/orchestrator.ts` → `ingestReviewRequest`
+**File:** `src/modules/ingestion/ingestion.service.ts` → `ingestReviewRequest`
 
 This is where the system becomes durable and idempotent.
 
@@ -233,7 +233,7 @@ The asynchronous webhook handler only logs this. The manual HTTP API
 
 ### Step 3 — Worker claims the job
 
-**File:** `src/workspace/processor.ts` → `processReviewJob`
+**File:** `src/modules/workspace/processor.ts` → `processReviewJob`
 
 Before doing any expensive work:
 
@@ -253,7 +253,7 @@ queued → preparing → cloning → analyzing → investigating → validating 
 
 ### Step 4 — Clone the exact PR commit and compute the diff
 
-**File:** `src/workspace/workspace.ts` → `ReviewWorkspaceService.prepare`
+**File:** `src/modules/workspace/workspace.ts` → `ReviewWorkspaceService.prepare`
 
 For one review:
 
@@ -296,13 +296,13 @@ The agent's world is this workspace. It cannot read outside it.
 
 ### Step 5 — Knowledge injection (handbook / skill)
 
-**File:** `src/publishing/pipeline.ts` → `createReviewPipelineHook`
+**File:** `src/modules/publishing/pipeline.ts` → `createReviewPipelineHook`
 
 Before the engine runs, for `handbook` or `skill` reviews:
 
 1. Copy the review's own knowledge snapshot into
-   `<workspace>/knowledge/...` (`src/knowledge/materialize.ts`).
-2. Resolve the injection (`src/review-engine/injection.ts`):
+   `<workspace>/knowledge/...` (`src/modules/knowledge/materialize.ts`).
+2. Resolve the injection (`src/modules/review/injection.ts`):
    - **handbook:** detect technologies from changed paths, rank handbook files
      (technology match wins, then keyword overlap; `general/` is eligible but
      deprioritized), dedupe, and select whole files under the token budget
@@ -325,7 +325,7 @@ If the required knowledge is unavailable, the review fails fast with
 
 ### Step 6 — Run the review engine
 
-**Files:** `src/review-engine/hook.ts` → `src/review-engine/engine.ts`
+**Files:** `src/modules/review/hook.ts` → `src/modules/review/engine.ts`
 
 `hook.ts` moves the review to `investigating`, calls `runReview`, then moves it
 to `validating`.
@@ -333,8 +333,8 @@ to `validating`.
 `engine.ts` does the following:
 
 1. **Reject an empty diff** (`empty_diff`) without calling the model.
-2. **Score complexity** (`src/review-engine/complexity.ts`).
-3. **Build a plan** (`src/review-engine/plan.ts`).
+2. **Score complexity** (`src/modules/review/complexity.ts`).
+3. **Build a plan** (`src/modules/review/plan.ts`).
 4. **Start one agent session** for this review.
 5. **Stage 1 — initial analysis.**
 6. **Stage 2 — context investigation**, only if the plan enables it and the
@@ -368,7 +368,7 @@ The agent does not get a shell, filesystem API, or network. It may only emit
 }
 ```
 
-The application (`src/review-engine/tools.ts`) validates every request:
+The application (`src/modules/review/tools.ts`) validates every request:
 
 - Only the four read-only tools are accepted.
 - Paths are resolved inside the workspace; `..` and symlink escapes are
@@ -384,7 +384,7 @@ repository.
 
 ### Step 7 — Agent runtime
 
-**Files:** `src/agent/opencode-runtime.ts`, `src/agent/opencode-config.ts`
+**Files:** `src/platform/agents/opencode-runtime.ts`, `src/platform/agents/opencode-config.ts`
 
 `OpenCodeAgentRuntime` spawns:
 
@@ -435,7 +435,7 @@ failure or invalid output fails the review.
 
 #### 8a. JSON schema validation
 
-**File:** `src/review-engine/result-schema.ts`
+**File:** `src/contracts/review.ts`
 
 The final model answer must parse as:
 
@@ -460,7 +460,7 @@ keys are rejected. A whole-object validation failure becomes
 
 #### 8b. Engine normalization
 
-**File:** `src/review-engine/engine.ts` → `normalizeFindings`
+**File:** `src/modules/review/engine.ts` → `normalizeFindings`
 
 This is deterministic application code, not the model:
 
@@ -478,7 +478,7 @@ This is deterministic application code, not the model:
 
 #### 8c. Independent domain verification
 
-**File:** `src/findings/validation.ts`
+**File:** `src/modules/findings/validation.ts`
 
 Before anything is stored or published:
 
@@ -499,10 +499,10 @@ Before anything is stored or published:
 
 #### 8d. Persistence and lifecycle
 
-**File:** `src/findings/store.ts`
+**File:** `src/modules/findings/store.ts`
 
 - Computes a deterministic fingerprint
-  (`src/findings/fingerprint.ts`) from repository, category, code location,
+  (`src/modules/findings/fingerprint.ts`) from repository, category, code location,
   normalized description, and affected code identity — not line number alone.
 - Deduplicates within the review.
 - Compares with prior findings for the same repository/fingerprint.
@@ -514,7 +514,7 @@ Before anything is stored or published:
 
 ### Step 9 — Publish to GitHub
 
-**File:** `src/publishing/publisher.ts`
+**File:** `src/modules/publishing/publisher.ts`
 
 The publishing gate runs first:
 
@@ -541,10 +541,10 @@ For a publishable review:
    - persisted `ReviewComment` rows are also checked,
    - already-published fingerprints are skipped.
 4. Resolve inline positions from the unified diff
-   (`src/publishing/diff-positions.ts`). Only verified findings whose
+   (`src/modules/publishing/diff-positions.ts`). Only verified findings whose
    file/line can be anchored to the new side of the diff become inline
    comments. Others stay summary-only.
-5. Build the review body (`src/publishing/summary.ts`) and call
+5. Build the review body (`src/modules/publishing/summary.ts`) and call
    `pulls.createReview`.
 6. **The event is always `COMMENT`.** The app never sends `APPROVE` or
    `REQUEST_CHANGES`.
@@ -585,19 +585,19 @@ text in these files:
 
 | Piece | File | When it is used |
 |---|---|---|
-| Security/scope rules | `src/review-engine/prompts/common.ts` | Every stage, every review type |
-| Standards-basis rule | `src/review-engine/prompts/common.ts` | Every stage |
-| Handbook-mode rules | `src/review-engine/prompts/handbook-review.ts` | `handbook` reviews |
-| Analysis prompt | `src/review-engine/engine.ts` → `analysisInstruction` | Stage 1 |
-| Investigation prompt | `src/review-engine/engine.ts` → `executeInvestigationCall` | Stage 2 |
-| Final reporting prompt | `src/review-engine/engine.ts` → `finishWithReportingCall` | Stage 3/4 |
-| Final output contract | `src/review-engine/engine.ts` → `REVIEW_RESULT_FORMAT` | Reporting stage |
-| JSON-only suffix | `src/agent/opencode-runtime.ts` → `buildPrompt` | Every JSON task |
-| Model/provider/permissions | `src/agent/opencode-config.ts` | Every session |
+| Security/scope rules | `src/modules/review/prompts/common.ts` | Every stage, every review type |
+| Standards-basis rule | `src/modules/review/prompts/common.ts` | Every stage |
+| Handbook-mode rules | `src/modules/review/prompts/handbook-review.ts` | `handbook` reviews |
+| Analysis prompt | `src/modules/review/engine.ts` → `analysisInstruction` | Stage 1 |
+| Investigation prompt | `src/modules/review/engine.ts` → `executeInvestigationCall` | Stage 2 |
+| Final reporting prompt | `src/modules/review/engine.ts` → `finishWithReportingCall` | Stage 3/4 |
+| Final output contract | `src/modules/review/engine.ts` → `REVIEW_RESULT_FORMAT` | Reporting stage |
+| JSON-only suffix | `src/platform/agents/opencode-runtime.ts` → `buildPrompt` | Every JSON task |
+| Model/provider/permissions | `src/platform/agents/opencode-config.ts` | Every session |
 
 ### The shared security and scope rules (verbatim)
 
-Source: `src/review-engine/prompts/common.ts`
+Source: `src/modules/review/prompts/common.ts`
 
 ```text
 SECURITY AND SCOPE RULES (mandatory):
@@ -642,7 +642,7 @@ in a supplied guideline (or, when none are supplied, be a real defect).
 
 ### Handbook mode (verbatim)
 
-Source: `src/review-engine/prompts/handbook-review.ts`
+Source: `src/modules/review/prompts/handbook-review.ts`
 
 ```text
 GUIDELINE MODE — the engineering guidelines provided below are the
@@ -667,7 +667,7 @@ AUTHORITATIVE STANDARD for this review.
 
 ### Stage 1 — analysis prompt
 
-Source: `src/review-engine/engine.ts` → `analysisInstruction`
+Source: `src/modules/review/engine.ts` → `analysisInstruction`
 
 The effective order is:
 
@@ -717,7 +717,7 @@ Respond with exactly one JSON object and nothing else — no prose, no markdown 
 
 ### Stage 2 — investigation prompt
 
-Source: `src/review-engine/engine.ts` → `executeInvestigationCall`
+Source: `src/modules/review/engine.ts` → `executeInvestigationCall`
 
 This stage only runs if the plan enables `context-investigation` and the model
 did not say `no_additional_context_needed`. The prompt starts:
@@ -757,7 +757,7 @@ INVESTIGATION-STAGE OUTPUT CONTRACT: ...
 
 ### Stage 3/4 — verification and final reporting prompt
 
-Source: `src/review-engine/engine.ts` → `finishWithReportingCall`
+Source: `src/modules/review/engine.ts` → `finishWithReportingCall`
 
 This is the prompt that produces the final answer. It starts:
 
@@ -968,7 +968,7 @@ GET /api/admin/reviews/compare?repository=owner/repo&pr=123
 ### 5e. GitHub output
 
 The developer sees one GitHub review with `event: COMMENT`, not an approval or
-a change request. The body is built by `src/publishing/summary.ts`:
+a change request. The body is built by `src/modules/publishing/summary.ts`:
 
 ```markdown
 # PR #123 Review
@@ -1135,10 +1135,10 @@ Environment variables you will hear about:
 - `WORKSPACE_ROOT_DIR`, `KNOWLEDGE_CACHE_DIR`
 - `OPENCODE_BINARY_PATH` (defaults to `/opt/homebrew/bin/opencode` in code)
 
-> **Config gotcha:** the README currently describes the bare `/review` default
-> as `standard`, but `config/review.json` sets
-> `github.defaultReviewType: "handbook"`. The config is the source of truth.
-> Verify the deployed `config/review.json` if this matters.
+> **Config note:** the bare `/review` command uses
+> `github.defaultReviewType`, which is `handbook` in the shipped
+> `config/review.json`. The config is the source of truth; verify the deployed
+> file if this matters.
 
 ---
 
@@ -1146,14 +1146,14 @@ Environment variables you will hear about:
 
 | Symptom | First place to look |
 |---|---|
-| Webhook received, no review row | `src/handlers/pull-request.ts`, worker/probot logs, draft/config gates, `WebhookDelivery` |
+| Webhook received, no review row | `src/modules/webhooks/pull-request.ts`, worker/probot logs, draft/config gates, `WebhookDelivery` |
 | Review row `queued`, no clone | Redis connection, `OutboxEvent.status = pending`, worker outbox recovery logs, `ReviewJob.status` |
-| Job stuck `processing` | Worker logs, reconciliation (`src/recovery/reconciliation.ts`), stale threshold |
+| Job stuck `processing` | Worker logs, reconciliation (`src/modules/ingestion/recovery/reconciliation.service.ts`), stale threshold |
 | Clone failed | GitHub App permissions/token, repository name, base SHA availability |
-| `invalid_output` | Model response in agent logs, `src/review-engine/result-schema.ts` |
-| Findings missing | `src/findings/validation.ts` rejection reasons, confidence thresholds |
+| `invalid_output` | Model response in agent logs, `src/contracts/review.ts` |
+| Findings missing | `src/modules/findings/validation.ts` rejection reasons, confidence thresholds |
 | No GitHub comments | `review.types.<type>.publish`, `publishSkipped`, `stale_commit`, `completed_with_warnings` |
-| Duplicate comments | `src/publishing/publisher.ts` fingerprint reconciliation |
+| Duplicate comments | `src/modules/publishing/publisher.ts` fingerprint reconciliation |
 | Need token/cost data | `review_telemetry` log, `Review.inputTokens/outputTokens`, admin compare endpoint |
 | Need per-stage timings | `agent_execute_started`, `agent_execute_exited`, `Review engine run completed` logs |
 
@@ -1183,26 +1183,26 @@ FROM findings WHERE review_id = '<review-id>';
 
 **"Where does a PR enter the system?"**
 
-`src/handlers/pull-request.ts`, registered by `src/index.ts`, receives
+`src/modules/webhooks/pull-request.ts`, registered by `src/index.ts`, receives
 `pull_request.opened`, `.synchronize`, and `.ready_for_review` through Probot.
 
 **"Does the webhook call the AI?"**
 
-No. It calls `ingestReviewRequest` in `src/ingestion/orchestrator.ts`, which
+No. It calls `ingestReviewRequest` in `src/modules/ingestion/ingestion.service.ts`, which
 writes PostgreSQL rows and an outbox event in one transaction. The job is
 enqueued on Redis. The webhook returns fast.
 
 **"Which process runs the AI?"**
 
 The separate review worker (`src/worker.ts`), which consumes BullMQ
-`review-jobs` and calls `processReviewJob` in `src/workspace/processor.ts`.
+`review-jobs` and calls `processReviewJob` in `src/modules/workspace/processor.ts`.
 
 **"What is the system prompt?"**
 
 There is no single one. Each stage gets an application-built instruction. The
-shared security/scope rules are in `src/review-engine/prompts/common.ts`; the
-stage prompts and final output contract are in `src/review-engine/engine.ts`;
-handbook rules are in `src/review-engine/prompts/handbook-review.ts`; OpenCode
+shared security/scope rules are in `src/modules/review/prompts/common.ts`; the
+stage prompts and final output contract are in `src/modules/review/engine.ts`;
+handbook rules are in `src/modules/review/prompts/handbook-review.ts`; OpenCode
 adds its own internal system prompt. The app passes a single prompt string to
 `opencode run`.
 
@@ -1285,7 +1285,7 @@ also have the provider timeout. Timeout escalation is SIGTERM then SIGKILL.
    tools inside the workspace, under budgets. Path escapes and unknown tools are
    rejected.
 4. **"The agent can run tests/builds."** Not through this review path. The
-   engine's tool protocol is read-only retrieval. The `src/execution` module is
+   engine's tool protocol is read-only retrieval. The `src/modules/execution` module is
    not wired into the review engine.
 5. **"A clean PR gets no comment."** A clean review still publishes a summary
    when `review.reporting.publishCleanReview` is true.
@@ -1299,7 +1299,7 @@ also have the provider timeout. Timeout escalation is SIGTERM then SIGKILL.
 9. **"The README default is the code default."** Check `config/review.json`;
    the current default review type is `handbook`.
 10. **"The old controller is the entry point."** No — the active entry point
-    is `src/handlers/pull-request.ts`.
+    is `src/modules/webhooks/pull-request.ts`.
 
 ---
 
@@ -1309,33 +1309,33 @@ also have the provider timeout. Timeout escalation is SIGTERM then SIGKILL.
 |---|---|
 | Probot app registration | `src/index.ts` |
 | HTTP server, health, manual API, admin | `src/server.ts` |
-| PR webhook handler | `src/handlers/pull-request.ts` |
-| `/review` handler | `src/handlers/issue-comment.ts` |
-| Durable ingestion, idempotency, outbox | `src/ingestion/orchestrator.ts` |
+| PR webhook handler | `src/modules/webhooks/pull-request.ts` |
+| `/review` handler | `src/modules/webhooks/issue-comment.ts` |
+| Durable ingestion, idempotency, outbox | `src/modules/ingestion/ingestion.service.ts` |
 | BullMQ queue | `src/platform/queue/review-queue.ts` |
-| Outbox publisher/recovery | `src/ingestion/outbox.ts` |
-| State machine | `src/ingestion/review-state.ts` |
+| Outbox publisher/recovery | `src/modules/ingestion/outbox.service.ts` |
+| State machine | `src/modules/ingestion/review-state.service.ts` |
 | Worker entry point | `src/worker.ts` |
-| Job processor | `src/workspace/processor.ts` |
-| Clone/diff/workspace | `src/workspace/workspace.ts` |
-| Knowledge cache/materialization | `src/knowledge/*` |
-| Pipeline wiring | `src/publishing/pipeline.ts` |
-| Review engine stages | `src/review-engine/engine.ts` |
-| Complexity scoring | `src/review-engine/complexity.ts` |
-| Plan/budgets | `src/review-engine/plan.ts` |
-| Controlled retrieval | `src/review-engine/tools.ts` |
-| Prompt injection/retrieval | `src/review-engine/injection.ts`, `src/review-engine/retrieval.ts` |
-| Shared prompt rules | `src/review-engine/prompts/common.ts` |
-| Handbook prompt rules | `src/review-engine/prompts/handbook-review.ts` |
-| JSON schemas | `src/review-engine/result-schema.ts` |
-| Agent runtime | `src/agent/opencode-runtime.ts` |
-| OpenCode session config | `src/agent/opencode-config.ts` |
-| Finding validation | `src/findings/validation.ts` |
-| Finding persistence/lifecycle | `src/findings/store.ts` |
-| Fingerprints | `src/findings/fingerprint.ts` |
-| GitHub publisher | `src/publishing/publisher.ts` |
-| Summary/inline rendering | `src/publishing/summary.ts` |
-| Diff position mapping | `src/publishing/diff-positions.ts` |
+| Job processor | `src/modules/workspace/processor.ts` |
+| Clone/diff/workspace | `src/modules/workspace/workspace.ts` |
+| Knowledge cache/materialization | `src/modules/knowledge/*` |
+| Pipeline wiring | `src/modules/publishing/pipeline.ts` |
+| Review engine stages | `src/modules/review/engine.ts` |
+| Complexity scoring | `src/modules/review/complexity.ts` |
+| Plan/budgets | `src/modules/review/plan.ts` |
+| Controlled retrieval | `src/modules/review/tools.ts` |
+| Prompt injection/retrieval | `src/modules/review/injection.ts`, `src/modules/review/retrieval.ts` |
+| Shared prompt rules | `src/modules/review/prompts/common.ts` |
+| Handbook prompt rules | `src/modules/review/prompts/handbook-review.ts` |
+| JSON schemas | `src/contracts/review.ts` |
+| Agent runtime | `src/platform/agents/opencode-runtime.ts` |
+| OpenCode session config | `src/platform/agents/opencode-config.ts` |
+| Finding validation | `src/modules/findings/validation.ts` |
+| Finding persistence/lifecycle | `src/modules/findings/store.ts` |
+| Fingerprints | `src/modules/findings/fingerprint.ts` |
+| GitHub publisher | `src/modules/publishing/publisher.ts` |
+| Summary/inline rendering | `src/modules/publishing/summary.ts` |
+| Diff position mapping | `src/modules/publishing/diff-positions.ts` |
 | Prisma schema | `prisma/schema.prisma` |
 | Runtime config | `config/review.json` |
 

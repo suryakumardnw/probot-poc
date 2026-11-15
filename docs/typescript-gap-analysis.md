@@ -1,11 +1,17 @@
 # TypeScript Standards Gap Analysis
 
-Date: 2026-11-14
+Date: 2026-11-14 (baseline snapshot)
 Repository snapshot: `ca91ebb` (`feat/handbook-conformance-review`, clean)
 Standards source: `engineering-handbook`, branch
 `feat/CU-86bcdv1c9-typescript-guidelines`, snapshot `2c2182a`
 Companions: [TypeScript profile](./typescript-profile.md) ·
 [Refactor design](./specs/2026-11-14-typescript-refactor-design.md)
+
+> **Historical baseline.** The findings and file paths below describe the
+> repository before the TypeScript refactor. They are retained as the
+> reproducible starting point. Current status and remaining deviations are in
+> [typescript-profile.md](./typescript-profile.md) and the final verification
+> report.
 
 ## Purpose
 

@@ -185,9 +185,11 @@ commit range. A non-conventional commit or PR title fails the check.
 ## Refactor rules
 
 The TypeScript refactor is governed by `docs/typescript-profile.md`, the
-[design](docs/specs/2026-11-14-typescript-refactor-design.md), and the
-[implementation plan](docs/plans/2026-11-15-typescript-refactor-implementation.md).
-These rules apply to every PR:
+[design](docs/specs/2026-11-14-typescript-refactor-design.md), the
+[implementation plan](docs/plans/2026-11-15-typescript-refactor-implementation.md),
+and the [architecture](docs/architecture.md). The enforced boundaries are in
+`docs/module-boundaries.md`; approved deviations are recorded in
+`docs/adr/`. These rules apply to every PR:
 
 - **No behavior change in refactor PRs.** Move or reshape code first; change
   behavior in a separate PR with tests.
@@ -202,14 +204,16 @@ These rules apply to every PR:
   `index.ts`; do not reach into its internals.
 - **Tests fake at seams.** Unit tests must not require Postgres, Redis, or the
   network. Integration tests that need infrastructure are explicit and live
-  under `test/integration/` once that tier exists.
+  under `test/integration/`; characterization tests live under
+  `test/characterization/`.
 - **Do not weaken the lint configuration.** New `eslint-disable` comments need
   an inline reason. Temporary rule overrides must carry a `TODO` naming the
-  PR that removes them. Currently the test suite turns off
+  PR that removes them. The only remaining allowance is scoped to the frozen
+  characterization suite (`test/characterization/**`), which turns off
   `@typescript-eslint/no-explicit-any` and
-  `@typescript-eslint/no-non-null-assertion` until PR 4.2, and a fixed list of
-  source files has `no-non-null-assertion` disabled until the same PR; see
-  `eslint.config.mjs`.
+  `@typescript-eslint/no-non-null-assertion` because its assertions are the
+  black-box behavioural baseline. Unit, contract, integration, and helper code
+  are fully checked.
 - **Lint exceptions are explicit.** `deploy/inspect-key.js` is a one-off
   diagnostic copied into the worker container and runs as CommonJS outside the
   package, so `eslint.config.mjs` permits `console` and `require` for that file

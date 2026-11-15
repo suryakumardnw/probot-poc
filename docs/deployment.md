@@ -4,11 +4,10 @@ This document describes the production deployment of the AI PR Reviewer via
 Docker Compose, and how to run the same stack on [Dokploy](https://dokploy.com).
 It covers architecture, prerequisites, secrets, first deployment, upgrades,
 backup/restore (tested — evidence below), restart recovery, an optional
-Dozzle log-viewer stack, and the validation runbook (§10.4 of
-`docs/architecture.md`).
+Dozzle log-viewer stack, and the validation runbook in §10.4 of this document.
 
-Related: `docs/architecture.md` §17 (deployment topology), §18 (ops),
-§25 (DoD).
+Related: `docs/architecture.md` §13 (deployment), §12 (observability, health,
+and shutdown), and §14 (approved deviations).
 
 ---
 

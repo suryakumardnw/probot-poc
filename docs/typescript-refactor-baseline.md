@@ -10,6 +10,11 @@ Companions: [TypeScript profile](./typescript-profile.md) ·
 [Gap analysis](./typescript-gap-analysis.md) ·
 [Refactor plan](./plans/2026-11-15-typescript-refactor-implementation.md)
 
+> **Historical baseline.** Every path and count below describes the repository
+> at the baseline revision, before the module/platform moves. Compare final
+> counts with `npm run metrics:quality`; the current layout is in
+> [architecture.md](./architecture.md).
+
 ## Purpose
 
 This is the reproducible starting point for the TypeScript refactor. Every later

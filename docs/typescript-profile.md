@@ -1,10 +1,11 @@
 # TypeScript Profile — probot-poc
 
-Status: draft · 2026-11-14
+Status: final · 2026-11-15
 Canonical source: `engineering-handbook`, branch
 `feat/CU-86bcdv1c9-typescript-guidelines`, snapshot `2c2182a`
 Companions: [TypeScript gap analysis](./typescript-gap-analysis.md) ·
-[Refactor design](./specs/2026-11-14-typescript-refactor-design.md)
+[Refactor design](./specs/2026-11-14-typescript-refactor-design.md) ·
+[Architecture](./architecture.md) · [ADRs](./adr/README.md)
 
 This file records how the Nativewit TypeScript guidelines apply to this
 repository. It is a decision record, not a copy of the handbook. Update it when
@@ -18,8 +19,11 @@ an adaptation or deviation is accepted.
   BullMQ worker.
 - **Data/queue:** PostgreSQL via Prisma; Redis via ioredis; BullMQ queue.
 - **Frontend:** none. No React, Next.js, design tokens, or forms.
-- **Tests:** Vitest. Integration suites currently require Postgres and Redis.
-- **CI:** none yet (`.github/` is absent).
+- **Tests:** Vitest with four tiers in `vitest.config.ts`: service-free
+  `unit` + `contract`, and `integration` + `characterization` with
+  Postgres/Redis (Docker for the sandbox suite).
+- **CI:** GitHub Actions (`Quality`, `Unit`, `Test`, `Docker smoke`,
+  `Commitlint`, `Security`).
 
 ## Adopt unchanged
 
@@ -44,7 +48,7 @@ an adaptation or deviation is accepted.
 | `@nativewit/contracts` package | `src/contracts` for now; extract a package only when a second real consumer exists. |
 | Next.js route → feature hook → API client | Probot handler → ingestion/application service → worker/pipeline → outbound adapter. |
 | TanStack Query / Zustand | N/A. Process state is explicit and injected, not a UI store. |
-| “Features” in `apps/web/features` | Vertical modules aligned to capabilities: webhooks, ingestion, review engine, publishing, admin, execution, knowledge. |
+| “Features” in `apps/web/features` | Vertical modules aligned to capabilities: webhooks, triage, ingestion, workspace, review, findings, publishing, admin, execution, knowledge. Platform adapters, ports, contracts, and shared code are separate layers. |
 | React components, design tokens, forms | N/A — no frontend. |
 | “Unused dependency must be removed” | `effect` stays pinned at `4.1.0`. It has no direct imports, but `@opencode/sdk@2.3.0` depends on it and the root pin keeps Prisma's `effect@3.21.0` from winning peer resolution. Guarded by `test/deployment-node.test.ts`; ruling 2026-11-15 (PR 0.5). |
 
@@ -79,10 +83,10 @@ overrides must be marked `override`, and type-only imports must use
   and a present `undefined` value in every consumer (object spreads, `in`
   checks, `Object.keys`, and Prisma writes). That is a data-shape decision, not
   a mechanical fix, so it stays out of the compiler-flag PR.
-  - Follow-up: a dedicated compiler-hardening PR after PR 4.2 (fakes and
-    unit-test migration). It audits every optional property that is written
-    with `undefined`, splits "absent" from "explicitly undefined", adds tests
-    for serialized payloads, then enables the flag in its own commit.
+  - Follow-up: a dedicated compiler-hardening PR after this refactor. It
+    audits every optional property that is written with `undefined`, splits
+    "absent" from "explicitly undefined", adds tests for serialized payloads,
+    then enables the flag in its own commit.
 
 ## N/A
 
@@ -93,31 +97,74 @@ overrides must be marked `override`, and type-only imports must use
 ## Known gaps (current)
 
 These are tracked in full in the [gap analysis](./typescript-gap-analysis.md).
+At the end of the refactor:
 
-- No ESLint, Prettier, lint/format/typecheck scripts, or CI.
-- No repository layer: 16 files across 10 top-level modules run Prisma queries
-  directly.
-- 13 `JSON.parse(...) as ...` boundary casts in `src`.
-- 28 bespoke error classes; no shared `AppError` family or error envelope.
-- Import-time `loadEnv()` in `src/ingestion/orchestrator.ts` and
-  `src/ingestion/outbox.ts`; hidden `getPrisma()`/`getRedis()` call sites.
-- 10 test files require real Postgres/Redis; `fileParallelism: false` works
-  around shared-database fixtures.
-- Dead legacy review path removed in PR 0.5 (2026-11-15): the controller,
-  service, view, and `src/models/review.ts` are deleted. `effect` is kept as a
-  transitive pin for `@opencode/sdk`, not removed.
-- Large files: `opencode-runtime.ts` 1,200 lines, `opencode-sdk-runtime.ts` 866,
-  `admin/api.ts` 820, `admin/panel.ts` 770, `review-engine/engine.ts` 637.
+- **Tooling and CI are in place.** ESLint (with boundary, vendor, and
+  environment rules), Prettier, `typecheck`, `typecheck:tests`, metrics, four
+  test tiers, build, audit, commitlint, and Docker smoke run locally and in CI.
+- **Persistence is behind repositories.** No `src` file imports
+  `@prisma/client` outside `*.repository.ts` adapters or `src/platform/db/**`;
+  no `src` file reads `process.env` outside `src/platform/config/**`.
+- **Boundary shapes are parsed.** There are zero boundary
+  `JSON.parse(...) as` casts and zero explicit `any` type positions in `src`.
+- **No non-null assertions in `src`.** The frozen characterization suite keeps
+  a narrow lint allowance for `any`/`!`; unit, contract, integration, and
+  helper code are fully checked.
+- **11 `as unknown as` casts remain in `src`** in six localized adapter/
+  defensive sites: `modules/workspace/git.ts` (Node error `code`), the SDK
+  dynamic import and config redaction/clone helpers, the Octokit publisher
+  adapter, metric internals, and a logger `child` capability probe. Each is
+  confined to a platform/module edge and documented in the profile and the
+  final verification report.
+- **Three test files are flagged by the service metric**: two
+  characterization suites and `test/helpers/db.ts`. The characterization tier
+  is intentionally an infrastructure tier; the helper imports Prisma to clean
+  the database.
+- **`src/modules/review/result-schema.ts` is a compatibility re-export** of
+  `src/contracts/review.ts`. New code imports the contract; removing the shim
+  needs one import update in a contract test.
+- **`effect` stays pinned at `4.1.0`.** It has no direct imports, but
+  `@opencode/sdk@2.3.0` depends on it and the root pin keeps Prisma's
+  `effect@3.21.0` from winning peer resolution. Guarded by
+  `test/deployment-node.test.ts`; ruling 2026-11-15 (PR 0.5).
 
-## Decisions pending
+## Decisions and remaining follow-ups
 
-- Stay on npm or migrate to pnpm (single-package decision).
-- How to run integration tests in CI (service containers vs Testcontainers).
-- Module boundaries and public entry points for `src/`.
-- Whether `src/agent`'s CLI and SDK runtimes share a common core.
+Resolved during the refactor:
+
+- **npm vs pnpm:** stay on a single npm package —
+  [ADR 0003](./adr/0003-single-npm-package.md).
+- **Integration tests in CI:** GitHub Actions service containers plus a Docker
+  Compose smoke job; no Testcontainers.
+- **Module boundaries:** vertical modules with public `index.ts` entry points,
+  enforced by ESLint —
+  [module-boundaries.md](./module-boundaries.md),
+  [ADR 0001](./adr/0001-keep-probot.md),
+  [ADR 0003](./adr/0003-single-npm-package.md).
+- **CLI vs SDK runtimes:** keep two adapters behind the `AgentRuntime` port. A
+  shared core is not extracted; the shared helpers already live in
+  `src/platform/agents`.
+- **Contracts location:** `src/contracts`, no package —
+  [ADR 0004](./adr/0004-contracts-in-src.md).
+- **Multi-repository atomic writes:** module-owned units of work —
+  [ADR 0005](./adr/0005-unit-of-work.md).
+- **Error and retry policy:** one `AppError` family and one queue classifier —
+  [ADR 0006](./adr/0006-failure-classification.md).
+
+Still open (owner: refactor maintainer):
+
+- **`exactOptionalPropertyTypes`** remains deferred (see
+  [Compiler strictness](#compiler-strictness)).
+- **`agent/opencode-runtime.ts` (1,224 lines)** and
+  **`opencode-sdk-runtime.ts` (886 lines)** remain large. They are isolated
+  adapters behind the runtime port; splitting them requires a dedicated
+  behavior-preserving PR.
+- **Review result-schema shim** removal.
+- **Characterization lint allowance** can be retired only if the frozen
+  baseline is ever re-recorded.
 
 ## Rule
 
 When a guideline is deliberately not followed, add a dated line under **Known
-gaps** or **Decisions pending** with the reason and owner. An undocumented
-deviation is treated as a defect during review.
+gaps** or **Decisions and remaining follow-ups** with the reason and owner. An
+undocumented deviation is treated as a defect during review.

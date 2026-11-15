@@ -1,5 +1,12 @@
 # OpenCode Runtime Plugin Implementation Plan
 
+> **Historical document.** This plan records the pre-refactor layout and task
+> sequence. Paths such as `src/agent/` and `src/review-engine/` were current
+> when it was written; the runtime now lives in `src/platform/agents/` and the
+> engine in `src/modules/review/`. See
+> [docs/architecture.md](../architecture.md) and
+> [docs/agent-runtime-plugins.md](../agent-runtime-plugins.md).
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the agent runtime pluggable so `agent.runtime.type` selects either the existing OpenCode CLI adapter or a new OpenCode SDK adapter, with the SDK host isolated in a sanitized child process and both adapters behind the same `AgentRuntime` contract.

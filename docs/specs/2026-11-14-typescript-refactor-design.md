@@ -1,11 +1,15 @@
 # TypeScript Refactor Design — probot-poc
 
-Status: Draft for approval
+Status: Accepted design baseline (historical)
 Date: 2026-11-14
 Companions: [TypeScript gap analysis](../typescript-gap-analysis.md),
 [TypeScript profile](../typescript-profile.md)
 Standards: `engineering-handbook`, branch
 `feat/CU-86bcdv1c9-typescript-guidelines`, snapshot `2c2182a`
+
+> **Historical note.** The target tree and move table below describe the
+> pre-refactor layout and the planned destination. The implemented module map,
+> dependency rules, and flows are in [architecture.md](../architecture.md).
 
 ## 1. Intent
 

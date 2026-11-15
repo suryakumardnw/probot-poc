@@ -163,9 +163,10 @@ from the environment.
    results appear as a PR summary plus inline comments.
 4. Comment `/review` on a PR to trigger a manual review. Draft PRs are skipped
    by default. The command accepts a review type:
-   `/review` (default `standard`), `/review type:skill` (playbook-injected
-   methodology) and `/review type:handbook` (standards pulled from the
-   configured handbook repo). All types review the same commit independently;
+   `/review` (default `handbook`), `/review type:standard`,
+   `/review type:skill` (playbook-injected methodology) and
+   `/review type:handbook` (standards pulled from the configured handbook
+   repo). All types review the same commit independently;
    by default only `standard` posts findings back to GitHub
    (`review.types.<type>.publish`), the others persist results for
    comparison (`GET /api/admin/reviews/compare`).
@@ -197,9 +198,9 @@ changed files are detected as one of the listed technologies (`.ts` →
 Injection budgets are token-based (`knowledge.skill.maxTokens` default 1500,
 `knowledge.handbook.maxTokens` default 3000, ≈4 chars/token; `maxChars` is a
 byte-level backstop). The handbook instruction profile lives in
-`src/review-engine/prompts/handbook-review.ts`; retrieval (technology detection,
-ranking, dedup, deterministic selection) is application-side — the agent never
-retrieves knowledge itself.
+`src/modules/review/prompts/handbook-review.ts`; retrieval (technology
+detection, ranking, dedup, deterministic selection) is application-side — the
+agent never retrieves knowledge itself.
 
 Review behavior (categories, confidence thresholds, execution policy, model,
 etc.) lives in [`config/review.json`](config/review.json). It is baked into the
@@ -321,16 +322,25 @@ npm run model:smoke      # check model endpoint connectivity
 
 ## Documentation
 
+- **[docs/architecture.md](docs/architecture.md)** — current architecture:
+  module map, dependency rules, server/worker flows, queue contract, security.
 - **[docs/how-pr-review-works.md](docs/how-pr-review-works.md)** — teaching
   guide: what happens to a PR under the hood, the exact prompts, the output
   contract, and the failure modes.
-- **[docs/architecture.md](docs/architecture.md)** — system design, review
-  lifecycle, security model, configuration reference.
+- **[docs/module-boundaries.md](docs/module-boundaries.md)** — the enforced
+  ESLint boundary policy and approved vendor/environment exceptions.
+- **[docs/queue-reliability.md](docs/queue-reliability.md)** — idempotency,
+  retries, recovery, and graceful shutdown.
+- **[docs/adr/](docs/adr/README.md)** — architecture decision records for the
+  approved deviations (Probot, Prisma, npm package, contracts, unit of work,
+  failure classification).
 - **[docs/deployment.md](docs/deployment.md)** — full operations guide:
   topology, secrets, backup/restore evidence, restart recovery, Dokploy and
   Dozzle setup, validation runbook.
 - **[docs/agent-runtime-plugins.md](docs/agent-runtime-plugins.md)** — runtime
   plugin API, CLI vs SDK selection, security boundary and operations.
+- **[docs/typescript-profile.md](docs/typescript-profile.md)** — how the
+  Nativewit TypeScript guidelines apply here, including accepted deviations.
 
 ## Contributing
 
