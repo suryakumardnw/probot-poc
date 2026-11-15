@@ -80,6 +80,16 @@ const UNCONFIGURED_ENV: Env = loadEnv({
   REDIS_URL: process.env.REDIS_URL,
 });
 
+const MISSING_CALLBACK_ENV: Env = loadEnv({
+  NODE_ENV: "test",
+  DATABASE_URL: process.env.DATABASE_URL,
+  REDIS_URL: process.env.REDIS_URL,
+  ADMIN_OAUTH_CLIENT_ID: "test-client-id",
+  ADMIN_OAUTH_CLIENT_SECRET: "test-client-secret",
+  SESSION_SECRET: "test-session-secret-0123456789",
+  ADMIN_GITHUB_ORG: "octo-org",
+});
+
 // HTTP mocks -------------------------------------------------------------------
 
 interface MockResponse {
@@ -313,6 +323,14 @@ describe("admin api (ticket 10)", () => {
     expect(envelope.message).toMatch(/not configured/);
     const nonAdmin = await callAdmin(bare, "GET", "/api/reviews");
     expect(nonAdmin.statusCode).toBe(0); // fell through (not handled)
+  });
+
+  test("missing OAuth callback URL disables the admin API instead of redirecting to undefined", async () => {
+    expect(isAdminConfigured(MISSING_CALLBACK_ENV)).toBe(false);
+    const { handler: bare } = makeHandler(MISSING_CALLBACK_ENV, path.join(configDir, "review.json"));
+    const login = await callAdmin(bare, "GET", "/api/admin/auth/github/login");
+    expect(login.statusCode).toBe(503);
+    expectEnvelope(login.body, "ADMIN_NOT_CONFIGURED", 503);
   });
 
   test("non-admin paths fall through (handler returns false)", async () => {

@@ -69,6 +69,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         missing: [
           !env.ADMIN_OAUTH_CLIENT_ID && "ADMIN_OAUTH_CLIENT_ID",
           !env.ADMIN_OAUTH_CLIENT_SECRET && "ADMIN_OAUTH_CLIENT_SECRET",
+          !env.ADMIN_OAUTH_CALLBACK_URL && "ADMIN_OAUTH_CALLBACK_URL",
           !env.SESSION_SECRET && "SESSION_SECRET",
           !env.ADMIN_GITHUB_ORG && "ADMIN_GITHUB_ORG",
         ].filter(Boolean),

@@ -154,12 +154,17 @@ describe("FakeAgentRuntime", () => {
     await expect(runtime.healthCheck()).resolves.toMatchObject({ healthy: true });
   });
 
-  test("supports start and health failures", async () => {
+  test("supports start, terminate and health failures", async () => {
     const runtime = new FakeAgentRuntime();
     runtime.queueStartSessionError(new AgentRuntimeError("spawn", "cannot spawn"));
     await expect(runtime.startSession({ reviewId: "review-1", workspacePath: "/workspace" })).rejects.toMatchObject({
       code: "spawn",
     });
+    const session = await runtime.startSession({ reviewId: "review-1", workspacePath: "/workspace" });
+    const terminateFailure = new AgentRuntimeError("crash", "terminate failed");
+    runtime.queueTerminateError(terminateFailure);
+    await expect(runtime.terminate(session)).rejects.toBe(terminateFailure);
+    expect(runtime.terminated).toBe(1);
     runtime.queueHealthError(new Error("health probe failed"));
     await expect(runtime.healthCheck()).rejects.toThrow("health probe failed");
   });
@@ -270,6 +275,36 @@ describe("fake repositories", () => {
     );
   });
 
+  test("findings repository rejects duplicate review/fingerprint rows", async () => {
+    const { findings } = createFakeFindings();
+    await findings.create(findingInput());
+    await expect(findings.create(findingInput({ title: "Duplicate fingerprint" }))).rejects.toThrow(
+      "duplicate fingerprint fingerprint-1 in review review-1",
+    );
+    await expect(findings.findByReview("review-1")).resolves.toHaveLength(1);
+  });
+
+  test("findings repository orders by verified, severity then createdAt", async () => {
+    const clock = new FakeClock("2026-01-01T00:00:00.000Z");
+    const { findings } = createFakeFindings({ clock });
+    const firstLow = await findings.create(findingInput({ fingerprint: "low-first", verified: true, severity: "low" }));
+    clock.advance(1_000);
+    const critical = await findings.create(
+      findingInput({ fingerprint: "critical", verified: true, severity: "critical" }),
+    );
+    clock.advance(1_000);
+    const unverified = await findings.create(
+      findingInput({ fingerprint: "unverified", verified: false, severity: "critical" }),
+    );
+    clock.advance(1_000);
+    const secondLow = await findings.create(
+      findingInput({ fingerprint: "low-second", verified: true, severity: "low" }),
+    );
+
+    const ordered = await findings.findByReview("review-1");
+    expect(ordered.map((row) => row.id)).toEqual([critical.id, firstLow.id, secondLow.id, unverified.id]);
+  });
+
   test("workspace repository enforces active/latest/retention rules", async () => {
     const clock = new FakeClock("2026-01-01T00:00:00.000Z");
     const repository = new FakeWorkspaceRepository({ clock });
@@ -295,9 +330,34 @@ describe("fake repositories", () => {
     await expect(repository.findActiveCreatedBefore(new Date("2026-01-01T00:30:00.000Z"))).resolves.toMatchObject([
       { id: first.id },
     ]);
+    clock.advance(60_000);
     await repository.markFailed(first.id, "clone failed");
+    expect(repository.findById(first.id)).toMatchObject({
+      status: "failed",
+      lastError: "clone failed",
+      cleanedAt: new Date("2026-01-01T00:02:00.000Z"),
+    });
     await expect(repository.findLatestActive("review-1")).resolves.toBeNull();
     await expect(repository.markFailed("missing", null)).rejects.toThrow("unknown workspace");
+  });
+
+  test("workspace repository turns queued mutation failures into rejections", async () => {
+    const repository = new FakeWorkspaceRepository();
+    const workspace = await repository.create({
+      reviewId: "review-1",
+      path: "/workspaces/first",
+      headSha: "head-1",
+      baseSha: null,
+      mergeBaseSha: null,
+    });
+    const failure = new Error("workspace update failed");
+    repository.queueMutationError(failure);
+    await expect(repository.markCleaned(workspace.id)).rejects.toBe(failure);
+    expect(repository.findById(workspace.id)?.status).toBe("active");
+
+    repository.queueMutationError(failure);
+    await expect(repository.markFailed(workspace.id, "cleanup failed")).rejects.toBe(failure);
+    expect(repository.findById(workspace.id)?.status).toBe("active");
   });
 
   test("publishing repositories reconcile retries and record usage", async () => {
@@ -325,6 +385,26 @@ describe("fake repositories", () => {
     });
   });
 
+  test("publishing repositories propagate queued write failures", async () => {
+    const publishing = createFakePublishingRepositories();
+    const failure = new Error("publication write failed");
+    publishing.comments.queueRecordPublicationError(failure);
+    await expect(
+      publishing.comments.recordPublication({ reviewId: "review-1", summary: null, inlineComments: [] }),
+    ).rejects.toBe(failure);
+    await publishing.comments.recordFailure("review-1");
+    expect(publishing.comments.wasMarkedFailed("review-1")).toBe(true);
+
+    publishing.reviews.queueMarkPublishSkippedError(failure);
+    await expect(publishing.reviews.markPublishSkipped("review-1")).rejects.toBe(failure);
+    publishing.reviews.queueRecordUsageError(failure);
+    await expect(
+      publishing.reviews.recordUsage({ reviewId: "review-1", inputTokens: 1, outputTokens: 1 }),
+    ).rejects.toBe(failure);
+    expect(publishing.reviews.skippedReviewIds.size).toBe(0);
+    expect(publishing.reviews.usage).toHaveLength(0);
+  });
+
   test("audit repository lists newest first and propagates write failures", async () => {
     const clock = new FakeClock("2026-01-01T00:00:00.000Z");
     const audit = new FakeAuditRepository({ clock });
@@ -340,6 +420,8 @@ describe("fake repositories", () => {
     const page = await audit.listPage({ limit: 1, offset: 0 });
     expect(page.total).toBe(2);
     expect(page.rows).toMatchObject([{ action: "config.update" }]);
+    const allRows = await audit.listPage({ limit: 2, offset: 0 });
+    expect(allRows.rows.find((row) => row.action === "admin.login")?.metadata).toBeNull();
 
     const failure = new Error("audit down");
     audit.queueRecordError(failure);
@@ -367,6 +449,8 @@ describe("fake repositories", () => {
 
     await expect(outbox.discardIfPending(first.id, "stop")).resolves.toBe(true);
     await expect(outbox.discardIfPending(first.id, "stop")).resolves.toBe(false);
+    await expect(outbox.discardIfPending("missing", "stop")).resolves.toBe(false);
+    await expect(outbox.incrementAttemptsIfPending("missing", "ignored")).resolves.toBeUndefined();
     await outbox.incrementAttemptsIfPending(second.id, "retry");
     const retried = await outbox.findLatestForJob("job-1");
     expect(retried).toMatchObject({ id: second.id, status: "pending", attempts: 1, lastError: "retry" });
@@ -374,7 +458,11 @@ describe("fake repositories", () => {
     await outbox.markPublished(second.id, clock.now());
     await expect(outbox.findPendingIds(10)).resolves.toEqual([]);
     await outbox.incrementAttemptsIfPending(second.id, "ignored");
-    await expect(outbox.findLatestForJob("job-1")).resolves.toMatchObject({ attempts: 1, status: "published" });
+    await expect(outbox.findLatestForJob("job-1")).resolves.toMatchObject({
+      attempts: 1,
+      status: "published",
+      lastError: null,
+    });
 
     await outbox.discardPendingForJob("job-1", "superseded");
     await expect(outbox.markPublished("missing", clock.now())).rejects.toThrow("unknown outbox event");

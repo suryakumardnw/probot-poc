@@ -8,6 +8,11 @@ import { defined } from "./assert.js";
  * Only the fields the tests inspect are typed; YAML parsing is still the real
  * `yaml` package, so a malformed file fails exactly as before. `service()`
  * narrows the dynamic record lookup instead of leaking `any` through the test.
+ *
+ * `readComposeFile` asserts the vendor `yaml` result to `ComposeDocument` at
+ * the test-fixture boundary: the checked-in Compose file is the fixture, and
+ * every later access is narrowed through `service()`/`network()`/`defined`.
+ * This is a test-only boundary cast, not a production adapter.
  */
 export interface ComposeService {
   image: string;

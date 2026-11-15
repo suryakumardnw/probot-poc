@@ -18,7 +18,11 @@ import type { AdminSession } from "./session.js";
 
 export function isAdminConfigured(env: Env): boolean {
   return Boolean(
-    env.ADMIN_OAUTH_CLIENT_ID && env.ADMIN_OAUTH_CLIENT_SECRET && env.SESSION_SECRET && env.ADMIN_GITHUB_ORG,
+    env.ADMIN_OAUTH_CLIENT_ID &&
+    env.ADMIN_OAUTH_CLIENT_SECRET &&
+    env.ADMIN_OAUTH_CALLBACK_URL &&
+    env.SESSION_SECRET &&
+    env.ADMIN_GITHUB_ORG,
   );
 }
 

@@ -107,10 +107,33 @@ export class FakeFindingRepository implements FindingRepository {
   }
 
   async findByReview(reviewId: string): Promise<FindingRecord[]> {
-    return this.rows.filter((row) => row.reviewId === reviewId).map(copyFinding);
+    return this.rows
+      .filter((row) => row.reviewId === reviewId)
+      .sort((a, b) => {
+        if (a.verified !== b.verified) {
+          // Prisma orderBy: [{ verified: "desc" }, ...].
+          return a.verified ? -1 : 1;
+        }
+        if (a.severity !== b.severity) {
+          // Prisma orders the text column ascending; this comparison matches
+          // the deterministic C-style ordering used by the adapter tests.
+          return a.severity < b.severity ? -1 : 1;
+        }
+        return a.createdAt.getTime() - b.createdAt.getTime();
+      })
+      .map(copyFinding);
   }
 
   async create(input: CreateFindingInput): Promise<CreatedFindingRecord> {
+    const duplicate = this.rows.some((row) => row.reviewId === input.reviewId && row.fingerprint === input.fingerprint);
+    if (duplicate) {
+      // Production enforces @@unique([repositoryId, reviewId, fingerprint]);
+      // a review already implies its repository, so the review/fingerprint
+      // pair is the same constraint for valid rows.
+      throw new Error(
+        `fake finding repository: duplicate fingerprint ${input.fingerprint} in review ${input.reviewId}`,
+      );
+    }
     const now = this.clock.now();
     const row: CreatedFindingRecord = {
       id: this.nextId(),
@@ -252,11 +275,17 @@ export function createFakeFindings(options: { clock?: Clock } = {}): {
 export class FakeWorkspaceRepository implements WorkspaceRepository {
   private readonly clock: Clock;
   private readonly nextId: () => string;
+  private readonly mutationErrors: unknown[] = [];
   private rows: WorkspaceRecord[] = [];
 
   constructor(options: { clock?: Clock; idPrefix?: string } = {}) {
     this.clock = options.clock ?? new FakeClock();
     this.nextId = idFactory(options.idPrefix ?? "workspace");
+  }
+
+  queueMutationError(error: unknown): this {
+    this.mutationErrors.push(error);
+    return this;
   }
 
   seed(record: WorkspaceRecord): void {
@@ -300,7 +329,14 @@ export class FakeWorkspaceRepository implements WorkspaceRepository {
       .map(copyWorkspace);
   }
 
+  /** Test inspection helper; not part of the repository port. */
+  findById(workspaceId: string): WorkspaceRecord | null {
+    const row = this.rows.find((candidate) => candidate.id === workspaceId);
+    return row === undefined ? null : { ...row };
+  }
+
   async markCleaned(workspaceId: string, input?: MarkWorkspaceCleanedInput): Promise<void> {
+    this.throwQueuedMutationError();
     const row = this.require(workspaceId);
     row.status = "cleaned";
     row.cleanedAt = this.clock.now();
@@ -310,9 +346,18 @@ export class FakeWorkspaceRepository implements WorkspaceRepository {
   }
 
   async markFailed(workspaceId: string, lastError: string | null): Promise<void> {
+    this.throwQueuedMutationError();
     const row = this.require(workspaceId);
     row.status = "failed";
+    row.cleanedAt = this.clock.now();
     row.lastError = lastError;
+  }
+
+  private throwQueuedMutationError(): void {
+    const error = this.mutationErrors.shift();
+    if (error !== undefined) {
+      throw error;
+    }
   }
 
   private require(workspaceId: string): WorkspaceRecord {
@@ -340,6 +385,12 @@ interface FakeCommentState {
 
 export class FakeReviewCommentRepository implements ReviewCommentRepository {
   private readonly reviews = new Map<string, FakeCommentState>();
+  private readonly recordPublicationErrors: unknown[] = [];
+
+  queueRecordPublicationError(error: unknown): this {
+    this.recordPublicationErrors.push(error);
+    return this;
+  }
 
   async listPublishedFingerprints(reviewId: string): Promise<PublishedFingerprintRecord[]> {
     const state = this.reviews.get(reviewId);
@@ -351,6 +402,7 @@ export class FakeReviewCommentRepository implements ReviewCommentRepository {
   }
 
   async recordPublication(input: RecordPublicationInput): Promise<void> {
+    throwQueuedError(this.recordPublicationErrors);
     const state = this.stateFor(input.reviewId);
     if (input.summary !== null) {
       state.summaryCommentId = input.summary.githubCommentId;
@@ -364,6 +416,8 @@ export class FakeReviewCommentRepository implements ReviewCommentRepository {
   }
 
   async recordFailure(reviewId: string): Promise<void> {
+    // Matches the Prisma adapter: the failure marker is best-effort, so a
+    // write problem must not turn into a caller-visible exception.
     this.stateFor(reviewId).failed = true;
   }
 
@@ -384,6 +438,8 @@ export class FakeReviewCommentRepository implements ReviewCommentRepository {
 
 export class FakeReviewPublicationRepository implements ReviewPublicationRepository {
   private readonly contexts = new Map<string, ReviewPublicationContext>();
+  private readonly markPublishSkippedErrors: unknown[] = [];
+  private readonly recordUsageErrors: unknown[] = [];
   readonly skippedReviewIds = new Set<string>();
   readonly usage: RecordReviewUsageInput[] = [];
 
@@ -391,6 +447,16 @@ export class FakeReviewPublicationRepository implements ReviewPublicationReposit
     for (const context of contexts) {
       this.contexts.set(context.reviewId, { ...context });
     }
+  }
+
+  queueMarkPublishSkippedError(error: unknown): this {
+    this.markPublishSkippedErrors.push(error);
+    return this;
+  }
+
+  queueRecordUsageError(error: unknown): this {
+    this.recordUsageErrors.push(error);
+    return this;
   }
 
   setReviewContext(context: ReviewPublicationContext): void {
@@ -403,11 +469,20 @@ export class FakeReviewPublicationRepository implements ReviewPublicationReposit
   }
 
   async markPublishSkipped(reviewId: string): Promise<void> {
+    throwQueuedError(this.markPublishSkippedErrors);
     this.skippedReviewIds.add(reviewId);
   }
 
   async recordUsage(input: RecordReviewUsageInput): Promise<void> {
+    throwQueuedError(this.recordUsageErrors);
     this.usage.push({ ...input });
+  }
+}
+
+function throwQueuedError(errors: unknown[]): void {
+  const error = errors.shift();
+  if (error !== undefined) {
+    throw error;
   }
 }
 
@@ -450,7 +525,7 @@ export class FakeAuditRepository implements AuditRepository {
       actor: entry.actor,
       action: entry.action,
       resource: entry.resource,
-      metadata: entry.metadata ?? {},
+      metadata: entry.metadata ?? null,
       createdAt: this.clock.now(),
     });
   }
@@ -533,6 +608,7 @@ export class FakeOutboxRepository implements OutboxRepository {
     const row = this.require(eventId);
     row.status = "published";
     row.publishedAt = publishedAt;
+    row.lastError = null;
   }
 
   async discard(eventId: string, lastError: string): Promise<void> {
@@ -542,8 +618,8 @@ export class FakeOutboxRepository implements OutboxRepository {
   }
 
   async discardIfPending(eventId: string, lastError: string): Promise<boolean> {
-    const row = this.require(eventId);
-    if (row.status !== "pending") {
+    const row = this.rows.find((candidate) => candidate.id === eventId);
+    if (row === undefined || row.status !== "pending") {
       return false;
     }
     row.status = "discarded";
@@ -561,8 +637,8 @@ export class FakeOutboxRepository implements OutboxRepository {
   }
 
   async incrementAttemptsIfPending(eventId: string, lastError: string): Promise<void> {
-    const row = this.require(eventId);
-    if (row.status === "pending") {
+    const row = this.rows.find((candidate) => candidate.id === eventId);
+    if (row !== undefined && row.status === "pending") {
       row.attempts += 1;
       row.lastError = lastError;
     }
