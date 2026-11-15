@@ -305,6 +305,16 @@ describe("fake repositories", () => {
     expect(ordered.map((row) => row.id)).toEqual([critical.id, firstLow.id, secondLow.id, unverified.id]);
   });
 
+  test("findings repository ranks severities instead of comparing them lexicographically", async () => {
+    const { findings } = createFakeFindings();
+    for (const severity of ["informational", "low", "medium", "high", "critical"] as const) {
+      await findings.create(findingInput({ fingerprint: `severity-${severity}`, severity }));
+    }
+
+    const ordered = await findings.findByReview("review-1");
+    expect(ordered.map((row) => row.severity)).toEqual(["critical", "high", "medium", "low", "informational"]);
+  });
+
   test("workspace repository enforces active/latest/retention rules", async () => {
     const clock = new FakeClock("2026-01-01T00:00:00.000Z");
     const repository = new FakeWorkspaceRepository({ clock });

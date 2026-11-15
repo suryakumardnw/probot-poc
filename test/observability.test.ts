@@ -405,6 +405,10 @@ describe("failure classification", () => {
     expect(classifyFailure({ errorCode: "redis_connect" })).toBe("redis_unavailable");
     expect(classifyFailure({ errorCode: "findings_persist" })).toBe("postgres_unavailable");
     expect(classifyFailure({ errorCode: "clone_failed" })).toBe("clone_failure");
+    // DiffFailedError carries `diff_failed`; diff retrieval is the same
+    // configurable-retry class as clone/checkout failures.
+    expect(classifyFailure({ errorCode: "diff_failed" })).toBe("clone_failure");
+    expect(classifyFailure({ message: "Diff generation failed: fatal: bad object" })).toBe("clone_failure");
     expect(classifyFailure({ errorCode: "provider_timeout" })).toBe("model_unavailable");
     expect(classifyFailure({ errorCode: "invalid_model_output" })).toBe("invalid_model_output");
     expect(classifyFailure({ errorCode: "resource_quota" })).toBe("resource_limit_exceeded");
@@ -506,6 +510,14 @@ describe("failure classification", () => {
         error: new ReviewRetrievalError("git clone failed", "clone_failed"),
         errorCode: "clone_failed",
         message: "git clone failed",
+        policy,
+      }),
+    ).toMatchObject({ failureClass: "clone_failure", retryable: true });
+    expect(
+      classifyQueueFailure({
+        error: new ReviewRetrievalError("diff generation failed", "diff_failed"),
+        errorCode: "diff_failed",
+        message: "diff generation failed",
         policy,
       }),
     ).toMatchObject({ failureClass: "clone_failure", retryable: true });

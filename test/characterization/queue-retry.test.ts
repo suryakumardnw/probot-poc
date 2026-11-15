@@ -443,6 +443,53 @@ describe("durable retry decisions (§12.4)", () => {
     expect(review.state).toBe("failed");
     expect(review.errorCode).toBe("invalid_output");
   });
+
+  test("a pipeline failure that terminalizes the review mirrors that status onto the job", async () => {
+    // Findings-persistence and stale-head failures transition the review to
+    // `failed` inside the pipeline and then throw. The processor must mirror
+    // that outcome onto the claimed job row instead of leaving `processing`.
+    const chain = await seedReviewChain({
+      prefix: "retry-durable-terminal-mirror",
+      state: "queued",
+      job: { status: "enqueued" },
+    });
+    const { jobId } = jobIdentity(chain);
+    const service: ReviewWorkspaceOperations = {
+      prepare: async () => workspaceResult(chain.headSha),
+      cleanupAfterFailure: async () => {},
+      cleanupAfterReview: async () => ({ removed: false }),
+    };
+
+    await expect(
+      processReviewJob(
+        jobId,
+        payloadFor(chain),
+        {
+          jobs,
+          service,
+          logger: silentLogger,
+          observability: createObservability(),
+          transitionReviewState: reviewState.transitionReviewState,
+          retryPolicy,
+          onWorkspacePrepared: async () => {
+            await reviewState.transitionReviewState(chain.reviewId, "failed", {
+              errorCode: "findings_persist_failed",
+              errorMessage: "forced findings persistence failure",
+            });
+            throw new Error("forced findings persistence failure");
+          },
+        },
+        { attempt: 1, maxAttempts: 3 },
+      ),
+    ).rejects.toBeInstanceOf(UnrecoverableJobError);
+
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
+    expect(job.status).toBe("failed");
+    expect(job.attempts).toBe(1);
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+    expect(review.state).toBe("failed");
+    expect(review.errorCode).toBe("findings_persist_failed");
+  });
 });
 
 describe("failed-job recovery (§12.4, §17.3)", () => {

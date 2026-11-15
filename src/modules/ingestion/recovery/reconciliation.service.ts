@@ -56,6 +56,13 @@ export interface ReconciliationDeps extends ReconciliationDependencies {
   staleThresholdMs?: number;
   /** Max total job attempts before recovery gives up and fails the review. */
   maxJobAttempts?: number;
+  /**
+   * `queue.retry.infrastructure.enabled`. When false, reconciliation never
+   * re-enqueues a stale job: recovery is not allowed to consume a retry the
+   * worker policy has disabled. With the default `requeue` policy the row is
+   * left untouched for an operator; `policy: "fail"` still marks it failed.
+   */
+  infrastructureRetryEnabled?: boolean;
   /** Fixed clock (tests). */
   now?: Date;
   /** Workspace cleanup hook (e.g. ReviewWorkspaceService.sweepExpired). */
@@ -176,6 +183,7 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
     policy = "requeue",
     staleThresholdMs = DEFAULT_STALE_THRESHOLD_MS,
     maxJobAttempts = DEFAULT_MAX_JOB_ATTEMPTS,
+    infrastructureRetryEnabled = true,
     now = new Date(),
     sweepExpiredWorkspaces,
   } = deps;
@@ -272,6 +280,18 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
           "Reconciliation failed to fail stale review",
         );
       }
+      continue;
+    }
+
+    // `queue.retry.infrastructure.enabled=false` disables retries globally, so
+    // recovery must not re-enqueue either. Leave the durable rows untouched
+    // (the default policy) rather than spending a retry the worker policy has
+    // disabled. An explicit `policy: "fail"` was handled above and still wins.
+    if (!infrastructureRetryEnabled) {
+      logger.info(
+        { reviewId: review.id, jobId: job.id, staleForMs },
+        "Leaving stale review for operator: queue.retry.infrastructure.enabled is false",
+      );
       continue;
     }
 

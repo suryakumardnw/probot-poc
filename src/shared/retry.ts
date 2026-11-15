@@ -75,7 +75,7 @@ const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, FailureClass]> = [
   ],
   [/redis|ECONNREFUSED.*6379|bull/i, "redis_unavailable"],
   [/postgres|postgresql|prisma|database|5432|p1001|p2002/i, "postgres_unavailable"],
-  [/clone|checkout|git (failed|error)|shallow/i, "clone_failure"],
+  [/clone|checkout|diff (?:generation )?failed|git (failed|error)|shallow/i, "clone_failure"],
   [/model|provider|openai|completion|llm|endpoint/i, "model_unavailable"],
   [/invalid (model )?output|schema|parse|validation/i, "invalid_model_output"],
   [/agent (crashed|died)|agent runtime (exited|crashed)|exited with code|non-zero exit|signal/i, "agent_crash"],
@@ -113,7 +113,14 @@ export function classifyFailure(input: { errorCode?: string | null; message?: st
   if (code.includes("invalid_model_output") || code.includes("schema") || code.includes("validation")) {
     return "invalid_model_output";
   }
-  if (code.includes("clone") || code.includes("checkout") || code.includes("retrieval")) {
+  if (
+    code.includes("clone") ||
+    code.includes("checkout") ||
+    code.includes("diff_failed") ||
+    code.includes("retrieval")
+  ) {
+    // `diff_failed` is `DiffFailedError`, a retrieval failure that is just as
+    // configurable-retryable as a clone failure (§12.4).
     return "clone_failure";
   }
   if (code.includes("model") || code.includes("provider") || code.includes("agent_runtime")) {

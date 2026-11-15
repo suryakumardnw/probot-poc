@@ -234,3 +234,55 @@ describe("duplicate fingerprints", () => {
     expect(await prisma.findingStatusTransition.count({ where: { reviewId: chain.reviewId } })).toBe(1);
   });
 });
+
+describe("finding ordering", () => {
+  test("findByReview orders verified first, then severity rank, then createdAt", async () => {
+    const chain = await seedReviewChain({ prefix: "findings-repository-order" });
+    const base = {
+      reviewId: chain.reviewId,
+      repositoryId: chain.repositoryId,
+      category: "maintainability",
+      confidence: 0.9,
+      filePath: "src/app.js",
+      lineNumber: 2,
+      description: "ordering fixture",
+      evidence: [],
+      status: "new" as const,
+    };
+    const severities = ["informational", "low", "medium", "high", "critical"] as const;
+    for (const [index, severity] of severities.entries()) {
+      await prisma.finding.create({
+        data: {
+          ...base,
+          fingerprint: `order-${severity}`,
+          severity,
+          title: severity,
+          verified: true,
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)),
+        },
+      });
+    }
+    // An unverified critical finding is older but must still sort last:
+    // verification is the primary key, exactly like the SQL adapter.
+    await prisma.finding.create({
+      data: {
+        ...base,
+        fingerprint: "order-unverified-critical",
+        severity: "critical",
+        title: "unverified critical",
+        verified: false,
+        createdAt: new Date(Date.UTC(2025, 11, 31)),
+      },
+    });
+
+    const rows = await repositories.findings.findByReview(chain.reviewId);
+    expect(rows.map((row) => `${row.severity}:${row.verified}`)).toEqual([
+      "critical:true",
+      "high:true",
+      "medium:true",
+      "low:true",
+      "informational:true",
+      "critical:false",
+    ]);
+  });
+});

@@ -61,6 +61,19 @@ function idFactory(prefix: string): () => string {
   };
 }
 
+/** Mirrors the Prisma adapter's text-column severity rank (most severe first). */
+const SEVERITY_RANK: Readonly<Record<string, number>> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  informational: 4,
+};
+
+function severityRank(severity: string): number {
+  return SEVERITY_RANK[severity] ?? Number.MAX_SAFE_INTEGER;
+}
+
 // ---------------------------------------------------------------------------
 // Findings
 // ---------------------------------------------------------------------------
@@ -115,9 +128,9 @@ export class FakeFindingRepository implements FindingRepository {
           return a.verified ? -1 : 1;
         }
         if (a.severity !== b.severity) {
-          // Prisma orders the text column ascending; this comparison matches
-          // the deterministic C-style ordering used by the adapter tests.
-          return a.severity < b.severity ? -1 : 1;
+          // Prisma orders severity by the documented severity rank, not the
+          // text column's lexicographic order.
+          return severityRank(a.severity) - severityRank(b.severity);
         }
         return a.createdAt.getTime() - b.createdAt.getTime();
       })

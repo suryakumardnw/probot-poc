@@ -233,11 +233,62 @@ describe("reconciliation", () => {
     expect(reviewJobPayloadSchema.safeParse(payload).success).toBe(true);
   });
 
+  test("does not requeue a stale review when queue.retry.infrastructure.enabled is false", async () => {
+    const { reviewId, jobId } = await createStuckReview({ state: "analyzing" });
+    const { queue, added } = fakeQueue();
+
+    const summary = await reconcileIncompleteReviews({
+      repositories,
+      unitOfWork,
+      logger,
+      observability: createObservability(),
+      queue,
+      staleThresholdMs: 15 * 60_000,
+      maxJobAttempts: 3,
+      infrastructureRetryEnabled: false,
+    });
+
+    expect(summary).toMatchObject({ requeued: 0, failed: 0, staleSessions: 1 });
+    expect(added).toHaveLength(0);
+
+    // The default requeue policy leaves the rows untouched for an operator.
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: reviewId } });
+    expect(review.state).toBe("analyzing");
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
+    expect(job.status).toBe("processing");
+
+    // Leaving the row is the behavior under test; remove it so the shared
+    // fixture does not feed a stale job into later reconciliation scans.
+    await prisma.reviewJob.delete({ where: { id: jobId } });
+    await prisma.review.delete({ where: { id: reviewId } });
+  });
+
+  test("builds the queue payload for a legacy review_mode row instead of rejecting it", async () => {
+    const { reviewId } = await createStuckReview();
+    // Pre-refactor rows used `standard` (the old column default). The queue
+    // contract accepts legacy modes so recovery can still run them.
+    await prisma.review.update({ where: { id: reviewId }, data: { reviewMode: "standard" } });
+    const { queue, added } = fakeQueue();
+
+    const summary = await reconcileIncompleteReviews({
+      repositories,
+      unitOfWork,
+      logger,
+      observability: createObservability(),
+      queue,
+      staleThresholdMs: 15 * 60_000,
+    });
+
+    expect(summary).toMatchObject({ requeued: 1, failed: 0 });
+    expect(added).toHaveLength(1);
+    expect(first(added).payload.reviewMode).toBe("standard");
+    expect(reviewJobPayloadSchema.safeParse(first(added).payload).success).toBe(true);
+  });
+
   test("fails permanently when durable rows violate the queue contract", async () => {
     const { reviewId, jobId } = await createStuckReview();
-    // Legacy rows may predate the tightened reviewMode enum
-    // (the column default was "standard"); they cannot produce a valid job.
-    await prisma.review.update({ where: { id: reviewId }, data: { reviewMode: "standard" } });
+    // A mode outside the current and legacy sets cannot produce a valid job.
+    await prisma.review.update({ where: { id: reviewId }, data: { reviewMode: "legacy-mode" } });
     const { queue, added } = fakeQueue();
 
     const summary = await reconcileIncompleteReviews({

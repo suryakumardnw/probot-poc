@@ -132,6 +132,36 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
       return { outcome: "skipped", reason: `unknown review type '${reviewType}'` };
     }
 
+    // Configuration gates (§4.1, §11.3). Automatic triggers honour the global
+    // review switch and the automatic trigger switch; every trigger (automatic
+    // or manual) honours its review-type switch. A disabled request is skipped
+    // before any durable write, with the switch named in the reason.
+    const automatic = input.trigger !== "manual";
+    if (automatic && !reviewEnabled) {
+      deps.logger.info(
+        { pr: input.pullRequestNumber, repo: input.repositoryName, trigger: input.trigger },
+        "Review skipped: review.enabled is false",
+      );
+      return { outcome: "skipped", reason: "reviews are disabled (review.enabled=false)" };
+    }
+    if (automatic && !config.review.triggers.automatic) {
+      deps.logger.info(
+        { pr: input.pullRequestNumber, repo: input.repositoryName, trigger: input.trigger },
+        "Review skipped: review.triggers.automatic is false",
+      );
+      return { outcome: "skipped", reason: "automatic reviews are disabled (review.triggers.automatic=false)" };
+    }
+    if (!config.review.types[reviewType].enabled) {
+      deps.logger.info(
+        { pr: input.pullRequestNumber, repo: input.repositoryName, reviewType },
+        "Review skipped: the review type is disabled",
+      );
+      return {
+        outcome: "skipped",
+        reason: `review type '${reviewType}' is disabled (review.types.${reviewType}.enabled=false)`,
+      };
+    }
+
     // Draft pull requests are skipped unless explicitly enabled (§4.1).
     if (input.draft && !config.github.draftPullRequests.enabled) {
       deps.logger.info(

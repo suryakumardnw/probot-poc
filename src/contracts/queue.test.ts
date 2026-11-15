@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   INGEST_OUTCOMES,
+  LEGACY_REVIEW_MODES,
+  REVIEW_MODE_VALUES,
   ingestOutcomeSchema,
   outboxPayloadSchema,
   reviewJobPayloadSchema,
@@ -82,8 +84,18 @@ describe("reviewJobPayloadSchema", () => {
     expect(reviewJobPayloadSchema.safeParse(candidate).success).toBe(false);
   });
 
-  test.each(["adaptive", "fixed"] as const)("accepts reviewMode %s", (reviewMode) => {
+  test.each(["adaptive", "fixed", "standard", "full"] as const)("accepts reviewMode %s", (reviewMode) => {
     expect(reviewJobPayloadSchema.safeParse({ ...validPayload, reviewMode }).success).toBe(true);
+  });
+
+  test("documents the legacy reviewMode values accepted for old rows and payloads", () => {
+    // Pre-refactor rows used `standard` (column default) or `full`;
+    // reconciliation must be able to re-enqueue them instead of failing the
+    // review permanently on the queue contract.
+    for (const reviewMode of LEGACY_REVIEW_MODES) {
+      expect(reviewJobPayloadSchema.parse({ ...validPayload, reviewMode }).reviewMode).toBe(reviewMode);
+    }
+    expect(REVIEW_MODE_VALUES).toEqual(["adaptive", "fixed", "standard", "full"]);
   });
 
   test.each(["standard", "skill", "handbook"] as const)("accepts reviewType %s", (reviewType) => {
@@ -95,8 +107,8 @@ describe("reviewJobPayloadSchema", () => {
   });
 
   test.each([
-    ["unknown reviewMode", { ...validPayload, reviewMode: "full" }],
-    ["legacy reviewMode", { ...validPayload, reviewMode: "standard" }],
+    ["unknown reviewMode", { ...validPayload, reviewMode: "legacy-mode" }],
+    ["reviewMode with wrong casing", { ...validPayload, reviewMode: "Adaptive" }],
     ["unknown reviewType", { ...validPayload, reviewType: "security" }],
     ["invalid trigger", { ...validPayload, trigger: "synchronize" }],
     ["non-string trigger", { ...validPayload, trigger: 1 }],
@@ -116,8 +128,14 @@ describe("outboxPayloadSchema", () => {
   });
 
   test("applies the queue payload rules", () => {
-    expect(outboxPayloadSchema.safeParse({ ...validPayload, reviewMode: "full" }).success).toBe(false);
+    expect(outboxPayloadSchema.safeParse({ ...validPayload, reviewMode: "legacy-mode" }).success).toBe(false);
     expect(outboxPayloadSchema.safeParse({ ...validPayload, pullRequestNumber: "7" }).success).toBe(false);
+  });
+
+  test("accepts legacy reviewMode values on stored outbox payloads", () => {
+    for (const reviewMode of LEGACY_REVIEW_MODES) {
+      expect(outboxPayloadSchema.safeParse({ ...validPayload, reviewMode }).success).toBe(true);
+    }
   });
 
   test("rejects a non-boolean reviewEnabled", () => {

@@ -325,6 +325,12 @@ export async function processReviewJob(
         { jobId, reviewId: job.reviewId, state: currentState },
         "Review became terminal during processing; not retrying",
       );
+      // Mirror the decided review onto the durable job before failing the
+      // queue job, otherwise a stale-head/findings-persistence failure leaves
+      // the job row stuck in `processing` forever.
+      await jobs.update(job.jobId, { status: terminalJobStatus(currentState) }).catch(() => {
+        /* row already gone or concurrently updated */
+      });
       throw new UnrecoverableJobError(message);
     }
 
@@ -341,6 +347,11 @@ export async function processReviewJob(
             { jobId, reviewId: job.reviewId, state: reset.currentState },
             "Review became terminal before retry reset; not retrying",
           );
+          // The claimed job row must not stay `processing` when the review is
+          // already terminal; mirror the terminal review before failing.
+          await jobs.update(job.jobId, { status: terminalJobStatus(reset.currentState) }).catch(() => {
+            /* row already gone or concurrently updated */
+          });
           throw new UnrecoverableJobError(message);
         }
       }

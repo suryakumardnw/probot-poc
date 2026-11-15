@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url";
 import type { ReviewState } from "@prisma/client";
 import { Probot, ProbotOctokit } from "probot";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
+import type { ReviewConfig } from "../../src/contracts/config.js";
 import type { ReviewJobPayload } from "../../src/contracts/queue.js";
 import { createApp } from "../../src/index.js";
 import { InvalidStateTransitionError } from "../../src/modules/ingestion/index.js";
+import { createReviewConfigStore } from "../../src/platform/config/review-config-store.js";
 import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
+import type { ReviewConfigStore } from "../../src/ports/review-config.js";
 import { at, defined, first } from "../helpers/assert.js";
 import { disconnectDatabase, prisma } from "../helpers/db.js";
 import { testEnv } from "../helpers/env.js";
@@ -143,6 +146,34 @@ function installationPayload(
 
 function installationDeletedPayload(installationId: number) {
   return { action: "deleted", installation: { id: installationId, account: { login: "octo-org" } } };
+}
+
+/**
+ * Wrap the real reviewed configuration but force one switch, so ingestion
+ * gates can be exercised without writing a temporary review.json.
+ */
+function configStoreWith(mutate: (config: ReviewConfig) => void): ReviewConfigStore {
+  const base = createReviewConfigStore();
+  const loaded = base.load();
+  const config = structuredClone(loaded.config);
+  mutate(config);
+  return { ...base, load: () => ({ ...loaded, config }) };
+}
+
+function automaticInput(overrides: Record<string, unknown> = {}) {
+  return {
+    trigger: "opened" as const,
+    installationId: 9910,
+    repositoryId: 5510,
+    repositoryName: "octo-org/gate-test",
+    owner: "octo-org",
+    defaultBranch: "main",
+    pullRequestNumber: 10,
+    headSha: "ffff9999ffff9999ffff9999ffff9999ffff9999",
+    baseSha: "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+    draft: false,
+    ...overrides,
+  };
 }
 
 // Database helpers -------------------------------------------------------------
@@ -547,6 +578,87 @@ describe("review ingestion", () => {
     expect(first(reviews).reviewType).toBe("standard");
   });
 
+  test("review.enabled=false skips automatic ingestion before any durable write", async () => {
+    const gated = createTestIngestion({
+      queue: reviewQueue,
+      config: configStoreWith((config) => {
+        config.review.enabled = false;
+      }),
+    });
+
+    const result = await gated.services.ingestReviewRequest(automaticInput());
+    expect(result).toMatchObject({
+      outcome: "skipped",
+      reason: "reviews are disabled (review.enabled=false)",
+    });
+    expect(await prisma.review.count()).toBe(0);
+    expect(await prisma.webhookDelivery.count()).toBe(0);
+  });
+
+  test("review.triggers.automatic=false skips automatic ingestion", async () => {
+    const gated = createTestIngestion({
+      queue: reviewQueue,
+      config: configStoreWith((config) => {
+        config.review.triggers.automatic = false;
+      }),
+    });
+
+    const result = await gated.services.ingestReviewRequest(automaticInput());
+    expect(result).toMatchObject({
+      outcome: "skipped",
+      reason: "automatic reviews are disabled (review.triggers.automatic=false)",
+    });
+    expect(await prisma.review.count()).toBe(0);
+  });
+
+  test("review.types.<type>.enabled=false skips automatic ingestion of that type", async () => {
+    const gated = createTestIngestion({
+      queue: reviewQueue,
+      config: configStoreWith((config) => {
+        config.review.types.standard.enabled = false;
+      }),
+    });
+
+    const result = await gated.services.ingestReviewRequest(automaticInput());
+    expect(result).toMatchObject({
+      outcome: "skipped",
+      reason: "review type 'standard' is disabled (review.types.standard.enabled=false)",
+    });
+    expect(await prisma.review.count()).toBe(0);
+  });
+
+  test("manual ingestion skips a disabled review type", async () => {
+    await receiveDelivery(
+      probot,
+      "installation",
+      "created",
+      installationPayload(9911, "octo-org", [{ id: 5511, full_name: "octo-org/gated-manual", default_branch: "main" }]),
+      "delivery-gated-manual-install",
+    );
+    const repository = await prisma.repository.findUniqueOrThrow({ where: { githubRepositoryId: BigInt(5511) } });
+    await prisma.pullRequest.create({
+      data: {
+        repositoryId: repository.id,
+        githubPrNumber: 11,
+        headSha: "eeee7777eeee7777eeee7777eeee7777eeee7777",
+        status: "open",
+      },
+    });
+
+    // The checked-in configuration disables `skill`; manual ingestion must
+    // enforce the same type switch as the /review command and automatic path.
+    const result = await ingestion.services.ingestManualReview({
+      repository: "octo-org/gated-manual",
+      pullRequestNumber: 11,
+      reviewType: "skill",
+    });
+    expect(result).toMatchObject({
+      outcome: "skipped",
+      reason: "review type 'skill' is disabled (review.types.skill.enabled=false)",
+    });
+    expect(await prisma.review.count()).toBe(0);
+  });
+
   test("non-command comments, bot comments and closed PRs are ignored", async () => {
     await receiveDelivery(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-cmd-open-3");
     const before = await prisma.review.count();
@@ -660,18 +772,19 @@ describe("review ingestion", () => {
     expect(review.reviewType).toBe("standard");
     expect(review.pullRequestId).toBe(pullRequest.id);
 
-    // Manual ingestion accepts a review type (§4.1): same PR/SHA, independent
-    // identity.
-    const skillResult = await ingestion.services.ingestManualReview({
+    // Manual ingestion accepts an enabled review type (§4.1): same PR/SHA,
+    // independent identity. (The checked-in config disables `skill`, which is
+    // covered by the manual type gate test above.)
+    const handbookResult = await ingestion.services.ingestManualReview({
       repository: "octo-org/gamma",
       pullRequestNumber: 7,
-      reviewType: "skill",
+      reviewType: "handbook",
     });
-    expect(skillResult.outcome).toBe("created");
-    const skillReview = await prisma.review.findUniqueOrThrow({
-      where: { id: defined(skillResult.reviewId, "skill review id") },
+    expect(handbookResult.outcome).toBe("created");
+    const handbookReview = await prisma.review.findUniqueOrThrow({
+      where: { id: defined(handbookResult.reviewId, "handbook review id") },
     });
-    expect(skillReview.reviewType).toBe("skill");
+    expect(handbookReview.reviewType).toBe("handbook");
 
     const status = await ingestion.services.getReviewStatus(defined(result.reviewId, "review id"));
     expect(status?.review.state).toBe("queued");

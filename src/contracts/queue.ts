@@ -10,16 +10,32 @@ import { z } from "zod";
  *
  * Backward compatibility: `baseSha` and `configurationHash` are optional and
  * nullable because manual `/review` requests and payloads written before this
- * contract may omit them. No field that existing queued payloads already omit
- * is required here. Values that were previously filled with silent defaults
- * (empty installation id, empty SHA, pull request number 0) are now rejected:
- * a malformed payload fails loudly instead of running a review against an
- * invented identity.
+ * contract may omit them. `reviewMode` also accepts the legacy `standard` and
+ * `full` names written before the adaptive/fixed split (see
+ * `LEGACY_REVIEW_MODES`), so old non-terminal rows can still be recovered. No
+ * field that existing queued payloads already omit is required here. Values
+ * that were previously filled with silent defaults (empty installation id,
+ * empty SHA, pull request number 0) are now rejected: a malformed payload fails
+ * loudly instead of running a review against an invented identity.
  */
 
 /** Review strategy stored on the Review row (`review.strategy.mode`). */
 export const REVIEW_MODES = ["adaptive", "fixed"] as const;
-export type ReviewModeValue = (typeof REVIEW_MODES)[number];
+
+/**
+ * Legacy review-mode names still present on rows and outbox payloads written
+ * before the adaptive/fixed strategy split. `standard` was the old column
+ * default and `full` was the old full-review mode. They remain accepted at the
+ * queue boundary so reconciliation can recover old non-terminal reviews
+ * instead of rejecting them forever; new ingestion only writes `adaptive` or
+ * `fixed` (the current `review.strategy.mode` values).
+ */
+export const LEGACY_REVIEW_MODES = ["standard", "full"] as const;
+
+/** Every value the durable/queue boundary accepts (current + legacy). */
+export const REVIEW_MODE_VALUES = [...REVIEW_MODES, ...LEGACY_REVIEW_MODES] as const;
+
+export type ReviewModeValue = (typeof REVIEW_MODE_VALUES)[number];
 
 /** Review methodology (§4.1). Mirrors the Prisma ReviewType enum. */
 export const REVIEW_TYPES = ["standard", "skill", "handbook"] as const;
@@ -29,7 +45,7 @@ export type ReviewTypeValue = (typeof REVIEW_TYPES)[number];
 export const REVIEW_TRIGGERS = ["opened", "synchronized", "ready_for_review", "manual"] as const;
 export type ReviewTriggerValue = (typeof REVIEW_TRIGGERS)[number];
 
-const reviewModeSchema = z.enum(REVIEW_MODES);
+const reviewModeSchema = z.enum(REVIEW_MODE_VALUES);
 const reviewTypeSchema = z.enum(REVIEW_TYPES);
 const reviewTriggerSchema = z.enum(REVIEW_TRIGGERS);
 

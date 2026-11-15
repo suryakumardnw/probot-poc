@@ -141,6 +141,15 @@ Both recovery writes are guarded by the state the reconciliation scan observed:
 Reconciliation re-enqueue currently uses a fixed `exponential` backoff with a
 5000 ms base delay, not `queue.retry.infrastructure.backoff`. The attempt count
 is configuration-aware; backoff alignment is a documented follow-up.
+Reconciliation also honors `queue.retry.infrastructure.enabled=false`: it never
+re-enqueues a stale job under that switch, and with the default `requeue` policy
+it leaves the durable rows for an operator rather than spending a retry the
+worker policy has disabled.
+
+The queue contract accepts the legacy `reviewMode` values `standard` and `full`
+(pre-refactor rows/payloads) alongside the current `adaptive`/`fixed` strategy
+names, so recovery can still run old non-terminal reviews. New ingestion writes
+only `adaptive` or `fixed`. See `LEGACY_REVIEW_MODES` in `src/contracts/queue.ts`.
 
 ## Graceful shutdown
 

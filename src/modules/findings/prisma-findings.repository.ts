@@ -139,6 +139,24 @@ function mapFindingStatus(row: { id: string; status: FindingRecord["status"] }):
   return isActiveFindingStatus(row.status) ? { id: row.id, status: row.status } : null;
 }
 
+/**
+ * Severity ordering for review findings: most severe first. `severity` is a
+ * text column, so ascending SQL ordering would be lexicographic
+ * (`critical, high, informational, low, medium`) and bury medium findings
+ * below informational ones. Rows are ordered by this rank after the fetch.
+ */
+const SEVERITY_RANK: Readonly<Record<string, number>> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  informational: 4,
+};
+
+function severityRank(severity: string): number {
+  return SEVERITY_RANK[severity] ?? Number.MAX_SAFE_INTEGER;
+}
+
 // ---------------------------------------------------------------------------
 // Repository factories
 // ---------------------------------------------------------------------------
@@ -175,9 +193,19 @@ export function createFindingRepository(client: PrismaFindingsDatabaseClient): F
     async findByReview(reviewId: string): Promise<FindingRecord[]> {
       const rows = await client.finding.findMany({
         where: { reviewId },
-        orderBy: [{ verified: "desc" }, { severity: "asc" }, { createdAt: "asc" }],
+        // Severity is a text column: rank it in memory after the fetch instead
+        // of using a lexicographic SQL order. JS sort is stable, but the
+        // comparator restates all three keys so the order is explicit.
+        orderBy: [{ verified: "desc" }, { createdAt: "asc" }],
       });
-      return rows.map(mapFinding);
+      return rows
+        .map(mapFinding)
+        .sort(
+          (a, b) =>
+            Number(b.verified) - Number(a.verified) ||
+            severityRank(a.severity) - severityRank(b.severity) ||
+            a.createdAt.getTime() - b.createdAt.getTime(),
+        );
     },
 
     async create(input: CreateFindingInput): Promise<CreatedFindingRecord> {

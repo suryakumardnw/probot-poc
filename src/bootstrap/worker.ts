@@ -221,6 +221,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
           // Keep the durable recovery budget aligned with the BullMQ attempt
           // budget configured in review.json.
           maxJobAttempts: reviewConfig.queue.retry.infrastructure.maxAttempts,
+          infrastructureRetryEnabled: reviewConfig.queue.retry.infrastructure.enabled,
           sweepExpiredWorkspaces: () => workspaceService.sweepExpired(reviewConfig.repository.workspace.retentionHours),
         });
         if (summary.scanned > 0) {

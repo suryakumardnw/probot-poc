@@ -4,8 +4,9 @@
  * The review queue is RECOVERABLE, not durable by itself: the source of truth
  * for every review is PostgreSQL; Redis/BullMQ holds only execution state.
  * Losing Redis therefore never loses a review — startup reconciliation
- * (`src/recovery/reconciliation.ts`) re-enqueues every non-terminal review
- * whose durable ReviewJob is stuck, reusing the same BullMQ job id.
+ * (`src/modules/ingestion/recovery/reconciliation.service.ts`) re-enqueues
+ * every non-terminal review whose durable ReviewJob is stuck, reusing the same
+ * BullMQ job id.
  *
  * Still, production deployments should reduce needless recovery churn by
  * enabling Redis persistence:
