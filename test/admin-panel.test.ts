@@ -7,10 +7,13 @@ import { createAdminApi } from "../src/admin/api.js";
 import { setGithubFetch, resetGithubFetch, type GithubFetch } from "../src/admin/github-client.js";
 import { PANEL_FIELDS, PANEL_SECTIONS, SECTION_LABELS } from "../src/admin/panel-fields.js";
 import { createAdminPanel } from "../src/admin/panel.js";
+import { createPrismaAuditRepository } from "../src/admin/prisma-audit.repository.js";
 import { clearRateLimitBuckets } from "../src/admin/rate-limit.js";
 import { clearSessions, createSession, sessionCookieValue } from "../src/admin/session.js";
 import { loadEnv, type Env } from "../src/config/env.js";
+import { createReviewConfigStore } from "../src/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH, LAST_KNOWN_GOOD_SUFFIX } from "../src/config/review-loader.js";
+import { createIngestionServices } from "../src/ingestion/index.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { disconnectRedis } from "../src/lib/redis.js";
 
@@ -163,8 +166,25 @@ function makeHandlers(env: Env, configPath: string): Handlers {
     warn: (_obj: unknown, msg: string) => logs.push(`warn:${msg}`),
     error: (_obj: unknown, msg: string) => logs.push(`error:${msg}`),
   };
-  const deps = { env, prisma, logger, configPath };
-  return { panel: createAdminPanel(deps), api: createAdminApi(deps), logs };
+  const config = createReviewConfigStore({
+    path: configPath,
+    env: {
+      ...process.env,
+      ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key, String(value)])),
+    },
+  });
+  const audit = createPrismaAuditRepository(prisma, logger);
+  return {
+    panel: createAdminPanel({ env, audit, config, logger }),
+    api: createAdminApi({
+      env,
+      audit,
+      ingestion: createIngestionServices(prisma, config),
+      config,
+      logger,
+    }),
+    logs,
+  };
 }
 
 async function call(

@@ -205,7 +205,7 @@ describe("job exhaustion (§12.4, §17.3)", () => {
         trigger: "opened",
       },
       {
-        prisma,
+        repositories: createIngestionRepositories(prisma),
         service,
         logger: silentLogger as unknown as pino.Logger,
         concurrency: 1,

@@ -4,11 +4,13 @@ import { createNodeMiddleware, createProbot, type Probot } from "probot";
 import { z } from "zod";
 import { createAdminApi, isAdminConfigured } from "./admin/api.js";
 import { createAdminPanel } from "./admin/panel.js";
+import { createPrismaAuditRepository } from "./admin/prisma-audit.repository.js";
 import { loadEnv } from "./config/env.js";
+import { createReviewConfigStore } from "./config/review-config-store.js";
 import { adminErrorEnvelopeSchema } from "./contracts/admin.js";
 import { ERROR_CODES } from "./contracts/errors.js";
 import { ingestOutcomeSchema } from "./contracts/queue.js";
-import { getReviewStatus, ingestManualReview, ManualIngestionError } from "./ingestion/index.js";
+import { createIngestionServices, ManualIngestionError } from "./ingestion/index.js";
 import { checkDependencies } from "./lib/health.js";
 import { createLogger } from "./lib/logger.js";
 import { getPrisma, disconnectPrisma } from "./lib/prisma.js";
@@ -84,12 +86,28 @@ function maybeCreateProbot(): Probot | undefined {
 
 const probot = maybeCreateProbot();
 
+const prismaClient = getPrisma(env);
+
+// Admin and ingestion share one config store. Configuration files reference
+// arbitrary env vars (e.g. ${MODEL_BASE_URL}); resolution uses the real process
+// environment merged with the validated env. Secret VALUES never enter config
+// responses (the store redacts).
+const configStore = createReviewConfigStore({
+  env: {
+    ...process.env,
+    ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key, String(value)])),
+  },
+});
+const ingestionServices = createIngestionServices(prismaClient, configStore);
+
 // Admin API (ticket 10). The handler reports 503 (in the admin error envelope)
 // when the OAuth app + session secret + org are not configured; the server
 // dispatch below keeps that same envelope without invoking the handler.
 const adminApi = createAdminApi({
   env,
-  prisma: getPrisma(env),
+  audit: createPrismaAuditRepository(prismaClient, logger),
+  ingestion: ingestionServices,
+  config: configStore,
   logger,
 });
 
@@ -98,7 +116,8 @@ const adminApi = createAdminApi({
 // precedence for its paths.
 const adminPanel = createAdminPanel({
   env,
-  prisma: getPrisma(env),
+  audit: createPrismaAuditRepository(prismaClient, logger),
+  config: configStore,
   logger,
 });
 const probotMiddlewarePromise = probot ? createNodeMiddleware(appFn, { probot, webhooksPath: "/" }) : undefined;
@@ -156,7 +175,7 @@ async function handleManualIngestion(req: http.IncomingMessage, res: http.Server
   }
 
   try {
-    const result = await ingestManualReview(parsed.data);
+    const result = await ingestionServices.ingestManualReview(parsed.data);
     // The outcome crosses the HTTP boundary: parse it against the queue
     // contract instead of trusting the in-process value's type alone.
     const outcome = ingestOutcomeSchema.parse(result.outcome);
@@ -173,7 +192,7 @@ async function handleManualIngestion(req: http.IncomingMessage, res: http.Server
 
 async function handleReviewStatus(res: http.ServerResponse, reviewId: string): Promise<void> {
   try {
-    const report = await getReviewStatus(reviewId);
+    const report = await ingestionServices.getReviewStatus(reviewId);
     if (!report) {
       return sendJson(res, 404, { error: "review not found" });
     }

@@ -138,6 +138,7 @@ describe("IngestionUnitOfWork", () => {
     const service = createIngestionService({
       repositories: dependencies.repositories,
       unitOfWork: failingUnitOfWork,
+      config: dependencies.config,
       publish: async () => "published",
     });
 

@@ -2,8 +2,11 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { z } from "zod";
+import { getPath, setPath } from "../shared/object-path.js";
 import type { ReviewConfig } from "./review-schema.js";
 import { CURRENT_SCHEMA_VERSION, reviewConfigSchema } from "./review-schema.js";
+
+export { getPath, setPath } from "../shared/object-path.js";
 
 /**
  * Central configuration loader (ARCHITECTURE.md §11.2, §11.4, §3.2).
@@ -199,33 +202,6 @@ export const MANDATORY_SECURITY_POLICIES = Object.freeze({
   locked: { "execution.sandbox.runAsNonRoot": boolean; "provider.failurePolicy": "fail-immediately" };
   floors: { "review.confidence.minimumInline": number; "review.confidence.minimumVerified": number };
 };
-
-export function getPath(target: unknown, path: string): unknown {
-  let current: unknown = target;
-  for (const segment of path.split(".")) {
-    if (current === null || typeof current !== "object") {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
-}
-
-export function setPath(target: unknown, path: string, value: unknown): void {
-  const segments = path.split(".");
-  let current: unknown = target;
-  for (let index = 0; index < segments.length - 1; index += 1) {
-    const segment = segments[index]!;
-    if (current === null || typeof current !== "object") {
-      throw new ConfigValidationError(`Cannot apply policy at '${path}': '${segment}' is not an object`);
-    }
-    current = (current as Record<string, unknown>)[segment];
-  }
-  if (current === null || typeof current !== "object") {
-    throw new ConfigValidationError(`Cannot apply policy at '${path}'`);
-  }
-  (current as Record<string, unknown>)[segments[segments.length - 1]!] = value;
-}
 
 /**
  * Force mandatory security policies onto an (effective) configuration.

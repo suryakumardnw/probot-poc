@@ -128,6 +128,59 @@ export type ReviewStatusRecord = {
   transitions: ReviewStateTransitionRecord[];
 };
 
+export type ReviewListRecord = {
+  id: string;
+  state: ReviewState;
+  repositoryFullName: string;
+  pullRequestNumber: number;
+  pullRequestId: string;
+  headSha: string;
+  reviewMode: string;
+  trigger: ReviewTrigger;
+  provider: string | null;
+  model: string | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  errorCode: string | null;
+  createdAt: Date;
+};
+
+export type ReviewListPageRecord = {
+  total: number;
+  reviews: ReviewListRecord[];
+};
+
+export type ReviewFindingSummaryRecord = {
+  fingerprint: string;
+  severity: string;
+};
+
+export type ReviewComparisonRecord = {
+  id: string;
+  reviewType: ReviewTypeValue;
+  reviewMode: string;
+  state: ReviewState;
+  attempt: number;
+  trigger: ReviewTrigger;
+  headSha: string;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  publishSkipped: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  knowledgeSnapshot: unknown;
+  errorCode: string | null;
+  findings: ReviewFindingSummaryRecord[];
+};
+
+export type ListReviewPageInput = {
+  /** Absent lists every state. */
+  state?: ReviewState;
+  limit: number;
+  offset: number;
+};
+
 export type RepositoryWithInstallation = {
   repository: RepositoryRecord;
   installation: InstallationRecord;
@@ -283,6 +336,10 @@ export interface InstallationRepository {
 export interface RepositoryRepository {
   upsertActive(input: UpsertRepositoryInput): Promise<RepositoryRecord>;
   findActiveByFullName(fullName: string): Promise<RepositoryWithInstallation | null>;
+  /** Administrative lookup by full name, regardless of repository status. */
+  findByFullName(fullName: string): Promise<RepositoryRecord | null>;
+  /** Default branch for clone base resolution when no base SHA is known. */
+  findDefaultBranchByGithubId(githubRepositoryId: bigint): Promise<string | null>;
   findFullNamesByGithubIds(githubRepositoryIds: readonly bigint[]): Promise<RepositoryFullNameRecord[]>;
 }
 
@@ -302,6 +359,10 @@ export interface ReviewRepository {
   resetForRecovery(reviewId: string): Promise<void>;
   markFailed(reviewId: string, errorCode: string, errorMessage: string | null): Promise<void>;
   findStatusById(reviewId: string): Promise<ReviewStatusRecord | null>;
+  /** Newest-first administrative review list with repository names. */
+  listPage(input: ListReviewPageInput): Promise<ReviewListPageRecord>;
+  /** Reviews for one pull request with their finding fingerprints/severities. */
+  findWithFindingsByPullRequest(pullRequestId: string): Promise<ReviewComparisonRecord[]>;
 }
 
 export interface ReviewJobRepository {
@@ -311,6 +372,16 @@ export interface ReviewJobRepository {
   /** Restore a failed enqueue to `pending_outbox` only when nobody else owns the job. */
   restorePendingOutbox(reviewJobId: string): Promise<void>;
   findIncompleteWithReviews(input: FindIncompleteJobsInput): Promise<ReviewJobWithReview[]>;
+  /** Durable row without its review (malformed-payload status checks). */
+  findById(reviewJobId: string): Promise<ReviewJobRecord | null>;
+  /** Durable row with its review (worker processing context). */
+  findWithReview(reviewJobId: string): Promise<ReviewJobWithReview | null>;
+  /**
+   * Atomically claim a processable job (`pending_outbox`/`enqueued`/
+   * `processing`) and increment its attempt counter. False when another worker
+   * already owns it or it is terminal.
+   */
+  claimForProcessing(reviewJobId: string): Promise<boolean>;
 }
 
 export interface ReviewStateTransitionRepository {

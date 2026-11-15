@@ -5,11 +5,14 @@ import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { clearOauthStates, createAdminApi } from "../../src/admin/api.js";
 import { resetGithubFetch, setGithubFetch, type GithubFetch } from "../../src/admin/github-client.js";
+import { createPrismaAuditRepository } from "../../src/admin/prisma-audit.repository.js";
 import { clearRateLimitBuckets } from "../../src/admin/rate-limit.js";
 import { clearSessions } from "../../src/admin/session.js";
 import { loadEnv, type Env } from "../../src/config/env.js";
+import { createReviewConfigStore } from "../../src/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH } from "../../src/config/review-loader.js";
 import { adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../../src/contracts/admin.js";
+import { createIngestionServices } from "../../src/ingestion/index.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
 /**
@@ -123,15 +126,24 @@ interface Handler {
 
 function makeHandler(env: Env, configPath: string): Handler {
   const logs: Array<{ level: string; msg: string }> = [];
+  const logger = {
+    info: (obj: unknown, msg: string) => logs.push({ level: "info", msg: `${msg}:${JSON.stringify(obj ?? "")}` }),
+    warn: (_obj: unknown, msg: string) => logs.push({ level: "warn", msg }),
+    error: (obj: unknown, msg: string) => logs.push({ level: "error", msg: `${msg}:${JSON.stringify(obj ?? "")}` }),
+  };
+  const config = createReviewConfigStore({
+    path: configPath,
+    env: {
+      ...process.env,
+      ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key, String(value)])),
+    },
+  });
   const handler = createAdminApi({
     env,
-    prisma,
-    logger: {
-      info: (obj, msg) => logs.push({ level: "info", msg: `${msg}:${JSON.stringify(obj ?? "")}` }),
-      warn: (_obj, msg) => logs.push({ level: "warn", msg }),
-      error: (obj, msg) => logs.push({ level: "error", msg: `${msg}:${JSON.stringify(obj ?? "")}` }),
-    },
-    configPath,
+    audit: createPrismaAuditRepository(prisma, logger),
+    ingestion: createIngestionServices(prisma, config),
+    config,
+    logger,
   });
   return { handler, logs };
 }

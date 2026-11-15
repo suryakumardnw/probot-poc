@@ -1,10 +1,10 @@
 import type { Queue } from "bullmq";
 import type pino from "pino";
 import { loadEnv } from "../config/env.js";
-import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
 import { ERROR_CODES } from "../contracts/errors.js";
 import { outboxPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
 import { createLogger } from "../lib/logger.js";
+import type { ReviewConfigStore } from "../ports/review-config.js";
 import { AppError, ValidationError } from "../shared/errors/index.js";
 import type { OutboxEventRecord } from "./ingestion.repository.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
@@ -56,10 +56,13 @@ function buildPayload(event: OutboxEventRecord): ReviewJobPayload {
   return payload;
 }
 
-function jobRetryOptions(): { attempts: number; backoff: { type: "exponential" | "fixed"; delay: number } } {
+function jobRetryOptions(config: ReviewConfigStore): {
+  attempts: number;
+  backoff: { type: "exponential" | "fixed"; delay: number };
+} {
   try {
-    const { config } = loadReviewConfig(DEFAULT_CONFIG_PATH);
-    const infra = config.queue.retry.infrastructure;
+    const { config: loaded } = config.load();
+    const infra = loaded.queue.retry.infrastructure;
     return {
       attempts: infra.enabled ? infra.maxAttempts : 1,
       backoff: { type: infra.backoff, delay: 5000 },
@@ -73,6 +76,7 @@ function jobRetryOptions(): { attempts: number; backoff: { type: "exponential" |
 export type OutboxServiceDependencies = {
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
+  config: ReviewConfigStore;
 };
 
 export interface OutboxService {
@@ -106,7 +110,7 @@ export function createOutboxService(deps: OutboxServiceDependencies): OutboxServ
       }
 
       const payload = buildPayload(event);
-      const retry = jobRetryOptions();
+      const retry = jobRetryOptions(deps.config);
 
       // Commit the durable `enqueued` state BEFORE the job becomes visible to
       // consumers. Adding to Redis first opens a race where an idle worker picks

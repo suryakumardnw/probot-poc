@@ -1,10 +1,9 @@
 import fs from "node:fs";
-import type { PrismaClient } from "@prisma/client";
 import { UnrecoverableError, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import type pino from "pino";
 import { AgentRuntimeError } from "../agent/types.js";
-import { transitionReviewState } from "../ingestion/index.js";
+import { transitionReviewState, type IngestionRepositories } from "../ingestion/index.js";
 import { parseReviewJobPayload, REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../ingestion/queue.js";
 import {
   createReviewLogger,
@@ -38,7 +37,8 @@ const MAX_LOGGED_ERROR_DETAIL_CHARS = 4_000;
  * the review has already been superseded in Postgres and must never run.
  */
 export interface ProcessReviewJobDeps {
-  prisma: PrismaClient;
+  /** Ingestion repository bundle; the worker never names a Prisma client. */
+  repositories: IngestionRepositories;
   service: ReviewWorkspaceService;
   logger: pino.Logger;
   concurrency: number;
@@ -63,12 +63,13 @@ export async function processReviewJob(
   payload: ReviewJobPayload,
   deps: ProcessReviewJobDeps,
 ): Promise<ProcessOutcome> {
-  const { prisma, logger } = deps;
-  const job = await prisma.reviewJob.findUnique({ where: { id: jobId }, include: { review: true } });
-  if (!job) {
+  const { repositories, logger } = deps;
+  const foundJob = await repositories.reviewJobs.findWithReview(jobId);
+  if (!foundJob) {
     logger.warn({ jobId }, "ReviewJob row missing for queue job; discarding");
     return "failed";
   }
+  const job = { ...foundJob.job, review: foundJob.review };
 
   // Stale/outdated job supersede check (ticket 03 §4.4 handoff): a superseded
   // job is dead on arrival — no workspace, no clone, no token minting.
@@ -82,14 +83,8 @@ export async function processReviewJob(
   // legitimately observe `pending_outbox` for an in-flight job and discard it
   // as "not processable" — BullMQ then treats the skip as a successful run.
   // `processing` stays claimable so a stalled/retried delivery can resume.
-  const claimed = await prisma.reviewJob.updateMany({
-    where: {
-      id: job.id,
-      status: { in: ["pending_outbox", "enqueued", "processing"] },
-    },
-    data: { status: "processing", attempts: { increment: 1 } },
-  });
-  if (claimed.count === 0) {
+  const claimed = await repositories.reviewJobs.claimForProcessing(job.id);
+  if (!claimed) {
     logger.info({ jobId, status: job.status }, "Review job not in a processable state; skipping");
     return "skipped_status";
   }
@@ -121,13 +116,9 @@ export async function processReviewJob(
     // Manual `/review` requests (and older jobs) may have none, so fall back to
     // the repository's default branch instead of failing the clone outright.
     const baseSha = payload.baseSha ?? job.review.baseSha ?? null;
-    const repository = baseSha
+    const baseRef = baseSha
       ? null
-      : await prisma.repository.findUnique({
-          where: { githubRepositoryId: job.review.githubRepositoryId },
-          select: { defaultBranch: true },
-        });
-    const baseRef = baseSha ? null : (repository?.defaultBranch ?? null);
+      : await repositories.repositories.findDefaultBranchByGithubId(job.review.githubRepositoryId);
 
     const workspace = await deps.service.prepare({
       reviewId: job.reviewId,
@@ -152,7 +143,7 @@ export async function processReviewJob(
     activeStage = undefined;
 
     await deps.service.cleanupAfterReview(job.reviewId);
-    await prisma.reviewJob.update({ where: { id: job.id }, data: { status: "completed" } });
+    await repositories.reviewJobs.update(job.id, { status: "completed" });
     endSpan(span);
     const metricsRegistry = getMetricsRegistry();
     metricsRegistry.reviewsCompleted.inc(1, { outcome: "processed" });
@@ -212,11 +203,9 @@ export async function processReviewJob(
     } catch {
       // Review may already be in a terminal state (e.g. superseded) — fine.
     }
-    await prisma.reviewJob
-      .update({ where: { id: job.id }, data: { status: "failed", lastError: message.slice(0, 500) } })
-      .catch(() => {
-        /* row already gone */
-      });
+    await repositories.reviewJobs.update(job.id, { status: "failed", lastError: message.slice(0, 500) }).catch(() => {
+      /* row already gone */
+    });
     return "failed";
   }
 }
@@ -233,17 +222,11 @@ export async function processReviewJob(
 async function failMalformedReviewJob(deps: ProcessReviewJobDeps, jobId: string, error: AppError): Promise<void> {
   const reason = `${error.code}: ${error.message}`.slice(0, 500);
   try {
-    const row = await deps.prisma.reviewJob.findUnique({
-      where: { id: jobId },
-      select: { reviewId: true, status: true },
-    });
+    const row = await deps.repositories.reviewJobs.findById(jobId);
     if (!row || row.status === "superseded" || row.status === "completed") {
       return;
     }
-    await deps.prisma.reviewJob.update({
-      where: { id: jobId },
-      data: { status: "failed", lastError: reason },
-    });
+    await deps.repositories.reviewJobs.update(jobId, { status: "failed", lastError: reason });
     await transitionReviewState(row.reviewId, "failed", {
       errorCode: error.code,
       errorMessage: reason,

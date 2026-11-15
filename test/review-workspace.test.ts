@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { AgentRuntimeError } from "../src/agent/types.js";
+import { createIngestionRepositories } from "../src/ingestion/prisma-ingestion.repository.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { disconnectRedis } from "../src/lib/redis.js";
 import type { InstallationTokenProvider } from "../src/workspace/credentials.js";
@@ -18,6 +19,7 @@ import {
   FileTooLargeError,
   looksBinary,
 } from "../src/workspace/files.js";
+import { createPrismaWorkspaceRepository } from "../src/workspace/prisma-workspace.repository.js";
 import { processReviewJob, type ProcessReviewJobDeps } from "../src/workspace/processor.js";
 import { redactCredentials, sanitizeGitUrl } from "../src/workspace/redact.js";
 import {
@@ -179,7 +181,7 @@ function makeService(
     },
     rootDir: root,
     tokenProvider: tokens,
-    prisma,
+    workspaceRepository: createPrismaWorkspaceRepository(prisma),
     cloneUrlBuilder: opts.cloneUrlBuilder ?? (() => originPath),
   });
   return { service, root, tokens };
@@ -540,7 +542,7 @@ describe("worker processor", () => {
     logger: { info(): void; warn(): void; error(): void },
   ): ProcessReviewJobDeps {
     return {
-      prisma,
+      repositories: createIngestionRepositories(prisma),
       service,
       concurrency: 1,
       logger: logger as unknown as ProcessReviewJobDeps["logger"],

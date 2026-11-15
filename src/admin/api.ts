@@ -1,22 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { PrismaClient } from "@prisma/client";
 import type { z } from "zod";
 import type { Env } from "../config/env.js";
-import {
-  DEFAULT_CONFIG_PATH,
-  LAST_KNOWN_GOOD_SUFFIX,
-  ConfigValidationError,
-  checkForEmbeddedSecrets,
-  createConfigurationSnapshot,
-  loadReviewConfig,
-  redactConfiguration,
-  resolveEnvReferences,
-  restoreLastKnownGood,
-  updateReviewConfig,
-  validateRawConfig,
-} from "../config/review-loader.js";
 import {
   adminErrorEnvelopeSchema,
   compareQuerySchema,
@@ -40,9 +25,15 @@ import {
   type AdminErrorEnvelope,
 } from "../contracts/admin.js";
 import { ERROR_CODES } from "../contracts/errors.js";
-import { getReviewStatus, ingestManualReview, ManualIngestionError, type ReviewTypeValue } from "../ingestion/index.js";
+import {
+  ManualIngestionError,
+  type IngestionReadService,
+  type ReviewComparisonInput,
+  type ReviewTypeValue,
+} from "../ingestion/index.js";
 import { summarizeKnowledgeMetrics, summarizeKnowledgeSnapshot } from "../knowledge/index.js";
 import { toErrorLogPayload, toHttpEnvelope } from "../platform/http/error-mapper.js";
+import { ConfigValidationError, type ReviewConfigStore } from "../ports/review-config.js";
 import {
   AppError,
   AuthError,
@@ -54,7 +45,7 @@ import {
   redactDetails,
   redactSecrets,
 } from "../shared/errors/index.js";
-import { recordAuditLog, type AuditAction } from "./audit.js";
+import type { AuditAction, AuditMetadata, AuditRepository } from "./audit.repository.js";
 import {
   buildAuthorizeUrl,
   exchangeOAuthCode,
@@ -87,13 +78,16 @@ import {
 
 export interface AdminApiDeps {
   env: Env;
-  prisma: PrismaClient;
+  audit: AuditRepository;
+  /** Ingestion public service: review status, listing, comparison, manual trigger. */
+  ingestion: IngestionReadService;
+  /** Review config port: read/validate/update happens behind it. */
+  config: ReviewConfigStore;
   logger: {
     info: (obj: unknown, msg: string) => void;
     warn: (obj: unknown, msg: string) => void;
     error: (obj: unknown, msg: string) => void;
   };
-  configPath?: string;
   now?: () => number;
 }
 
@@ -313,14 +307,6 @@ interface AdminRequestContext {
 
 export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
   const env = deps.env;
-  // Configuration files reference arbitrary env vars (e.g. ${MODEL_BASE_URL});
-  // resolution uses the real process environment merged with the validated
-  // admin env. Secret VALUES never enter config responses (loader redacts).
-  const processEnv = {
-    ...process.env,
-    ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key, String(value)])),
-  } as unknown as NodeJS.ProcessEnv;
-  const configPath = deps.configPath ?? DEFAULT_CONFIG_PATH;
   const now = deps.now ?? Date.now;
   const configured = isAdminConfigured(env);
   if (!configured) {
@@ -403,13 +389,8 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
 
   // -------------------------------------------------------------------------
 
-  async function audit(
-    actor: string,
-    action: AuditAction,
-    resource: string,
-    metadata?: Record<string, unknown>,
-  ): Promise<void> {
-    await recordAuditLog(deps.prisma, { actor, action, resource, metadata }, deps.logger);
+  async function audit(actor: string, action: AuditAction, resource: string, metadata?: AuditMetadata): Promise<void> {
+    await deps.audit.record({ actor, action, resource, metadata });
   }
 
   async function route(ctx: AdminRequestContext): Promise<void> {
@@ -604,12 +585,12 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
   // -------------------------------------------------------------------------
 
   async function handleReadConfig(ctx: AdminRequestContext): Promise<void> {
-    const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
+    const loaded = deps.config.load();
     sendJson(ctx.res, 200, configReadResponseSchema, {
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
       schemaVersion: loaded.snapshot.schemaVersion,
-      configuration: redactConfiguration(loaded.config),
+      configuration: deps.config.redact(loaded.config),
     });
   }
 
@@ -621,13 +602,11 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     }
     const candidate = parsed.data;
     try {
-      checkForEmbeddedSecrets(candidate);
-      const resolved = resolveEnvReferences(candidate, processEnv);
-      const config = validateRawConfig(resolved);
+      const validated = deps.config.validate(candidate);
       sendJson(ctx.res, 200, configValidateResponseSchema, {
         valid: true,
-        hash: createConfigurationSnapshot(config).hash,
-        configuration: redactConfiguration(config),
+        hash: validated.snapshot.hash,
+        configuration: deps.config.redact(validated.config),
       });
     } catch (error) {
       if (error instanceof ConfigValidationError) {
@@ -647,15 +626,12 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     }
     const candidate = parsed.data;
     try {
-      checkForEmbeddedSecrets(candidate);
-      const resolved = resolveEnvReferences(candidate, processEnv);
-      const config = validateRawConfig(resolved);
-      const snapshot = createConfigurationSnapshot(config);
+      const validated = deps.config.validate(candidate);
       sendJson(ctx.res, 200, configDryRunResponseSchema, {
         valid: true,
-        hash: snapshot.hash,
-        schemaVersion: snapshot.schemaVersion,
-        configuration: redactConfiguration(config),
+        hash: validated.snapshot.hash,
+        schemaVersion: validated.snapshot.schemaVersion,
+        configuration: deps.config.redact(validated.config),
         applied: false,
       });
     } catch (error) {
@@ -675,7 +651,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     }
     const candidate = parsed.data;
     try {
-      const result = updateReviewConfig(configPath, candidate, { env: processEnv });
+      const result = deps.config.update(candidate);
       const resource = "configuration";
       await audit(session.login, "config.update", resource, {
         previousHash: result.previous.snapshot.hash,
@@ -686,11 +662,11 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
         updated: true,
         previousHash: result.previous.snapshot.hash,
         hash: result.next.snapshot.hash,
-        configuration: redactConfiguration(result.next.config),
+        configuration: deps.config.redact(result.next.config),
       });
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        // Atomic guarantee: updateReviewConfig validated BEFORE any write, so
+        // Atomic guarantee: the store validated BEFORE any write, so
         // review.json and the last-known-good snapshot are untouched here.
         await audit(session.login, "config.update_rejected", "configuration", { reason: "validation failed" });
         sendError(ctx.res, new ValidationError(error.message, { code: ERROR_CODES.CONFIG_INVALID }));
@@ -702,13 +678,9 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
 
   async function handleReloadConfig(ctx: AdminRequestContext, session: AdminSession): Promise<void> {
     // §11.5: re-read from disk, validate before activation, keep the previous
-    // configuration available (the loader's LKG protection covers the case of
+    // configuration available (the store's LKG protection covers the case of
     // a file that no longer validates: it reports fromLastKnownGood=true).
-    const loaded = loadReviewConfig(configPath, {
-      env: processEnv,
-      allowLastKnownGoodFallback: true,
-      updateLastKnownGood: true,
-    });
+    const loaded = deps.config.load({ updateLastKnownGood: true });
     await audit(session.login, "config.reload", "configuration", {
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
@@ -717,15 +689,12 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       reloaded: true,
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
-      configuration: redactConfiguration(loaded.config),
+      configuration: deps.config.redact(loaded.config),
     });
   }
 
   async function handleRollbackConfig(ctx: AdminRequestContext, session: AdminSession): Promise<void> {
-    const lkgPath = configPath + LAST_KNOWN_GOOD_SUFFIX;
-    try {
-      JSON.parse(readFileSync(lkgPath, "utf8")); // existence probe only
-    } catch {
+    if (deps.config.lastKnownGoodStatus() !== "available") {
       await audit(session.login, "config.rollback_failed", "configuration", { reason: "no last-known-good snapshot" });
       sendError(
         ctx.res,
@@ -738,15 +707,15 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     try {
       // Restores from the validated snapshot even when the active file is
       // broken (that is the whole point of rollback), so we must not use
-      // updateReviewConfig here: it refuses to write over an invalid file.
-      const restored = restoreLastKnownGood(configPath);
+      // update here: it refuses to write over an invalid file.
+      const restored = deps.config.restoreLastKnownGood();
       await audit(session.login, "config.rollback", "configuration", {
         restoredHash: restored.snapshot.hash,
       });
       sendJson(ctx.res, 200, configRollbackResponseSchema, {
         rolledBack: true,
         hash: restored.snapshot.hash,
-        configuration: redactConfiguration(restored.config),
+        configuration: deps.config.redact(restored.config),
       });
     } catch (error) {
       if (error instanceof ConfigValidationError) {
@@ -777,27 +746,21 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     }
     const limit = query.data.limit ?? 20;
     const offset = query.data.offset ?? 0;
-    const where = query.data.state === undefined ? {} : { state: query.data.state };
 
-    const [rows, total] = await Promise.all([
-      deps.prisma.review.findMany({
-        where,
-        orderBy: { createdAt: "desc" },
-        skip: offset,
-        take: limit,
-        include: { pullRequest: { include: { repository: true } } },
-      }),
-      deps.prisma.review.count({ where }),
-    ]);
-
-    sendJson(ctx.res, 200, reviewListResponseSchema, {
-      total,
+    const report = await deps.ingestion.listReviews({
       limit,
       offset,
-      reviews: rows.map((row) => ({
+      ...(query.data.state === undefined ? {} : { state: query.data.state }),
+    });
+
+    sendJson(ctx.res, 200, reviewListResponseSchema, {
+      total: report.total,
+      limit,
+      offset,
+      reviews: report.reviews.map((row) => ({
         id: row.id,
         state: row.state,
-        repository: row.pullRequest.repository.fullName,
+        repository: row.repositoryFullName,
         pullRequestNumber: row.pullRequestNumber,
         pullRequestId: row.pullRequestId,
         headSha: row.headSha,
@@ -814,7 +777,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
   }
 
   async function handleReviewDetail(res: ServerResponse, reviewId: string): Promise<void> {
-    const report = await getReviewStatus(reviewId);
+    const report = await deps.ingestion.getReviewStatus(reviewId);
     if (!report) {
       sendError(res, new NotFoundError("review not found", { code: ERROR_CODES.REVIEW_NOT_FOUND }));
       return;
@@ -849,7 +812,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     // disabled types with a clear error (§4.1).
     let reviewType: ReviewTypeValue;
     try {
-      const { config } = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
+      const { config } = deps.config.load();
       reviewType = parsed.data.reviewType ?? config.github.defaultReviewType;
       const settings = config.review.types[reviewType];
       if (settings && settings.enabled === false) {
@@ -867,7 +830,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       reviewType = parsed.data.reviewType ?? "standard";
     }
     try {
-      const result = await ingestManualReview({ ...parsed.data, reviewType });
+      const result = await deps.ingestion.ingestManualReview({ ...parsed.data, reviewType });
       await audit(session.login, "review.trigger", "review", {
         repository: parsed.data.repository,
         pullRequestNumber: parsed.data.pullRequestNumber,
@@ -905,9 +868,10 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
     }
     const repositoryName = query.data.repository;
     const prRaw = query.data.pr;
+    const target: ReviewComparisonInput = { repositoryFullName: repositoryName, pullRequestNumber: prRaw };
 
-    const repository = await deps.prisma.repository.findUnique({ where: { fullName: repositoryName } });
-    if (!repository) {
+    const lookup = await deps.ingestion.getReviewComparison(target);
+    if (lookup.outcome === "repository_not_found") {
       sendError(
         ctx.res,
         new NotFoundError(`repository '${repositoryName}' is not registered`, {
@@ -916,10 +880,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       );
       return;
     }
-    const pullRequest = await deps.prisma.pullRequest.findUnique({
-      where: { repositoryId_githubPrNumber: { repositoryId: repository.id, githubPrNumber: prRaw } },
-    });
-    if (!pullRequest) {
+    if (lookup.outcome === "pull_request_not_found") {
       sendError(
         ctx.res,
         new NotFoundError(`pull request #${prRaw} not found on '${repositoryName}'`, {
@@ -929,11 +890,7 @@ export function createAdminApi(deps: AdminApiDeps): (req: IncomingMessage, res: 
       return;
     }
 
-    const reviews = await deps.prisma.review.findMany({
-      where: { pullRequestId: pullRequest.id },
-      orderBy: { createdAt: "desc" },
-      include: { findings: { select: { fingerprint: true, severity: true } } },
-    });
+    const reviews = lookup.reviews;
 
     // Fingerprints seen by each review TYPE of the same PR/head SHA — used
     // to compute per-type unique findings (a fingerprint another type did

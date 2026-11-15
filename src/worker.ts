@@ -3,8 +3,9 @@ import path from "node:path";
 import type { Worker } from "bullmq";
 import { createAgentRuntime } from "./agent/index.js";
 import { loadEnv } from "./config/env.js";
+import { createReviewConfigStore } from "./config/review-config-store.js";
 import { createFindingsDependencies } from "./findings/index.js";
-import { loadIngestionConfig, recoverOutbox } from "./ingestion/index.js";
+import { recoverOutbox } from "./ingestion/index.js";
 import { createIngestionRepositories } from "./ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "./ingestion/prisma-ingestion.unit-of-work.js";
 import { closeReviewQueue } from "./ingestion/queue.js";
@@ -27,6 +28,7 @@ import { retryPolicyConfigFromReviewConfig } from "./observability/retry.js";
 import { createPublishingRepositories, createReviewPipelineHook } from "./publishing/index.js";
 import { reconcileIncompleteReviews } from "./recovery/reconciliation.js";
 import { workspaceDirectorySizeBytes } from "./workspace/disk.js";
+import { createPrismaWorkspaceRepository } from "./workspace/prisma-workspace.repository.js";
 import { createDefaultTokenProvider, startReviewWorker, stopReviewWorker } from "./workspace/processor.js";
 import { ReviewWorkspaceService } from "./workspace/workspace.js";
 
@@ -58,6 +60,9 @@ async function main(): Promise<void> {
   // "worker ready" status is meaningful. Never hangs: bounded by timeout.
   await waitRedisReady(5000);
 
+  const ingestionRepositories = createIngestionRepositories(prismaClient);
+  const ingestionUnitOfWork = createIngestionUnitOfWork(prismaClient);
+
   const [postgres, redis] = await Promise.all([checkPrisma(), checkRedis()]);
   logger.info(
     {
@@ -67,7 +72,7 @@ async function main(): Promise<void> {
     "Review worker ready",
   );
 
-  const { config } = loadIngestionConfig();
+  const { config } = createReviewConfigStore().load();
 
   // -------------------------------------------------------------------------
   // Boot-time knowledge source initialization (§5.3): the code-review skill
@@ -118,11 +123,11 @@ async function main(): Promise<void> {
     },
     rootDir: process.env.WORKSPACE_ROOT_DIR ?? path.join(process.cwd(), "workspaces"),
     tokenProvider: createDefaultTokenProvider(),
-    prisma: getPrisma(env),
+    workspaceRepository: createPrismaWorkspaceRepository(prismaClient),
     logger,
   });
   const reviewWorker: Worker = startReviewWorker(env.REDIS_URL, {
-    prisma: getPrisma(env),
+    repositories: ingestionRepositories,
     service: workspaceService,
     logger,
     concurrency: config.queue.concurrency,
@@ -196,8 +201,8 @@ async function main(): Promise<void> {
   const runReconciliation = async (phase: "startup" | "periodic"): Promise<void> => {
     try {
       const summary = await reconcileIncompleteReviews({
-        repositories: createIngestionRepositories(prismaClient),
-        unitOfWork: createIngestionUnitOfWork(prismaClient),
+        repositories: ingestionRepositories,
+        unitOfWork: ingestionUnitOfWork,
         logger,
         queue: recoveryQueue,
         staleThresholdMs: Number(process.env.RECOVERY_STALE_THRESHOLD_MS) || undefined,

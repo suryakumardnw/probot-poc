@@ -7,6 +7,7 @@ import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
 import { closeReviewQueue, getReviewQueue, type ReviewJobPayload } from "../../src/ingestion/queue.js";
 import { NullTokenProvider } from "../../src/workspace/credentials.js";
 import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
@@ -188,7 +189,7 @@ describe("real BullMQ worker drain", () => {
     } as unknown as ReviewWorkspaceService;
 
     const worker = startReviewWorker(process.env.REDIS_URL ?? "redis://localhost:6379", {
-      prisma,
+      repositories: createIngestionRepositories(prisma),
       service,
       logger: silentLogger as unknown as pino.Logger,
       concurrency: 1,
@@ -272,7 +273,7 @@ describe("real BullMQ worker permanent payload failure", () => {
       tokenProvider: new NullTokenProvider(),
     });
     const worker = startReviewWorker(process.env.REDIS_URL ?? "redis://localhost:6379", {
-      prisma,
+      repositories: createIngestionRepositories(prisma),
       service,
       logger: pino({ level: "silent" }),
       concurrency: 1,

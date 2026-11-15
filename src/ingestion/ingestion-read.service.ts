@@ -1,4 +1,10 @@
-import type { ReviewState, ReviewTrigger } from "./ingestion.repository.js";
+import type {
+  ListReviewPageInput,
+  ReviewComparisonRecord,
+  ReviewListPageRecord,
+  ReviewState,
+  ReviewTrigger,
+} from "./ingestion.repository.js";
 import { getDefaultIngestionService, type IngestionService } from "./ingestion.service.js";
 import { ManualIngestionError, type IngestReviewRequestResult, type ManualIngestionInput } from "./ingestion.types.js";
 import type { IngestionRepositories } from "./ingestion.unit-of-work.js";
@@ -36,6 +42,18 @@ export type ReviewStatusReport = {
   transitions: Array<{ fromState: string | null; toState: string; at: Date }>;
 };
 
+export type ReviewListReport = ReviewListPageRecord;
+
+export type ReviewComparisonLookup =
+  | { outcome: "repository_not_found" }
+  | { outcome: "pull_request_not_found" }
+  | { outcome: "found"; reviews: ReviewComparisonRecord[] };
+
+export type ReviewComparisonInput = {
+  repositoryFullName: string;
+  pullRequestNumber: number;
+};
+
 export type IngestionReadServiceDependencies = {
   repositories: IngestionRepositories;
   ingestion: IngestionService;
@@ -44,7 +62,15 @@ export type IngestionReadServiceDependencies = {
 export interface IngestionReadService {
   ingestManualReview(input: ManualIngestionInput): Promise<IngestReviewRequestResult>;
   getReviewStatus(reviewId: string): Promise<ReviewStatusReport | null>;
+  listReviews(input: ReviewListQueryInput): Promise<ReviewListReport>;
+  getReviewComparison(input: ReviewComparisonInput): Promise<ReviewComparisonLookup>;
 }
+
+export type ReviewListQueryInput = {
+  state?: ReviewState;
+  limit: number;
+  offset: number;
+};
 
 export function createIngestionReadService(deps: IngestionReadServiceDependencies): IngestionReadService {
   /**
@@ -118,7 +144,37 @@ export function createIngestionReadService(deps: IngestionReadServiceDependencie
     };
   }
 
-  return { ingestManualReview, getReviewStatus };
+  async function listReviews(input: ReviewListQueryInput): Promise<ReviewListReport> {
+    const page: ListReviewPageInput = {
+      limit: input.limit,
+      offset: input.offset,
+      ...(input.state === undefined ? {} : { state: input.state }),
+    };
+    return deps.repositories.reviews.listPage(page);
+  }
+
+  /**
+   * Resolve the comparison target and load its reviews. Missing repository and
+   * missing pull request stay distinct so the HTTP layer can keep its two 404
+   * codes.
+   */
+  async function getReviewComparison(input: ReviewComparisonInput): Promise<ReviewComparisonLookup> {
+    const repository = await deps.repositories.repositories.findByFullName(input.repositoryFullName);
+    if (!repository) {
+      return { outcome: "repository_not_found" };
+    }
+    const pullRequest = await deps.repositories.pullRequests.findByRepositoryAndNumber(
+      repository.id,
+      input.pullRequestNumber,
+    );
+    if (!pullRequest) {
+      return { outcome: "pull_request_not_found" };
+    }
+    const reviews = await deps.repositories.reviews.findWithFindingsByPullRequest(pullRequest.id);
+    return { outcome: "found", reviews };
+  }
+
+  return { ingestManualReview, getReviewStatus, listReviews, getReviewComparison };
 }
 
 let defaultReadService: IngestionReadService | undefined;

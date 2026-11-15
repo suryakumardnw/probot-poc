@@ -19,6 +19,7 @@ import type {
   FindReviewIdentityInput,
   InstallationRecord,
   InstallationRepository,
+  ListReviewPageInput,
   MaxReviewAttemptInput,
   PullRequestRecord,
   PullRequestRepository,
@@ -26,9 +27,12 @@ import type {
   RepositoryRecord,
   RepositoryRepository,
   RepositoryWithInstallation,
+  ReviewComparisonRecord,
   ReviewJobRecord,
   ReviewJobRepository,
   ReviewJobWithReview,
+  ReviewListPageRecord,
+  ReviewListRecord,
   ReviewRecord,
   ReviewRepository,
   ReviewState,
@@ -62,6 +66,12 @@ type ReviewWithJobRow = Prisma.ReviewGetPayload<{ include: { job: true } }>;
 type ReviewStatusRow = Prisma.ReviewGetPayload<{ include: { job: true; transitions: true } }>;
 type ReviewJobWithReviewRow = Prisma.ReviewJobGetPayload<{ include: { review: true } }>;
 type RepositoryWithInstallationRow = Prisma.RepositoryGetPayload<{ include: { installation: true } }>;
+type ReviewListRow = Prisma.ReviewGetPayload<{
+  include: { pullRequest: { include: { repository: true } } };
+}>;
+type ReviewWithFindingsRow = Prisma.ReviewGetPayload<{
+  include: { findings: { select: { fingerprint: true; severity: true } } };
+}>;
 
 // ---------------------------------------------------------------------------
 // Row mappers
@@ -195,6 +205,46 @@ function mapReviewJobWithReview(row: ReviewJobWithReviewRow): ReviewJobWithRevie
   };
 }
 
+function mapReviewListRecord(row: ReviewListRow): ReviewListRecord {
+  return {
+    id: row.id,
+    state: row.state,
+    repositoryFullName: row.pullRequest.repository.fullName,
+    pullRequestNumber: row.pullRequestNumber,
+    pullRequestId: row.pullRequestId,
+    headSha: row.headSha,
+    reviewMode: row.reviewMode,
+    trigger: row.trigger,
+    provider: row.provider,
+    model: row.model,
+    startedAt: row.startedAt,
+    completedAt: row.completedAt,
+    errorCode: row.errorCode,
+    createdAt: row.createdAt,
+  };
+}
+
+function mapReviewComparison(row: ReviewWithFindingsRow): ReviewComparisonRecord {
+  return {
+    id: row.id,
+    reviewType: row.reviewType,
+    reviewMode: row.reviewMode,
+    state: row.state,
+    attempt: row.attempt,
+    trigger: row.trigger,
+    headSha: row.headSha,
+    createdAt: row.createdAt,
+    startedAt: row.startedAt,
+    completedAt: row.completedAt,
+    publishSkipped: row.publishSkipped,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    knowledgeSnapshot: row.knowledgeSnapshot,
+    errorCode: row.errorCode,
+    findings: row.findings.map((finding) => ({ fingerprint: finding.fingerprint, severity: finding.severity })),
+  };
+}
+
 function reviewPatchData(patch: ReviewStatePatch): Prisma.ReviewUncheckedUpdateInput {
   return {
     state: patch.state,
@@ -274,6 +324,19 @@ export function createRepositoryRepository(client: PrismaDatabaseClient): Reposi
         include: { installation: true },
       });
       return row ? mapRepositoryWithInstallation(row) : null;
+    },
+
+    async findByFullName(fullName: string): Promise<RepositoryRecord | null> {
+      const row = await client.repository.findUnique({ where: { fullName } });
+      return row ? mapRepository(row) : null;
+    },
+
+    async findDefaultBranchByGithubId(githubRepositoryId: bigint): Promise<string | null> {
+      const row = await client.repository.findUnique({
+        where: { githubRepositoryId },
+        select: { defaultBranch: true },
+      });
+      return row?.defaultBranch ?? null;
     },
 
     async findFullNamesByGithubIds(githubRepositoryIds: readonly bigint[]): Promise<RepositoryFullNameRecord[]> {
@@ -410,6 +473,30 @@ export function createReviewRepository(client: PrismaDatabaseClient): ReviewRepo
       });
       return row ? mapReviewStatus(row) : null;
     },
+
+    async listPage(input: ListReviewPageInput): Promise<ReviewListPageRecord> {
+      const where: Prisma.ReviewWhereInput = input.state === undefined ? {} : { state: input.state };
+      const [total, rows] = await Promise.all([
+        client.review.count({ where }),
+        client.review.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          skip: input.offset,
+          take: input.limit,
+          include: { pullRequest: { include: { repository: true } } },
+        }),
+      ]);
+      return { total, reviews: rows.map(mapReviewListRecord) };
+    },
+
+    async findWithFindingsByPullRequest(pullRequestId: string): Promise<ReviewComparisonRecord[]> {
+      const rows = await client.review.findMany({
+        where: { pullRequestId },
+        orderBy: { createdAt: "desc" },
+        include: { findings: { select: { fingerprint: true, severity: true } } },
+      });
+      return rows.map(mapReviewComparison);
+    },
   };
 }
 
@@ -460,6 +547,30 @@ export function createReviewJobRepository(client: PrismaDatabaseClient): ReviewJ
         take: input.limit,
       });
       return rows.map(mapReviewJobWithReview);
+    },
+
+    async findById(reviewJobId: string): Promise<ReviewJobRecord | null> {
+      const row = await client.reviewJob.findUnique({ where: { id: reviewJobId } });
+      return row ? mapReviewJob(row) : null;
+    },
+
+    async findWithReview(reviewJobId: string): Promise<ReviewJobWithReview | null> {
+      const row = await client.reviewJob.findUnique({
+        where: { id: reviewJobId },
+        include: { review: true },
+      });
+      return row ? mapReviewJobWithReview(row) : null;
+    },
+
+    async claimForProcessing(reviewJobId: string): Promise<boolean> {
+      const claimed = await client.reviewJob.updateMany({
+        where: {
+          id: reviewJobId,
+          status: { in: ["pending_outbox", "enqueued", "processing"] },
+        },
+        data: { status: "processing", attempts: { increment: 1 } },
+      });
+      return claimed.count > 0;
     },
   };
 }

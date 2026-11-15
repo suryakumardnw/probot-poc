@@ -1,8 +1,8 @@
 import type pino from "pino";
 import { loadEnv } from "../config/env.js";
-import { DEFAULT_CONFIG_PATH, loadReviewConfig, type ConfigurationSnapshot } from "../config/review-loader.js";
 import { REVIEW_TYPES, outboxPayloadSchema, type ReviewModeValue, type ReviewTypeValue } from "../contracts/queue.js";
 import { createLogger } from "../lib/logger.js";
+import type { LoadedReviewConfig, ReviewConfigStore } from "../ports/review-config.js";
 import type { IngestReviewRequestInput, IngestReviewRequestResult } from "./ingestion.types.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 import { publishOutboxEvent, type PublishResult } from "./outbox.service.js";
@@ -15,15 +15,6 @@ import { TERMINAL_REVIEW_STATES } from "./review-state.service.js";
  */
 
 const logger: pino.Logger = createLogger(loadEnv());
-
-/** Load the effective review configuration; throws when unavailable. */
-export function loadIngestionConfig(): {
-  config: ReturnType<typeof loadReviewConfig>["config"];
-  snapshot: ConfigurationSnapshot;
-} {
-  const loaded = loadReviewConfig(DEFAULT_CONFIG_PATH);
-  return { config: loaded.config, snapshot: loaded.snapshot };
-}
 
 export function buildJobKey(parts: {
   installationId: string;
@@ -46,6 +37,7 @@ export function buildJobKey(parts: {
 export type IngestionServiceDependencies = {
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
+  config: ReviewConfigStore;
   /** Publish one committed outbox event; never throws. */
   publish: (eventId: string) => Promise<PublishResult>;
 };
@@ -70,9 +62,9 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
       }
     }
 
-    let snapshot: ConfigurationSnapshot;
+    let loaded: LoadedReviewConfig;
     try {
-      snapshot = loadIngestionConfig().snapshot;
+      loaded = deps.config.load();
     } catch (error) {
       logger.error(
         { err: error instanceof Error ? error.message : String(error) },
@@ -80,7 +72,7 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
       );
       return { outcome: "configuration_unavailable", reason: "review configuration is invalid or unavailable" };
     }
-    const config = snapshot.configuration;
+    const config = loaded.config;
     const reviewMode = config.review.strategy.mode;
     const reviewType: ReviewTypeValue = input.reviewType ?? "standard";
     const reviewEnabled = config.review.enabled;
@@ -192,8 +184,8 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
         reviewMode,
         reviewType,
         attempt,
-        configurationHash: snapshot.hash,
-        schemaVersion: snapshot.schemaVersion,
+        configurationHash: loaded.snapshot.hash,
+        schemaVersion: loaded.snapshot.schemaVersion,
       });
       await repos.stateTransitions.create({
         reviewId: review.id,
@@ -255,7 +247,7 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
           reviewMode,
           reviewType,
           trigger: input.trigger,
-          configurationHash: snapshot.hash,
+          configurationHash: loaded.snapshot.hash,
           reviewEnabled,
         }),
       });

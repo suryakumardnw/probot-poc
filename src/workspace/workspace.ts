@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type { PrismaClient } from "@prisma/client";
 import type pino from "pino";
 import { buildCloneUrl, type InstallationTokenProvider } from "./credentials.js";
 import { parseNameStatus, type ChangedFile } from "./files.js";
 import { runGit } from "./git.js";
 import { redactCredentials, sanitizeGitUrl } from "./redact.js";
+import type { WorkspaceRepository } from "./workspace.repository.js";
 
 /**
  * Repository review workspace lifecycle (ARCHITECTURE.md §5.1, §10.6, §11.3).
@@ -105,7 +105,8 @@ export interface ReviewWorkspaceServiceOptions {
   /** Directory under which all workspaces are created. */
   rootDir: string;
   tokenProvider: InstallationTokenProvider;
-  prisma?: PrismaClient;
+  /** Persistence for the ReviewWorkspace aggregate; absent = filesystem only. */
+  workspaceRepository?: WorkspaceRepository;
   logger?: pino.Logger;
   /** Test seam: override clone URL construction (e.g. local fixture path). */
   cloneUrlBuilder?: (ctx: { repositoryFullName: string; token: string }) => string;
@@ -249,16 +250,13 @@ export class ReviewWorkspaceService {
       }
 
       // 6. Workspace metadata persistence (no credentials stored).
-      if (this.opts.prisma) {
-        await this.opts.prisma.reviewWorkspace.create({
-          data: {
-            reviewId: input.reviewId,
-            path: workspacePath,
-            headSha,
-            baseSha,
-            mergeBaseSha,
-            status: "active",
-          },
+      if (this.opts.workspaceRepository) {
+        await this.opts.workspaceRepository.create({
+          reviewId: input.reviewId,
+          path: workspacePath,
+          headSha,
+          baseSha,
+          mergeBaseSha,
         });
       }
 
@@ -426,19 +424,13 @@ export class ReviewWorkspaceService {
    * otherwise leave the directory in place for `retentionHours`.
    */
   async cleanupAfterReview(reviewId: string): Promise<{ removed: boolean }> {
-    const { policy, prisma } = this.opts;
-    if (prisma) {
-      const row = await prisma.reviewWorkspace.findFirst({
-        where: { reviewId, status: "active" },
-        orderBy: { createdAt: "desc" },
-      });
+    const { policy, workspaceRepository } = this.opts;
+    if (workspaceRepository) {
+      const row = await workspaceRepository.findLatestActive(reviewId);
       if (row) {
         if (policy.cleanupAfterReview) {
           await this.removeDirectory(row.path);
-          await prisma.reviewWorkspace.update({
-            where: { id: row.id },
-            data: { status: "cleaned", cleanedAt: new Date() },
-          });
+          await workspaceRepository.markCleaned(row.id);
           return { removed: true };
         }
         // Retention: the directory stays until retentionHours elapse.
@@ -453,23 +445,16 @@ export class ReviewWorkspaceService {
    * configuration.
    */
   async cleanupAfterFailure(reviewId: string, errorMessage?: string): Promise<void> {
-    const { prisma } = this.opts;
-    if (!prisma) {
+    const { workspaceRepository } = this.opts;
+    if (!workspaceRepository) {
       return;
     }
-    const rows = await prisma.reviewWorkspace.findMany({ where: { reviewId, status: "active" } });
+    const rows = await workspaceRepository.findActive(reviewId);
     for (const row of rows) {
       await this.removeDirectory(row.path).catch(() => {
         /* best effort */
       });
-      await prisma.reviewWorkspace.update({
-        where: { id: row.id },
-        data: {
-          status: "failed",
-          cleanedAt: new Date(),
-          lastError: errorMessage ? redactCredentials(errorMessage.slice(0, 500)) : null,
-        },
-      });
+      await workspaceRepository.markFailed(row.id, errorMessage ? redactCredentials(errorMessage.slice(0, 500)) : null);
     }
   }
 
@@ -479,22 +464,17 @@ export class ReviewWorkspaceService {
    * for cleanup participate; nothing is swept.
    */
   async sweepExpired(retentionHours: number): Promise<number> {
-    const { prisma } = this.opts;
-    if (!prisma || retentionHours <= 0) {
+    const { workspaceRepository } = this.opts;
+    if (!workspaceRepository || retentionHours <= 0) {
       return 0;
     }
     const cutoff = new Date(Date.now() - retentionHours * 3_600_000);
-    const stale = await prisma.reviewWorkspace.findMany({
-      where: { status: "active", createdAt: { lt: cutoff } },
-    });
+    const stale = await workspaceRepository.findActiveCreatedBefore(cutoff);
     for (const row of stale) {
       await this.removeDirectory(row.path).catch(() => {
         /* best effort */
       });
-      await prisma.reviewWorkspace.update({
-        where: { id: row.id },
-        data: { status: "cleaned", cleanedAt: new Date(), lastError: null },
-      });
+      await workspaceRepository.markCleaned(row.id, { lastError: null });
     }
     return stale.length;
   }

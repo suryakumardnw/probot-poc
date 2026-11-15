@@ -1,27 +1,17 @@
-import { existsSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parse as parseFormBody } from "node:querystring";
-import type { PrismaClient } from "@prisma/client";
 import ejs from "ejs";
 import type { Env } from "../config/env.js";
-import {
-  DEFAULT_CONFIG_PATH,
-  ConfigValidationError,
-  checkForEmbeddedSecrets,
-  getPath,
-  LAST_KNOWN_GOOD_SUFFIX,
-  loadReviewConfig,
-  redactConfiguration,
-  resolveEnvReferences,
-  restoreLastKnownGood,
-  setPath,
-  updateReviewConfig,
-  validateRawConfig,
-} from "../config/review-loader.js";
-import type { ReviewConfig } from "../config/review-schema.js";
 import { toErrorLogPayload } from "../platform/http/error-mapper.js";
+import {
+  ConfigValidationError,
+  type LoadedReviewConfig,
+  type ReviewConfig,
+  type ReviewConfigStore,
+} from "../ports/review-config.js";
+import { getPath, setPath } from "../shared/object-path.js";
 import { isAdminConfigured } from "./api.js";
-import { recordAuditLog, type AuditAction } from "./audit.js";
+import type { AuditAction, AuditMetadata, AuditRepository } from "./audit.repository.js";
 import {
   PANEL_FIELDS,
   PANEL_SECTIONS,
@@ -57,7 +47,7 @@ const renderEjs = ejs.render;
  * Served by the same node:http server as the admin API, at GET/POST /admin.
  * No SPA and no client framework: plain HTML forms + one inline stylesheet,
  * rendered with EJS. Every write goes through the SAME primitives as
- * PUT /api/admin/config (updateReviewConfig / restoreLastKnownGood), so the
+ * PUT /api/admin/config (`ReviewConfigStore.update` / `restoreLastKnownGood`), so the
  * atomicity, validation-before-write and last-known-good guarantees are
  * identical.
  *
@@ -67,7 +57,7 @@ const renderEjs = ejs.render;
  *   longer satisfies the admin policy is shown a 403 page.
  * - Every POST requires the session CSRF token as a hidden `_csrf` input.
  * - No secret value is ever rendered: form values come from
- *   redactConfiguration output; the provider API key is env-name-only and
+ *   secret-safe store redaction; the provider API key is env-name-only and
  *   read-only.
  * - Sensitive execution-policy changes (execution mode, sandbox, command
  *   allowlist, network policy) require a confirmation interstitial before
@@ -76,13 +66,13 @@ const renderEjs = ejs.render;
 
 export interface AdminPanelDeps {
   env: Env;
-  prisma: PrismaClient;
+  audit: AuditRepository;
+  config: ReviewConfigStore;
   logger: {
     info: (obj: unknown, msg: string) => void;
     warn: (obj: unknown, msg: string) => void;
     error: (obj: unknown, msg: string) => void;
   };
-  configPath?: string;
 }
 
 const AUDIT_PAGE_SIZE = 20;
@@ -236,11 +226,7 @@ function fieldInputHtml(field: PanelField, value: unknown, id: string): string {
   }
 }
 
-function renderFields(
-  section: PanelSection,
-  config: Record<string, unknown>,
-  fieldErrors: Map<string, string>,
-): RenderedField[] {
+function renderFields(section: PanelSection, config: unknown, fieldErrors: Map<string, string>): RenderedField[] {
   return PANEL_FIELDS[section].map((field, index) => {
     const id = `${section.replace(/-/g, "_")}_${index}`;
     // Values come from the REDACTED configuration only.
@@ -262,17 +248,17 @@ function renderFields(
 // ---------------------------------------------------------------------------
 
 interface CandidateResult {
-  candidate: Record<string, unknown>;
+  candidate: ReviewConfig;
   fieldErrors: Map<string, string>;
   submitted: boolean;
 }
 
 function buildCandidate(
   section: PanelSection,
-  baseConfig: Record<string, unknown>,
+  baseConfig: ReviewConfig,
   form: Record<string, string | string[]>,
 ): CandidateResult {
-  const candidate = structuredClone(baseConfig) as Record<string, unknown>;
+  const candidate = structuredClone(baseConfig);
   const fieldErrors = new Map<string, string>();
   let submitted = false;
 
@@ -333,16 +319,7 @@ interface SensitiveChange {
 }
 
 /** Detect changes to sensitive (execution-policy) fields, redacted for display. */
-function sensitiveChanges(
-  section: PanelSection,
-  previous: Record<string, unknown>,
-  next: Record<string, unknown>,
-): SensitiveChange[] {
-  const redactedPrevious = redactConfiguration(previous as unknown as ReviewConfig) as unknown as Record<
-    string,
-    unknown
-  >;
-  const redactedNext = redactConfiguration(next as unknown as ReviewConfig) as unknown as Record<string, unknown>;
+function sensitiveChanges(section: PanelSection, redactedPrevious: unknown, redactedNext: unknown): SensitiveChange[] {
   const changes: SensitiveChange[] = [];
   for (const field of PANEL_FIELDS[section]) {
     if (!field.sensitive) {
@@ -369,19 +346,9 @@ export function createAdminPanel(
   deps: AdminPanelDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
   const env = deps.env;
-  const processEnv = {
-    ...process.env,
-    ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key, String(value)])),
-  } as unknown as NodeJS.ProcessEnv;
-  const configPath = deps.configPath ?? DEFAULT_CONFIG_PATH;
 
-  async function audit(
-    actor: string,
-    action: AuditAction,
-    resource: string,
-    metadata?: Record<string, unknown>,
-  ): Promise<void> {
-    await recordAuditLog(deps.prisma, { actor, action, resource, metadata }, deps.logger);
+  async function audit(actor: string, action: AuditAction, resource: string, metadata?: AuditMetadata): Promise<void> {
+    await deps.audit.record({ actor, action, resource, metadata });
   }
 
   function page(
@@ -433,7 +400,7 @@ export function createAdminPanel(
 
   function currentVersion(): { schemaVersion: number; hash: string; fromLastKnownGood: boolean } | null {
     try {
-      const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
+      const loaded = deps.config.load();
       return {
         schemaVersion: loaded.snapshot.schemaVersion,
         hash: loaded.snapshot.hash,
@@ -604,8 +571,8 @@ export function createAdminPanel(
     const sectionMatch = /^\/admin\/([a-z-]+)$/.exec(path);
     const section = sectionMatch?.[1];
     if (section !== undefined && isPanelSection(section)) {
-      const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
-      const redacted = redactConfiguration(loaded.config) as unknown as Record<string, unknown>;
+      const loaded = deps.config.load();
+      const redacted = deps.config.redact(loaded.config);
       const body = renderEjs(SECTION_TEMPLATE, {
         section,
         sectionLabel: SECTION_LABELS[section],
@@ -644,11 +611,7 @@ export function createAdminPanel(
   // -------------------------------------------------------------------------
 
   async function handleReload(res: ServerResponse, session: AdminSession): Promise<void> {
-    const loaded = loadReviewConfig(configPath, {
-      env: processEnv,
-      allowLastKnownGoodFallback: true,
-      updateLastKnownGood: true,
-    });
+    const loaded = deps.config.load({ updateLastKnownGood: true });
     await audit(session.login, "config.reload", "configuration", {
       fromLastKnownGood: loaded.fromLastKnownGood,
       hash: loaded.snapshot.hash,
@@ -658,15 +621,14 @@ export function createAdminPanel(
   }
 
   async function handleRollback(res: ServerResponse, session: AdminSession): Promise<void> {
-    // Existence probe only; restoreLastKnownGood validates the snapshot.
-    const lkgExists = existsSync(`${configPath}${LAST_KNOWN_GOOD_SUFFIX}`);
-    if (!lkgExists) {
+    // Existence probe only; restore validates the snapshot.
+    if (deps.config.lastKnownGoodStatus() === "missing") {
       await audit(session.login, "config.rollback_failed", "configuration", { reason: "no last-known-good snapshot" });
       redirect(res, "/admin?error=no-snapshot");
       return;
     }
     try {
-      const restored = restoreLastKnownGood(configPath);
+      const restored = deps.config.restoreLastKnownGood();
       await audit(session.login, "config.rollback", "configuration", { restoredHash: restored.snapshot.hash });
       deps.logger.info(
         { login: session.login, hash: restored.snapshot.hash },
@@ -698,12 +660,8 @@ export function createAdminPanel(
     version: ReturnType<typeof currentVersion>,
   ): Promise<void> {
     const action = lastValue(form, "action") === "validate" ? "validate" : "save";
-    const loaded = loadReviewConfig(configPath, { env: processEnv, allowLastKnownGoodFallback: true });
-    const { candidate, fieldErrors, submitted } = buildCandidate(
-      section,
-      loaded.config as unknown as Record<string, unknown>,
-      form,
-    );
+    const loaded = deps.config.load();
+    const { candidate, fieldErrors, submitted } = buildCandidate(section, loaded.config, form);
 
     if (!submitted && action === "save" && lastValue(form, "confirm") !== "confirmed") {
       redirect(res, `/admin/${section}?error=no-changes`);
@@ -712,11 +670,9 @@ export function createAdminPanel(
 
     // Validate the candidate (never persists). Field errors are mapped back to
     // the originating paths so they render beside the fields.
-    let validated: Record<string, unknown> | null = null;
+    let validated: ReviewConfig | null = null;
     try {
-      checkForEmbeddedSecrets(candidate);
-      const resolved = resolveEnvReferences(candidate, processEnv);
-      validated = validateRawConfig(resolved) as unknown as Record<string, unknown>;
+      validated = deps.config.validate(candidate).config;
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         for (const [issuePath, message] of parseIssuePaths(error.message)) {
@@ -755,7 +711,9 @@ export function createAdminPanel(
 
     // --- Save flow ---------------------------------------------------------
 
-    const changes = sensitiveChanges(section, loaded.config as unknown as Record<string, unknown>, validated);
+    const redactedPrevious = deps.config.redact(loaded.config);
+    const redactedNext = deps.config.redact(validated);
+    const changes = sensitiveChanges(section, redactedPrevious, redactedNext);
     const confirmed = lastValue(form, "confirm") === "confirmed";
 
     if (changes.length > 0 && !confirmed) {
@@ -803,7 +761,7 @@ export function createAdminPanel(
     }
 
     try {
-      const result = updateReviewConfig(configPath, finalCandidate, { env: processEnv });
+      const result = deps.config.update(finalCandidate);
       await audit(session.login, "config.update", "configuration", {
         previousHash: result.previous.snapshot.hash,
         nextHash: result.next.snapshot.hash,
@@ -818,7 +776,7 @@ export function createAdminPanel(
       redirect(res, `/admin/${section}?notice=saved`);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        // Atomic: updateReviewConfig validates before any write.
+        // Atomic: the store validates before any write.
         await audit(session.login, "config.update_rejected", "configuration", { reason: "validation failed" });
         const errors = parseIssuePaths(error.message);
         for (const [issuePath, message] of errors) {
@@ -846,7 +804,7 @@ export function createAdminPanel(
   function renderSection(
     res: ServerResponse,
     section: PanelSection,
-    loaded: ReturnType<typeof loadReviewConfig>,
+    loaded: LoadedReviewConfig,
     fieldErrors: Map<string, string>,
     error: string | null,
     status: number,
@@ -855,7 +813,7 @@ export function createAdminPanel(
     url: URL,
     validationPassed = false,
   ): void {
-    const redacted = redactConfiguration(loaded.config) as unknown as Record<string, unknown>;
+    const redacted = deps.config.redact(loaded.config);
     const body = renderEjs(SECTION_TEMPLATE, {
       section,
       sectionLabel: SECTION_LABELS[section],
@@ -881,18 +839,14 @@ export function createAdminPanel(
     const pageParam = Number(url.searchParams.get("page") ?? "1");
     const currentPage = Number.isFinite(pageParam) ? Math.max(Math.trunc(pageParam), 1) : 1;
 
-    const [total, rows] = await Promise.all([
-      deps.prisma.auditLog.count(),
-      deps.prisma.auditLog.findMany({
-        orderBy: { createdAt: "desc" },
-        skip: (currentPage - 1) * AUDIT_PAGE_SIZE,
-        take: AUDIT_PAGE_SIZE,
-      }),
-    ]);
-    const totalPages = Math.max(Math.ceil(total / AUDIT_PAGE_SIZE), 1);
+    const auditPage = await deps.audit.listPage({
+      limit: AUDIT_PAGE_SIZE,
+      offset: (currentPage - 1) * AUDIT_PAGE_SIZE,
+    });
+    const totalPages = Math.max(Math.ceil(auditPage.total / AUDIT_PAGE_SIZE), 1);
 
     const body = renderEjs(AUDIT_TEMPLATE, {
-      rows: rows.map((row) => ({
+      rows: auditPage.rows.map((row) => ({
         actor: row.actor,
         action: row.action,
         resource: row.resource,

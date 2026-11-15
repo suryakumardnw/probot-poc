@@ -22,11 +22,12 @@
  * services receive them and never touch Prisma.
  */
 
+import type { ReviewConfigStore } from "../ports/review-config.js";
 import { createIngestionReadService, type IngestionReadService } from "./ingestion-read.service.js";
 import { createIngestionService, type IngestionService } from "./ingestion.service.js";
 import { createOutboxService, type OutboxService } from "./outbox.service.js";
-import { createIngestionRepositories, type PrismaRootClient } from "./prisma-ingestion.repository.js";
-import { createIngestionUnitOfWork } from "./prisma-ingestion.unit-of-work.js";
+import type { PrismaRootClient } from "./prisma-ingestion.repository.js";
+import { createIngestionDependencies } from "./prisma-ingestion.unit-of-work.js";
 import { closeReviewQueue } from "./queue.js";
 import { createOutboxRecoveryService, type OutboxRecoveryService } from "./recovery.service.js";
 import { createReviewStateService, type ReviewStateService } from "./review-state.service.js";
@@ -39,13 +40,16 @@ export {
   ingestManualReview,
   type IngestionReadService,
   type IngestionReadServiceDependencies,
+  type ReviewComparisonInput,
+  type ReviewComparisonLookup,
+  type ReviewListQueryInput,
+  type ReviewListReport,
   type ReviewStatusReport,
 } from "./ingestion-read.service.js";
 export {
   buildJobKey,
   createIngestionService,
   ingestReviewRequest,
-  loadIngestionConfig,
   type IngestionService,
   type IngestionServiceDependencies,
 } from "./ingestion.service.js";
@@ -56,6 +60,7 @@ export {
   type IngestTrigger,
   type ManualIngestionInput,
 } from "./ingestion.types.js";
+export type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 export {
   createOutboxService,
   publishOutboxEvent,
@@ -96,18 +101,17 @@ export interface IngestionServices
  * Temporary for PR 2.1: the bootstrap composition root replaces this factory
  * in PR 2.6. Services themselves never read the Prisma singleton.
  */
-export function createIngestionServices(prisma: PrismaRootClient): IngestionServices {
-  const repositories = createIngestionRepositories(prisma);
-  const unitOfWork = createIngestionUnitOfWork(prisma);
-  const outbox = createOutboxService({ repositories, unitOfWork });
+export function createIngestionServices(prisma: PrismaRootClient, config?: ReviewConfigStore): IngestionServices {
+  const dependencies = createIngestionDependencies(prisma, config);
+  const { repositories } = dependencies;
+  const outbox = createOutboxService(dependencies);
   const recovery = createOutboxRecoveryService({
     repositories,
     publish: (eventId, queue) => outbox.publishOutboxEvent(eventId, queue),
   });
-  const reviewState = createReviewStateService({ unitOfWork });
+  const reviewState = createReviewStateService({ unitOfWork: dependencies.unitOfWork });
   const ingestion = createIngestionService({
-    repositories,
-    unitOfWork,
+    ...dependencies,
     publish: (eventId) => outbox.publishOutboxEvent(eventId),
   });
   const read = createIngestionReadService({ repositories, ingestion });
