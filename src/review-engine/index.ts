@@ -25,7 +25,7 @@ export {
   reviewResultSchema,
   type ParsedAnalysisOutput,
   type ParsedReviewResult,
-} from "./result-schema.js";
+} from "../contracts/review.js";
 export { createReviewEngineHook, type ReviewEngineHook, type ReviewEngineHookDeps } from "./hook.js";
 export type {
   ComplexityFactor,

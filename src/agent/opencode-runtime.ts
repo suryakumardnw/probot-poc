@@ -26,6 +26,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
+import { parseAgentEventLine } from "../contracts/agent.js";
 import {
   buildChildEnv,
   buildSessionConfig,
@@ -85,25 +86,6 @@ const KNOWN_PERMISSION_GAP =
   "opencode CLI does not enforce permission rules in run mode " +
   "(verified v2.1.2); post-run workspace integrity checks compensate until " +
   "ticket 11 sandboxing";
-
-/** NDJSON event emitted by `opencode run --format json`. */
-interface OpenCodeEvent {
-  type: string;
-  part?: {
-    type?: string;
-    messageID?: string;
-    text?: string;
-    tokens?: {
-      // OpenCode 2.2.6 flattens token counts onto `part.tokens`; older
-      // versions nested them under `tokens.usage`. Accept both shapes.
-      input?: number;
-      output?: number;
-      reasoning?: number;
-      usage?: { input?: number; output?: number; reasoning?: number; cache?: unknown };
-    };
-  };
-  message?: string;
-}
 
 /** How long to wait after SIGTERM before escalating to SIGKILL. */
 const KILL_GRACE_MS = 2_000;
@@ -517,13 +499,8 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
         loggedChars += trimmed.length;
 
         if (stream === "stdout") {
-          let parsed: OpenCodeEvent | undefined;
-          try {
-            parsed = JSON.parse(trimmed) as OpenCodeEvent;
-          } catch {
-            parsed = undefined;
-          }
-          if (!parsed) {
+          const parsed = parseAgentEventLine(trimmed);
+          if (!parsed.ok) {
             this.logger?.debug("agent child output", {
               event: "agent_child_output",
               sessionId,
@@ -534,9 +511,9 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
             });
             return;
           }
-          const type = typeof parsed.type === "string" ? parsed.type : "unknown";
+          const type = parsed.value.type;
           if (type === "error") {
-            const message = typeof parsed.message === "string" ? parsed.message : "agent error event";
+            const message = parsed.value.message ?? "agent error event";
             this.logger?.warn("agent child output", {
               event: "agent_child_output",
               sessionId,
@@ -554,7 +531,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
               reviewId,
               stream,
               event_type: "text",
-              chars: typeof parsed.part?.text === "string" ? parsed.part.text.length : 0,
+              chars: parsed.value.part?.text?.length ?? 0,
             });
             return;
           }
@@ -963,16 +940,15 @@ function parseEvents(stdout: string): {
     if (!trimmed) {
       continue;
     }
-    let event: OpenCodeEvent;
-    try {
-      event = JSON.parse(trimmed) as OpenCodeEvent;
-    } catch {
+    const parsed = parseAgentEventLine(trimmed);
+    if (!parsed.ok) {
       errors.push(trimmed);
       continue;
     }
+    const event = parsed.value;
     switch (event.type) {
       case "text":
-        if (typeof event.part?.text === "string") {
+        if (event.part?.text !== undefined) {
           // Events without a messageID (older runtimes / tests) share one
           // logical message so streaming chunks still combine.
           const key = event.part.messageID ?? "__anonymous__";
@@ -987,7 +963,7 @@ function parseEvents(stdout: string): {
       case "step_finish": {
         const tokens = event.part?.tokens;
         const u = tokens?.usage ?? tokens;
-        if (u && (typeof u.input === "number" || typeof u.output === "number" || typeof u.reasoning === "number")) {
+        if (u && (u.input !== undefined || u.output !== undefined || u.reasoning !== undefined)) {
           // The final text step may finish without usage; keep the last
           // step_finish that actually carries token counts.
           usage = {
@@ -999,7 +975,7 @@ function parseEvents(stdout: string): {
         break;
       }
       case "error":
-        if (typeof event.message === "string") {
+        if (event.message !== undefined) {
           errorMessages.push(event.message);
         }
         break;

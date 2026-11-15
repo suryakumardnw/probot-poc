@@ -33,11 +33,11 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AgentRuntime, AgentSession, AgentTask } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
+import { analysisOutputSchema, findingSchema, reviewResultSchema } from "../contracts/review.js";
+import type { ParsedAnalysisOutput } from "../contracts/review.js";
 import { scoreComplexity } from "./complexity.js";
 import { createReviewPlan, skippedStageIds } from "./plan.js";
 import { COMMON_REVIEW_INSTRUCTIONS, CONVENTIONS_INSTRUCTIONS, HANDBOOK_MODE_INSTRUCTIONS } from "./prompts/index.js";
-import { analysisOutputSchema, findingSchema, reviewResultSchema } from "./result-schema.js";
-import type { ParsedAnalysisOutput } from "./result-schema.js";
 import {
   RetrievalBudget,
   fulfillToolRequests,

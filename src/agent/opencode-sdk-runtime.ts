@@ -23,6 +23,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { sdkUsageSchema } from "../contracts/agent.js";
 import type { AgentRuntimeConfigSource } from "./opencode-config.js";
 import { buildChildEnv } from "./opencode-config.js";
 import { buildPrompt, extractJson, type AgentRuntimeLogger } from "./opencode-runtime.js";
@@ -814,11 +815,11 @@ function numberOrUndefined(...values: unknown[]): number | undefined {
 }
 
 function normalizeUsage(value: unknown): NormalizedUsage | undefined {
-  if (!value || typeof value !== "object") {
+  const parsed = sdkUsageSchema.safeParse(value);
+  if (!parsed.success) {
     return undefined;
   }
-  const obj = value as Record<string, unknown>;
-  const inner = obj.usage && typeof obj.usage === "object" ? (obj.usage as Record<string, unknown>) : obj;
+  const inner = parsed.data.usage ?? parsed.data;
   const inputTokens = numberOrUndefined(inner.input, inner.inputTokens);
   const outputTokens = numberOrUndefined(inner.output, inner.outputTokens);
   const reasoningTokens = numberOrUndefined(inner.reasoning, inner.reasoningTokens);

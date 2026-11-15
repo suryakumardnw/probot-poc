@@ -304,6 +304,18 @@ describe("OpenAI-compatible model provider", () => {
     await expect(provider.chat({ messages: baseMessage })).rejects.toMatchObject({ code: "unexpected_format" });
   });
 
+  it("rejects structurally malformed choices as unexpected_format instead of crashing", async () => {
+    const { url } = await start((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "x", choices: [null] }));
+    });
+    const provider = createOpenAICompatibleProvider(providerConfig(url), { env: ENV_WITH_KEY });
+    const error = await provider.chat({ messages: baseMessage }).catch((cause) => cause);
+    expect(error).toBeInstanceOf(ModelProviderError);
+    expect(error.code).toBe("unexpected_format");
+    expect(error.providerDetail).toContain("choices");
+  });
+
   it("rejects JSON output that does not parse as invalid_json", async () => {
     const { url } = await start((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });

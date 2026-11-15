@@ -139,6 +139,24 @@ describe("SDK host dispatcher", () => {
     expect(options.log.emit).toBe(onLog);
   });
 
+  it("malformed method params return a protocol error instead of reaching the SDK", async () => {
+    const harness = makeFakeModule();
+    const dispatcher = createSdkHostDispatcher(harness.loader, vi.fn());
+
+    const response = await dispatcher.handle({
+      id: 1,
+      method: "create",
+      params: { configContent: "{}" },
+    });
+
+    expect(response).toMatchObject({
+      id: 1,
+      ok: false,
+      error: { message: expect.stringContaining("invalid create params") },
+    });
+    expect(harness.loader).not.toHaveBeenCalled();
+  });
+
   it("session.create forwards location.directory, metadata, title and model", async () => {
     const harness = makeFakeModule();
     const dispatcher = await createdHost(harness);

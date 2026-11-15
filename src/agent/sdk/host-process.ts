@@ -14,7 +14,12 @@ import { StringDecoder } from "node:string_decoder";
 import { pathToFileURL } from "node:url";
 
 import { createSdkHostDispatcher, type SdkHostDispatcher } from "./host.js";
-import type { SdkHostLogEvent, SdkHostRequest, SdkHostResponse } from "./protocol.js";
+import {
+  parseSdkHostRequestLine,
+  type SdkHostLogEvent,
+  type SdkHostRequest,
+  type SdkHostResponse,
+} from "./protocol.js";
 import type { SdkLoader, SdkLogEntry, SdkModule } from "./types.js";
 
 /** Maximum bytes of a single protocol line (a global protocol constraint). */
@@ -129,15 +134,11 @@ export async function runHostProcess(options: RunHostProcessOptions): Promise<vo
 
 /** Parse a request line; never throws. */
 function parseRequest(line: string): { ok: true; value: SdkHostRequest } | { ok: false; error: string } {
-  try {
-    const value = JSON.parse(line) as SdkHostRequest;
-    if (typeof value !== "object" || value === null || typeof value.id !== "number") {
-      return { ok: false, error: "malformed request line" };
-    }
-    return { ok: true, value };
-  } catch {
+  const parsed = parseSdkHostRequestLine(line);
+  if (!parsed.ok) {
     return { ok: false, error: "malformed request line" };
   }
+  return { ok: true, value: parsed.value };
 }
 
 /** True when this file is the process entry point (invoked with `node ...`). */

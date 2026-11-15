@@ -19,6 +19,11 @@
  *   failures (rate limit, network, 5xx). Still no model switching.
  */
 
+import {
+  chatCompletionPayloadSchema,
+  providerErrorPayloadSchema,
+  type ChatCompletionUsage,
+} from "../contracts/model.js";
 import type {
   ModelCapabilities,
   ModelErrorCode,
@@ -113,15 +118,13 @@ function normalizeFinishReason(raw: unknown): {
   }
 }
 
-function normalizeUsage(raw: unknown): ModelResponse["usage"] {
-  if (typeof raw !== "object" || raw === null) {
+function normalizeUsage(raw: ChatCompletionUsage | undefined): ModelResponse["usage"] {
+  if (raw === undefined) {
     return undefined;
   }
-  const usage = raw as Record<string, unknown>;
-  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-  const prompt = num(usage.prompt_tokens);
-  const completion = num(usage.completion_tokens);
-  const total = num(usage.total_tokens);
+  const prompt = raw.prompt_tokens;
+  const completion = raw.completion_tokens;
+  const total = raw.total_tokens;
   if (prompt === undefined && completion === undefined && total === undefined) {
     return undefined;
   }
@@ -132,24 +135,22 @@ function extractErrorDetail(body: unknown): string | undefined {
   if (body === undefined) {
     return undefined;
   }
-  if (typeof body === "string") {
-    return truncateDetail(body);
+  const parsed = providerErrorPayloadSchema.safeParse(body);
+  if (!parsed.success) {
+    return undefined;
   }
-  if (typeof body === "object" && body !== null) {
-    const record = body as Record<string, unknown>;
-    const error = record.error;
-    if (typeof error === "string") {
-      return truncateDetail(error);
-    }
-    if (typeof error === "object" && error !== null) {
-      const message = (error as Record<string, unknown>).message;
-      if (typeof message === "string") {
-        return truncateDetail(message);
-      }
-    }
-    if (typeof record.message === "string") {
-      return truncateDetail(record.message);
-    }
+  if (typeof parsed.data === "string") {
+    return truncateDetail(parsed.data);
+  }
+  const error = parsed.data.error;
+  if (typeof error === "string") {
+    return truncateDetail(error);
+  }
+  if (error !== undefined && typeof error.message === "string") {
+    return truncateDetail(error.message);
+  }
+  if (typeof parsed.data.message === "string") {
+    return truncateDetail(parsed.data.message);
   }
   return undefined;
 }
@@ -176,16 +177,6 @@ const silentLogger = {
   warn: () => undefined,
   info: () => undefined,
 };
-
-/** Chat-completions response body, minimally typed. */
-interface ChatCompletionPayload {
-  id?: unknown;
-  model?: unknown;
-  choices?: unknown;
-  usage?: unknown;
-  error?: unknown;
-  message?: unknown;
-}
 
 /**
  * Create an OpenAI-compatible model provider.
@@ -230,7 +221,7 @@ export function createOpenAICompatibleProvider(
       return undefined;
     }
     try {
-      return JSON.parse(text) as ChatCompletionPayload;
+      return JSON.parse(text);
     } catch {
       // Non-JSON body: carried as a plain string for classification below.
       return text;
@@ -325,18 +316,29 @@ export function createOpenAICompatibleProvider(
       );
     }
 
-    const parsed = payload as ChatCompletionPayload;
-    if (!Array.isArray(parsed.choices) || parsed.choices.length === 0) {
+    const parsedResult = chatCompletionPayloadSchema.safeParse(payload);
+    if (!parsedResult.success) {
+      throw new ModelProviderError(
+        "unexpected_format",
+        "Provider response did not match the chat-completions contract",
+        {
+          statusCode: response.status,
+          providerDetail: parsedResult.error.issues
+            .slice(0, 5)
+            .map((issue) => `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`)
+            .join("; "),
+        },
+      );
+    }
+    const parsed = parsedResult.data;
+    const first = parsed.choices[0];
+    if (first === undefined) {
       throw new ModelProviderError("unexpected_format", "Provider response has no choices array", {
         statusCode: response.status,
       });
     }
-    const first = parsed.choices[0] as Record<string, unknown>;
-    const message = (typeof first.message === "object" && first.message !== null ? first.message : {}) as Record<
-      string,
-      unknown
-    >;
-    const rawContent = typeof message.content === "string" ? message.content : undefined;
+    const message = first.message ?? {};
+    const rawContent = message.content;
     // Reasoning models (e.g. GLM-4.7-Flash) put chain-of-thought in
     // `reasoning_content`/`reasoning` and may return `content: null` when the
     // token budget was exhausted mid-thought (finish_reason "length").

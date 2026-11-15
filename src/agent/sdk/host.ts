@@ -14,27 +14,35 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 
-import type { SdkHostRequest, SdkHostResponse } from "./protocol.js";
-import type {
-  SdkCreateSessionInput,
-  SdkHost,
-  SdkHostOptions,
-  SdkLoader,
-  SdkLogEntry,
-  SdkMessage,
-  SdkPromptInput,
-  SdkSessionRef,
-  SdkModule,
-} from "./types.js";
+import {
+  parseSdkHostValue,
+  sdkCreateSessionInputSchema,
+  sdkHostCreateParamsSchema,
+  sdkMessageListParamsSchema,
+  sdkMessageListResultSchema,
+  sdkPackageManifestSchema,
+  sdkPromptInputSchema,
+  sdkSessionRefSchema,
+  type ContractParseResult,
+  type SdkHostMethod,
+  type SdkHostRequest,
+  type SdkHostResponse,
+} from "./protocol.js";
+import type { SdkHost, SdkHostOptions, SdkLoader, SdkLogEntry, SdkMessage, SdkModule } from "./types.js";
 
 /** Params for the `create` request (supplied by the parent-side client). */
-export interface SdkHostCreateParams {
-  configContent: string;
-  databasePath: string;
-}
+export type { SdkHostCreateParams } from "./protocol.js";
 
 export interface SdkHostDispatcher {
   handle(request: SdkHostRequest): Promise<SdkHostResponse>;
+}
+
+/** Unwrap a boundary parse or turn it into a protocol error response. */
+function requireValue<T>(result: ContractParseResult<T>, method: SdkHostMethod): T {
+  if (!result.ok) {
+    throw new Error(`invalid ${method} params: ${result.error}`);
+  }
+  return result.value;
 }
 
 export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLogEntry) => void): SdkHostDispatcher {
@@ -60,7 +68,7 @@ export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLo
     try {
       switch (request.method) {
         case "create": {
-          const params = request.params as SdkHostCreateParams;
+          const params = requireValue(parseSdkHostValue(sdkHostCreateParamsSchema, request.params), "create");
           if (host) {
             throw new Error("SDK host already created");
           }
@@ -77,26 +85,33 @@ export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLo
           return { id: request.id, ok: true };
         }
         case "session.create": {
-          const row = await requireHost().sessions.create(request.params as SdkCreateSessionInput);
+          const params = requireValue(parseSdkHostValue(sdkCreateSessionInputSchema, request.params), "session.create");
+          const row = await requireHost().sessions.create(params);
           return { id: request.id, ok: true, result: row };
         }
         case "session.get": {
-          const row = await requireHost().sessions.get(request.params as SdkSessionRef);
+          const params = requireValue(parseSdkHostValue(sdkSessionRefSchema, request.params), "session.get");
+          const row = await requireHost().sessions.get(params);
           return { id: request.id, ok: true, result: row };
         }
         case "session.prompt": {
-          await requireHost().sessions.prompt(request.params as SdkPromptInput);
+          const params = requireValue(parseSdkHostValue(sdkPromptInputSchema, request.params), "session.prompt");
+          await requireHost().sessions.prompt(params);
           return { id: request.id, ok: true };
         }
         case "message.list": {
-          const response = await requireHost().message.list(
-            request.params as SdkSessionRef & { order?: "asc" | "desc" },
-          );
-          const messages: SdkMessage[] = Array.isArray(response) ? response : (response.data ?? []);
+          const params = requireValue(parseSdkHostValue(sdkMessageListParamsSchema, request.params), "message.list");
+          const response = await requireHost().message.list(params);
+          const parsed = parseSdkHostValue(sdkMessageListResultSchema, response);
+          if (!parsed.ok) {
+            throw new Error(`invalid message.list result: ${parsed.error}`);
+          }
+          const messages: SdkMessage[] = Array.isArray(parsed.value) ? parsed.value : (parsed.value.data ?? []);
           return { id: request.id, ok: true, result: messages };
         }
         case "session.remove": {
-          await requireHost().sessions.remove(request.params as SdkSessionRef);
+          const params = requireValue(parseSdkHostValue(sdkSessionRefSchema, request.params), "session.remove");
+          await requireHost().sessions.remove(params);
           return { id: request.id, ok: true };
         }
         case "close": {
@@ -111,7 +126,7 @@ export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLo
           return { id: request.id, ok: true, result: { version: resolveSdkVersion() } };
         }
         default:
-          throw new Error(`unknown SDK host method: ${String((request as { method: string }).method)}`);
+          throw new Error(`unknown SDK host method: ${String(request.method)}`);
       }
     } catch (cause) {
       return {
@@ -142,9 +157,10 @@ export function createSdkHostDispatcher(loadSdk: SdkLoader, onLog: (entry: SdkLo
 function resolveSdkVersion(): string {
   try {
     const require = createRequire(import.meta.url);
-    const pkg = require("@opencode/sdk/package.json") as { version?: unknown };
-    if (typeof pkg.version === "string") {
-      return pkg.version;
+    const pkg = require("@opencode/sdk/package.json");
+    const parsed = parseSdkHostValue(sdkPackageManifestSchema, pkg);
+    if (parsed.ok && parsed.value.version !== undefined) {
+      return parsed.value.version;
     }
   } catch {
     // Fall through to entry-point traversal.
@@ -155,12 +171,10 @@ function resolveSdkVersion(): string {
     for (let i = 0; i < 6; i += 1) {
       const candidate = path.join(dir, "package.json");
       if (existsSync(candidate)) {
-        const pkg = JSON.parse(readFileSync(candidate, "utf8")) as {
-          name?: unknown;
-          version?: unknown;
-        };
-        if (pkg.name === "@opencode/sdk" && typeof pkg.version === "string") {
-          return pkg.version;
+        const pkg = JSON.parse(readFileSync(candidate, "utf8"));
+        const parsed = parseSdkHostValue(sdkPackageManifestSchema, pkg);
+        if (parsed.ok && parsed.value.name === "@opencode/sdk" && parsed.value.version !== undefined) {
+          return parsed.value.version;
         }
       }
       const parent = path.dirname(dir);

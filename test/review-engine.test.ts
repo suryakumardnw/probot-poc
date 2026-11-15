@@ -10,10 +10,10 @@ import {
   type AgentTask,
 } from "../src/agent/types.js";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
+import { reviewResultSchema, analysisOutputSchema } from "../src/contracts/review.js";
 import { scoreComplexity, parseDiffStats } from "../src/review-engine/complexity.js";
 import { runReview } from "../src/review-engine/engine.js";
 import { createReviewPlan, skippedStageIds } from "../src/review-engine/plan.js";
-import { reviewResultSchema, analysisOutputSchema } from "../src/review-engine/result-schema.js";
 import {
   RetrievalBudget,
   fulfillToolRequests,

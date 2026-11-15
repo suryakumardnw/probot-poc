@@ -14,7 +14,16 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
 import { AgentRuntimeError } from "../types.js";
-import type { SdkHostMethod, SdkHostRequest, SdkHostResponse } from "./protocol.js";
+import {
+  parseSdkHostResponseLine,
+  parseSdkHostValue,
+  sdkHealthResultSchema,
+  sdkMessageListSchema,
+  sdkSessionRowSchema,
+  type ContractParseResult,
+  type SdkHostMethod,
+  type SdkHostRequest,
+} from "./protocol.js";
 import type { SdkCreateSessionInput, SdkMessage, SdkPromptInput, SdkSessionRef, SdkSessionRow } from "./types.js";
 
 /** Maximum bytes of a single protocol line (a global protocol constraint). */
@@ -95,11 +104,13 @@ class StdioSdkHostClient implements SdkHostClient {
   }
 
   async createSession(input: SdkCreateSessionInput): Promise<SdkSessionRow> {
-    return (await this.request("session.create", input)) as SdkSessionRow;
+    const result = await this.request("session.create", input);
+    return this.unwrap("session.create", parseSdkHostValue(sdkSessionRowSchema, result));
   }
 
   async getSession(input: SdkSessionRef): Promise<SdkSessionRow> {
-    return (await this.request("session.get", input)) as SdkSessionRow;
+    const result = await this.request("session.get", input);
+    return this.unwrap("session.get", parseSdkHostValue(sdkSessionRowSchema, result));
   }
 
   async prompt(input: SdkPromptInput): Promise<void> {
@@ -107,7 +118,8 @@ class StdioSdkHostClient implements SdkHostClient {
   }
 
   async listMessages(input: SdkSessionRef & { order?: "asc" | "desc" }): Promise<SdkMessage[]> {
-    return (await this.request("message.list", input)) as SdkMessage[];
+    const result = await this.request("message.list", input);
+    return this.unwrap("message.list", parseSdkHostValue(sdkMessageListSchema, result));
   }
 
   async removeSession(input: SdkSessionRef): Promise<void> {
@@ -216,10 +228,8 @@ class StdioSdkHostClient implements SdkHostClient {
   }
 
   private handleResponseLine(line: string): void {
-    let response: SdkHostResponse;
-    try {
-      response = JSON.parse(line) as SdkHostResponse;
-    } catch {
+    const parsed = parseSdkHostResponseLine(line);
+    if (!parsed.ok) {
       this.failAll(
         new AgentRuntimeError("crash", "opencode sdk host emitted an invalid protocol line", {
           detail: line,
@@ -227,6 +237,7 @@ class StdioSdkHostClient implements SdkHostClient {
       );
       return;
     }
+    const response = parsed.value;
     const pending = this.pending.get(response.id);
     if (!pending) {
       return;
@@ -236,7 +247,7 @@ class StdioSdkHostClient implements SdkHostClient {
     if (response.ok) {
       pending.resolve(response.result);
     } else {
-      const message = response.error?.message ?? "opencode sdk host request failed";
+      const message = response.error.message;
       // An SDK-level failure returned over the wire (e.g. "session not found")
       // is not a process crash; `crash` is reserved for genuine exit/parse
       // failures. The runtime adapter owns any finer classification.
@@ -246,6 +257,16 @@ class StdioSdkHostClient implements SdkHostClient {
         }),
       );
     }
+  }
+
+  /** Fail closed when a method's result does not match its protocol schema. */
+  private unwrap<T>(method: SdkHostMethod, result: ContractParseResult<T>): T {
+    if (!result.ok) {
+      throw new AgentRuntimeError("crash", `opencode sdk host returned an invalid ${method} result`, {
+        detail: `${method}: ${result.error}`,
+      });
+    }
+    return result.value;
   }
 
   private onStderrData(chunk: Buffer | string): void {
@@ -299,10 +320,9 @@ export async function probeSdkHost(options: {
   });
   try {
     const result = await requestHealth(child, timeoutMs);
-    const version =
-      result && typeof result === "object" && "version" in result
-        ? String((result as { version: unknown }).version ?? "unknown")
-        : "unknown";
+    const parsed = parseSdkHostValue(sdkHealthResultSchema, result);
+    const rawVersion = parsed.ok ? parsed.value?.version : undefined;
+    const version = rawVersion === undefined || rawVersion === null ? "unknown" : String(rawVersion);
     return { version };
   } finally {
     if (child.exitCode === null && !child.killed) {
@@ -340,22 +360,21 @@ function requestHealth(child: ChildProcess, timeoutMs: number): Promise<unknown>
           idx = buffer.indexOf("\n");
           continue;
         }
-        let response: SdkHostResponse;
-        try {
-          response = JSON.parse(line) as SdkHostResponse;
-        } catch {
+        const parsed = parseSdkHostResponseLine(line);
+        if (!parsed.ok) {
           cleanup();
           reject(new AgentRuntimeError("crash", "opencode sdk host health probe returned invalid output"));
           return;
         }
+        const response = parsed.value;
         if (response.id === 1) {
           cleanup();
           if (response.ok) {
             resolve(response.result);
           } else {
             reject(
-              new AgentRuntimeError("unknown", response.error?.message ?? "health probe failed", {
-                detail: response.error?.message,
+              new AgentRuntimeError("unknown", response.error.message, {
+                detail: response.error.message,
               }),
             );
           }

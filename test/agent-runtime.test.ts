@@ -836,6 +836,34 @@ describe("execute: failure normalization", () => {
     });
   });
 
+  it("invalid output: malformed NDJSON event fails closed with a stable code", async () => {
+    const child = new FakeChild();
+    const { runtime } = makeRuntime(child);
+    const { session } = await startedSession(runtime);
+    const resultPromise = runtime.execute(session, { instruction: "x", output: "text" });
+    await new Promise((r) => setTimeout(r, 10));
+    child.writeOut('{"type":"text","part":' + "\n");
+    child.close(0);
+    await expect(resultPromise).rejects.toMatchObject({
+      code: "invalid_output",
+      message: expect.stringContaining("unparseable"),
+    });
+  });
+
+  it("invalid output: a structurally invalid event fails closed with a stable code", async () => {
+    const child = new FakeChild();
+    const { runtime } = makeRuntime(child);
+    const { session } = await startedSession(runtime);
+    const resultPromise = runtime.execute(session, { instruction: "x", output: "text" });
+    await new Promise((r) => setTimeout(r, 10));
+    child.writeOut(JSON.stringify({ type: 42 }) + "\n");
+    child.close(0);
+    await expect(resultPromise).rejects.toMatchObject({
+      code: "invalid_output",
+      message: expect.stringContaining("unparseable"),
+    });
+  });
+
   it("invalid output: JSON task without a parseable object", async () => {
     const child = new FakeChild();
     const { runtime } = makeRuntime(child);

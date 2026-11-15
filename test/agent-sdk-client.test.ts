@@ -169,6 +169,45 @@ describe("SDK host stdio client", () => {
     expect(error.code).not.toBe("crash");
   });
 
+  it("a structurally invalid protocol response fails every pending call", async () => {
+    const child = new FakeChild();
+    const { client } = makeClient(child);
+    await started(client, child);
+
+    const pending = client.getSession({ sessionID: "sdksess_1" });
+    child.emitStdout(`${JSON.stringify({ id: 2, ok: "yes", result: { id: "sdksess_1" } })}\n`);
+    await expect(pending).rejects.toMatchObject({
+      code: "crash",
+      message: expect.stringContaining("invalid protocol line"),
+    });
+  });
+
+  it("an invalid method result fails closed instead of crossing the boundary untyped", async () => {
+    const child = new FakeChild();
+    const { client } = makeClient(child);
+    await started(client, child);
+
+    const pending = client.getSession({ sessionID: "sdksess_1" });
+    child.emitStdout(`${JSON.stringify({ id: 2, ok: true, result: { id: 42 } })}\n`);
+    await expect(pending).rejects.toMatchObject({
+      code: "crash",
+      message: expect.stringContaining("invalid session.get result"),
+    });
+  });
+
+  it("message.list results are validated against the message contract", async () => {
+    const child = new FakeChild();
+    const { client } = makeClient(child);
+    await started(client, child);
+
+    const pending = client.listMessages({ sessionID: "sdksess_1" });
+    child.emitStdout(`${JSON.stringify({ id: 2, ok: true, result: { data: [] } })}\n`);
+    await expect(pending).rejects.toMatchObject({
+      code: "crash",
+      message: expect.stringContaining("invalid message.list result"),
+    });
+  });
+
   it("child exit rejects every pending call", async () => {
     const child = new FakeChild();
     const { client } = makeClient(child);
