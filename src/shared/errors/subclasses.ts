@@ -78,6 +78,26 @@ export class ConflictError extends AppError {
   }
 }
 
+/**
+ * A review lifecycle move the state machine does not allow, including any move
+ * out of a terminal state. The caller's transition was not applied.
+ */
+export class InvalidStateTransitionError extends AppError {
+  readonly fromState: string;
+  readonly toState: string;
+
+  constructor(fromState: string, toState: string) {
+    super(`Invalid review state transition: ${fromState} -> ${toState}`, {
+      code: ERROR_CODES.INVALID_STATE_TRANSITION,
+      statusCode: 409,
+      retryable: false,
+      details: { fromState, toState },
+    });
+    this.fromState = fromState;
+    this.toState = toState;
+  }
+}
+
 export class RateLimitError extends AppError {
   constructor(message: string, options: AppErrorSubclassOptions = {}) {
     super(message, {

@@ -290,6 +290,22 @@ export type ReviewStatePatch = {
   supersededAt?: Date | null;
 };
 
+export type TransitionReviewStateInput = {
+  reviewId: string;
+  toState: ReviewState;
+  /** States the caller's state machine permits this move from. */
+  allowedFromStates: readonly ReviewState[];
+  /** Extra columns committed with the move. `state` always follows `toState`. */
+  patch: Omit<ReviewStatePatch, "state">;
+};
+
+export type TransitionReviewStateResult =
+  | { outcome: "transitioned"; review: ReviewRecord }
+  | { outcome: "unchanged"; review: ReviewRecord }
+  | { outcome: "not_found" }
+  /** The review is in a state that does not allow this move. */
+  | { outcome: "conflict"; currentState: ReviewState };
+
 export type CreateReviewJobInput = {
   reviewId: string;
   status: JobStatus;
@@ -367,6 +383,16 @@ export interface ReviewRepository {
   findById(reviewId: string): Promise<ReviewRecord | null>;
   findStateById(reviewId: string): Promise<ReviewState | null>;
   updateState(reviewId: string, patch: ReviewStatePatch): Promise<ReviewRecord>;
+  /**
+   * Atomically move a review from one of `allowedFromStates` to `toState` and
+   * append exactly one audit transition row in the same transaction.
+   *
+   * The write is guarded by the predecessor state, so two concurrent callers
+   * cannot both move the review: at most one reports `transitioned`; the rest
+   * report `conflict` with the state that won. Requesting the state the review
+   * already has is an `unchanged` no-op and writes no audit row.
+   */
+  transitionState(input: TransitionReviewStateInput): Promise<TransitionReviewStateResult>;
   resetForRecovery(reviewId: string): Promise<void>;
   markFailed(reviewId: string, errorCode: string, errorMessage: string | null): Promise<void>;
   findStatusById(reviewId: string): Promise<ReviewStatusRecord | null>;

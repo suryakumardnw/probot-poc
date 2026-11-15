@@ -1,6 +1,7 @@
 import type { ReviewState } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { InvalidStateTransitionError, REVIEW_STATES, isTerminalReviewState } from "../../src/ingestion/index.js";
+import { AppError } from "../../src/shared/errors/index.js";
 import { createTestReviewState } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
@@ -159,10 +160,30 @@ describe("review state transitions (§4.3)", () => {
     for (const state of REVIEW_STATES) {
       const reviewId = await seedReviewInState(state, `same-${state}`);
       const result = await transitionReviewState(reviewId, state);
+      const repeated = await transitionReviewState(reviewId, state);
       expect(result).toEqual({ id: reviewId, state });
+      expect(repeated).toEqual({ id: reviewId, state });
       expect(await transitionCount(reviewId), `${state} -> ${state} adds no audit row`).toBe(0);
       expect((await prisma.review.findUniqueOrThrow({ where: { id: reviewId } })).state).toBe(state);
     }
+  });
+
+  test("an invalid transition carries the shared 409 conflict contract", async () => {
+    const reviewId = await seedReviewInState("queued", "error-contract");
+    const error = await transitionReviewState(reviewId, "completed").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(InvalidStateTransitionError);
+    expect(error).toBeInstanceOf(AppError);
+    if (!(error instanceof InvalidStateTransitionError)) {
+      throw new Error("expected InvalidStateTransitionError");
+    }
+    expect(error.code).toBe("INVALID_STATE_TRANSITION");
+    expect(error.statusCode).toBe(409);
+    expect(error.retryable).toBe(false);
+    expect(error.fromState).toBe("queued");
+    expect(error.toState).toBe("completed");
+    expect((await prisma.review.findUniqueOrThrow({ where: { id: reviewId } })).state).toBe("queued");
+    expect(await transitionCount(reviewId)).toBe(0);
   });
 
   test("terminal side effects are recorded on the review row", async () => {

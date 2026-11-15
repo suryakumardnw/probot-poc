@@ -8,6 +8,7 @@ export {
   ConflictError,
   ForbiddenError,
   InternalError,
+  InvalidStateTransitionError,
   NotFoundError,
   ProviderError,
   RateLimitError,

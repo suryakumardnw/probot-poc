@@ -1,6 +1,7 @@
 import type { Clock } from "../ports/clock.js";
+import { InvalidStateTransitionError } from "../shared/errors/index.js";
 import { REVIEW_STATES, type ReviewState, type ReviewStatePatch } from "./ingestion.repository.js";
-import type { IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
+import type { IngestionRepositories } from "./ingestion.unit-of-work.js";
 
 /**
  * Review lifecycle state machine (ARCHITECTURE.md §4.3).
@@ -10,11 +11,12 @@ import type { IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
  * transitions — in particular a `superseded` review can never be resumed or
  * published.
  *
- * The state machine itself is pure; persistence goes through the ingestion
- * unit of work so the review row and its audit transition commit together.
+ * The state machine itself is pure; the repository performs the guarded write
+ * and its audit row in one transaction, so concurrent callers cannot both move
+ * the same review.
  */
 
-export { REVIEW_STATES };
+export { InvalidStateTransitionError, REVIEW_STATES };
 
 export const TERMINAL_REVIEW_STATES: readonly ReviewState[] = [
   "completed",
@@ -44,18 +46,13 @@ const ALLOWED_TRANSITIONS: Readonly<Record<ReviewState, readonly ReviewState[]>>
   superseded: [],
 };
 
-export class InvalidStateTransitionError extends Error {
-  constructor(
-    public readonly fromState: ReviewState,
-    public readonly toState: ReviewState,
-  ) {
-    super(`Invalid review state transition: ${fromState} -> ${toState}`);
-    this.name = "InvalidStateTransitionError";
-  }
-}
-
 export function canTransition(from: ReviewState, to: ReviewState): boolean {
   return ALLOWED_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+/** Every state the machine permits a move into `toState` from. */
+function allowedPredecessors(toState: ReviewState): readonly ReviewState[] {
+  return REVIEW_STATES.filter((from) => ALLOWED_TRANSITIONS[from].includes(toState));
 }
 
 export type TransitionOptions = {
@@ -80,7 +77,7 @@ export interface ReviewStateService {
 }
 
 export type ReviewStateServiceDependencies = {
-  unitOfWork: IngestionUnitOfWork;
+  repositories: IngestionRepositories;
   clock: Clock;
 };
 
@@ -91,40 +88,32 @@ export function createReviewStateService(deps: ReviewStateServiceDependencies): 
       toState: ReviewState,
       options: TransitionOptions = {},
     ): Promise<{ id: string; state: ReviewState }> {
-      return deps.unitOfWork.execute(async (repos) => {
-        const review = await repos.reviews.findById(reviewId);
-        if (!review) {
-          throw new Error(`Review '${reviewId}' not found`);
-        }
-        if (review.state === toState) {
-          return { id: review.id, state: review.state };
-        }
-        if (!canTransition(review.state, toState)) {
-          throw new InvalidStateTransitionError(review.state, toState);
-        }
+      const patch: Omit<ReviewStatePatch, "state"> = {
+        ...(toState === "completed" || toState === "completed_with_warnings" ? { completedAt: deps.clock.now() } : {}),
+        ...(toState === "failed"
+          ? { errorCode: options.errorCode ?? "REVIEW_FAILED", errorMessage: options.errorMessage ?? null }
+          : {}),
+        ...(toState === "superseded" && options.supersededByReviewId
+          ? { supersededByReviewId: options.supersededByReviewId, supersededAt: deps.clock.now() }
+          : {}),
+      };
 
-        const patch: ReviewStatePatch = {
-          state: toState,
-          ...(toState === "completed" || toState === "completed_with_warnings"
-            ? { completedAt: deps.clock.now() }
-            : {}),
-          ...(toState === "failed"
-            ? { errorCode: options.errorCode ?? "REVIEW_FAILED", errorMessage: options.errorMessage ?? null }
-            : {}),
-          ...(toState === "superseded" && options.supersededByReviewId
-            ? { supersededByReviewId: options.supersededByReviewId, supersededAt: deps.clock.now() }
-            : {}),
-        };
-
-        const updated = await repos.reviews.updateState(review.id, patch);
-        await repos.stateTransitions.create({
-          reviewId: review.id,
-          fromState: review.state,
-          toState,
-        });
-
-        return { id: updated.id, state: updated.state };
+      const result = await deps.repositories.reviews.transitionState({
+        reviewId,
+        toState,
+        allowedFromStates: allowedPredecessors(toState),
+        patch,
       });
+
+      switch (result.outcome) {
+        case "transitioned":
+        case "unchanged":
+          return { id: result.review.id, state: result.review.state };
+        case "not_found":
+          throw new Error(`Review '${reviewId}' not found`);
+        case "conflict":
+          throw new InvalidStateTransitionError(result.currentState, toState);
+      }
     },
   };
 }

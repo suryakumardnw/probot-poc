@@ -113,7 +113,7 @@ export function createIngestionServices(deps: IngestionServicesDependencies): In
     repositories,
     publish: (eventId) => outbox.publishOutboxEvent(eventId),
   });
-  const reviewState = createReviewStateService({ unitOfWork, clock });
+  const reviewState = createReviewStateService({ repositories, clock });
   const ingestion = createIngestionService({
     repositories,
     unitOfWork,

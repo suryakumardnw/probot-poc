@@ -80,7 +80,7 @@ export function createTestIngestion(options: TestIngestionOptions = {}): TestIng
 /** Review-state transitions bound to the test database. */
 export function createTestReviewState(): ReviewStateService {
   return createReviewStateService({
-    unitOfWork: createIngestionUnitOfWork(prisma),
+    repositories: createIngestionRepositories(prisma),
     clock: systemClock,
   });
 }

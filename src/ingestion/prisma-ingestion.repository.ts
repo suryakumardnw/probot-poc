@@ -41,6 +41,8 @@ import type {
   ReviewStateTransitionRepository,
   ReviewStatusRecord,
   ReviewWithJob,
+  TransitionReviewStateInput,
+  TransitionReviewStateResult,
   UpdateReviewJobInput,
   UpsertInstallationInput,
   UpsertPullRequestInput,
@@ -254,6 +256,67 @@ function reviewPatchData(patch: ReviewStatePatch): Prisma.ReviewUncheckedUpdateI
     ...(patch.supersededByReviewId !== undefined ? { supersededByReviewId: patch.supersededByReviewId } : {}),
     ...(patch.supersededAt !== undefined ? { supersededAt: patch.supersededAt } : {}),
   };
+}
+
+function isRootPrismaClient(client: PrismaDatabaseClient): client is PrismaClient {
+  return "$transaction" in client;
+}
+
+/**
+ * Run work in a transaction when the factory owns a root client. A client that
+ * is already transaction-scoped (a unit-of-work bundle) joins that transaction
+ * instead: Prisma transaction clients cannot start a nested transaction.
+ */
+function runInTransaction<T>(
+  client: PrismaDatabaseClient,
+  work: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return isRootPrismaClient(client) ? client.$transaction(work) : work(client);
+}
+
+async function applyReviewTransition(
+  client: Prisma.TransactionClient,
+  input: TransitionReviewStateInput,
+): Promise<TransitionReviewStateResult> {
+  const current = await client.review.findUnique({ where: { id: input.reviewId } });
+  if (!current) {
+    return { outcome: "not_found" };
+  }
+  if (current.state === input.toState) {
+    return { outcome: "unchanged", review: mapReview(current) };
+  }
+  if (!input.allowedFromStates.includes(current.state)) {
+    return { outcome: "conflict", currentState: current.state };
+  }
+
+  // The predecessor-state guard is the race boundary. Two transactions can
+  // both read the same state; only the first matches this predicate, because
+  // the second re-evaluates it after the row lock is released.
+  const moved = await client.review.updateMany({
+    where: { id: input.reviewId, state: current.state },
+    data: reviewPatchData({ ...input.patch, state: input.toState }),
+  });
+  if (moved.count === 0) {
+    const latest = await client.review.findUnique({ where: { id: input.reviewId } });
+    if (!latest) {
+      return { outcome: "not_found" };
+    }
+    // A concurrent caller moved it to the same target: the retry is a no-op.
+    return latest.state === input.toState
+      ? { outcome: "unchanged", review: mapReview(latest) }
+      : { outcome: "conflict", currentState: latest.state };
+  }
+
+  await client.reviewStateTransition.create({
+    data: {
+      reviewId: input.reviewId,
+      fromState: current.state,
+      toState: input.toState,
+    },
+  });
+
+  const updated = await client.review.findUniqueOrThrow({ where: { id: input.reviewId } });
+  return { outcome: "transitioned", review: mapReview(updated) };
 }
 
 function reviewCreateData(input: CreateReviewInput): Prisma.ReviewUncheckedCreateInput {
@@ -493,6 +556,10 @@ export function createReviewRepository(client: PrismaDatabaseClient): ReviewRepo
     async updateState(reviewId: string, patch: ReviewStatePatch): Promise<ReviewRecord> {
       const row = await client.review.update({ where: { id: reviewId }, data: reviewPatchData(patch) });
       return mapReview(row);
+    },
+
+    async transitionState(input: TransitionReviewStateInput): Promise<TransitionReviewStateResult> {
+      return runInTransaction(client, (tx) => applyReviewTransition(tx, input));
     },
 
     async resetForRecovery(reviewId: string): Promise<void> {
