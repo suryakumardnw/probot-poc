@@ -1,0 +1,237 @@
+# TypeScript Refactor — Final Verification Report
+
+Date: 2026-11-15
+Status: complete
+Baseline: `e6a1b36` (536 tests) · Phase 4 code: `5cef56b` · Docs: `738d8e1`
+Scope: PRs 5.1–5.2. Documentation and verification only; no product behavior
+changes.
+
+Companions: [TypeScript profile](./typescript-profile.md) ·
+[Gap analysis](./typescript-gap-analysis.md) ·
+[Baseline metrics](./typescript-refactor-baseline.md) ·
+[Architecture](./architecture.md) · [ADRs](./adr/README.md)
+
+## 1. Outcome
+
+The refactor is complete. The repository now has one enforced architecture,
+boundary contracts at every external seam, repositories behind ports, injected
+dependencies, a single error family, four test tiers, and CI gates that run the
+same commands locally and remotely. All six P0 findings from the
+[gap analysis](./typescript-gap-analysis.md) are closed.
+
+The refactor added no `any`, no non-null assertions, no boundary
+`JSON.parse(...) as` casts, and no `@ts-ignore`/`@ts-expect-error` to `src`.
+The 11 remaining `as unknown as` casts predate or replace localized adapter
+casts and are listed in §8.
+
+## 2. Verification environment
+
+| Item | Value |
+|---|---|
+| OS | Darwin 25.2.0, arm64 (macOS) |
+| Node.js | v26.12.0 (host default; `engines.node` is `>=24`) |
+| npm | 11.20.0 |
+| TypeScript | 6.0.3 |
+| Vitest | 3.2.7 |
+| PostgreSQL | `localhost:5432`, database `reviewer`, 12 migrations, schema up to date |
+| Redis | `localhost:6379` |
+| Docker | 29.6.1, Compose v5.2.0 |
+| Sandbox tests | `TMPDIR=/Users/surya/tmp` (shared mount for the Docker sandbox suite) |
+
+## 3. Final quality metrics
+
+`npm run metrics:quality` scans 199 TypeScript files under `src/` and 68 under
+`test/` (baseline: 112 and 31). `Count` is occurrences; `Files` is the number
+of files with at least one occurrence.
+
+| Metric | Scope | Baseline count | Final count | Baseline files | Final files |
+|---|---|---:|---:|---:|---:|
+| `any` type positions | src | 0 | **0** | 0 | **0** |
+| `any` type positions | test | 17 | 5 | 6 | 2 |
+| Non-null assertions (`!`) | src | 28 | **0** | 15 | **0** |
+| Non-null assertions (`!`) | test | 120 | 54 | 13 | 5 |
+| `as const` | src | 26 | 49 | 13 | 20 |
+| `as const` | test | 6 | 11 | 3 | 7 |
+| Other `as` casts | src | 132 | 69 | 43 | 31 |
+| Other `as` casts | test | 103 | 103 | 22 | 27 |
+| `as unknown as` | src | 26 | 11 | 11 | 6 |
+| `as unknown as` | test | 40 | 36 | 14 | 12 |
+| Boundary `JSON.parse(...) as` | src | 13 | **0** | 9 | **0** |
+| Boundary `JSON.parse(...) as` | test | 22 | 24 | 8 | 9 |
+| Prisma imports outside repositories/platform DB | src | 17 | **0** | 16 | **0** |
+| Prisma imports outside repositories/platform DB | test | 1 | 3 | 1 | 3 |
+| `process.env` reads outside `platform/config` | src | 70 | **0** | 24 | **0** |
+| `process.env` reads outside `platform/config` | test | 61 | 137 | 14 | 24 |
+| Cross-module internal imports | src | 0 | **0** | 0 | **0** |
+| Test files requiring Postgres/Redis outside `test/integration` | test | 10 | 3 | 10 | 3 |
+
+Targets achieved for `src`: zero `any`, zero non-null assertions, zero boundary
+`JSON.parse(...) as`, zero Prisma imports outside repository/platform DB,
+zero `process.env` reads outside `platform/config`, and zero cross-module
+internal imports.
+
+The test-scope increases are deliberate: the refactor added contract,
+integration, characterization, and fake-heavy unit coverage. Test code is not
+application code and the characterization tier keeps a documented lint
+allowance (§8). `as const` and total `as` counts are informational; the goal was
+zero unsafe boundary casts, not zero casts.
+
+## 4. Test results
+
+| Tier | Files | Tests | Duration | Infrastructure |
+|---|---:|---:|---:|---|
+| `npm run test:unit` | 26 | 500 | 2.74 s | None (service-free) |
+| `npm run test:contract` | 9 | 194 | 1.34 s | None (service-free) |
+| `npm run test:integration` | 22 | 280 | 28.92 s | Postgres + Redis + Docker sandbox |
+| `npm run test:characterization` | 10 | 85 | 4.98 s | Postgres + Redis |
+| **`TMPDIR=/Users/surya/tmp npm test`** | **67** | **1,059** | **42.25 s** | Full suite |
+
+The unit and contract tiers (694 tests) are service-free: CI runs them in a job
+with no Postgres/Redis service containers or dependency URLs. The integration
+tier includes the Docker sandbox security suite; the characterization tier is
+the frozen black-box behavioral baseline.
+
+Baseline comparison: 31 files / 536 tests. Final: 67 files / 1,059 tests
+(+36 files, +523 tests).
+
+## 5. Command results
+
+| Command | Result |
+|---|---|
+| `npm run format:check` | Pass — all matched files use Prettier style |
+| `npm run lint` | Pass — no errors |
+| `npm run typecheck` | Pass |
+| `npm run typecheck:tests` | Pass |
+| `npm run build` | Pass |
+| `npm run metrics:quality` | Pass — final counts in §3 |
+| `npm run test:unit` | Pass — 26 files / 500 tests |
+| `npm run test:contract` | Pass — 9 files / 194 tests |
+| `npm run test:integration` | Pass — 22 files / 280 tests |
+| `npm run test:characterization` | Pass — 10 files / 85 tests |
+| `TMPDIR=/Users/surya/tmp npm test` | Pass — 67 files / 1,059 tests |
+| `npm run security:audit` | Pass — 43 advisories, all high/critical allowlisted in `scripts/npm-audit-allowlist.json` |
+| `bash scripts/smoke/docker-smoke.sh` | Pass — see §6 |
+
+CI runs the same commands in six jobs: `Quality`, `Unit`, `Test`,
+`Docker smoke`, `Commitlint`, and `Security`.
+
+## 6. Docker Compose smoke
+
+`bash scripts/smoke/docker-smoke.sh` passed on 2026-11-15:
+
+```text
+[docker-smoke] PASS: /healthz 200, /readyz ok, degraded server start,
+worker ready and consuming review-jobs
+```
+
+The script built the production image and started the real Compose stack
+(Postgres, Redis, the one-shot migration, Probot, and the worker) from
+`deploy/docker-compose.yml`, `deploy/docker-compose.local.yml`, and
+`scripts/smoke/docker-compose.smoke.yml`. It verified:
+
+- `GET /healthz` returns 200 and `GET /readyz` reports Postgres and Redis `ok`.
+- The server starts degraded when no GitHub App credentials are configured.
+- The worker logs readiness with Postgres/Redis `ok` and connects a BullMQ
+  consumer to the `review-jobs` queue.
+- `migrate` exits 0 after applying the schema.
+
+The project name, network, volumes, and containers are removed at the end of
+the run. Container logs were written to `test-results/docker-smoke/` (ignored
+build artifact).
+
+## 7. Characterization evidence
+
+The 10 characterization suites (85 tests) cover the frozen behavioral baseline:
+
+- webhook ingestion and idempotency (`webhook-ingestion`),
+- review state transitions and supersession (`review-state`),
+- outbox publication and recovery (`outbox`),
+- queue retry classification and retry exhaustion (`queue-retry`),
+- worker shutdown and deadline behavior (`worker-shutdown`),
+- publishing summary/inline output and duplicate reconciliation (`publishing`),
+- findings validation, fingerprinting, and lifecycle (`findings`),
+- admin auth/session/CSRF behavior (`admin-auth`),
+- issue triage output (`triage`),
+- agent/runtime error normalization (`runtime-errors`).
+
+No characterization assertions were edited to make the refactor pass. The
+tier retains its narrow `any`/`!` lint allowance because it is the black-box
+baseline.
+
+## 8. Remaining deviations and follow-ups
+
+Every deviation below is either an approved stack adaptation or a localized,
+documented implementation detail. None changes product behavior.
+
+### 8.1 Eleven `as unknown as` casts in `src`
+
+| File:line | Why it exists | Follow-up |
+|---|---|---|
+| `src/ports/review-logging.ts:31` | Capability probe for simplified test logger stubs without `child`. | Keep; the port boundary intentionally tolerates stubs. |
+| `src/modules/workspace/git.ts:79` | Reads Node's numeric spawn error `code` after a type guard. | Could be modeled with a local `Error & { code?: number }` type; no behavior impact. |
+| `src/platform/github/octokit.ts:23` | Adapts a concrete Octokit instance to the narrow `PublisherOctokit` port surface. | Keep; vendor adapter boundary. |
+| `src/platform/observability/metrics.ts:193,196,197,200` | Reads/clears Prometheus metric internals that the library does not export. | Keep; test reset helper, confined to the platform adapter. |
+| `src/platform/agents/sdk/host-process.ts:43` | Dynamic `import("@opencode/sdk")` returns a module typed as `unknown` to the sanitized child host. | Keep; the module is validated as `SdkModule` at the host boundary. |
+| `src/platform/config/review-loader.ts:120,127` | Recursive redaction/clone preserves the input shape while replacing secret values. | Keep; shape-preserving projection, not a boundary parse. |
+| `src/platform/config/review-loader.ts:285` | `structuredClone` result is narrowed to a mutable record before applying allowlisted overrides. | Keep; config patching is validated afterward. |
+
+The refactor removed the 13 boundary `JSON.parse(...) as` casts and reduced
+`as unknown as` from 26 to 11. The remaining casts are localized to
+platform/module edges and are listed in §8.
+
+### 8.2 Test-tier allowances
+
+- `test/characterization/**` turns off
+  `@typescript-eslint/no-explicit-any` and
+  `@typescript-eslint/no-non-null-assertion`. This is permanent until the
+  frozen baseline is re-recorded: 5 `any` positions and 54 non-null assertions
+  remain in that tier.
+- Three test files are flagged by the "requires Postgres/Redis outside
+  `test/integration`" metric: `test/characterization/queue-retry.test.ts`,
+  `test/characterization/worker-shutdown.test.ts`, and `test/helpers/db.ts`.
+  Characterization is intentionally an infrastructure tier, and the helper
+  imports Prisma only to clean the database.
+- Test-scope `as unknown as` (36) and `JSON.parse(...) as` (24) counts are
+  fixture-construction and vendor-row assertions, not application boundaries.
+
+### 8.3 Code and dependency follow-ups
+
+| Item | Reason | Owner / next step |
+|---|---|---|
+| `src/modules/review/result-schema.ts` compatibility re-export | Keeps the contract move behavior-preserving; one contract test imports the shim. | Replace that import with `src/contracts/review.ts`, then delete the shim in a small `refactor(review)` PR. |
+| `platform/agents/opencode-runtime.ts` (1,224 lines) and `opencode-sdk-runtime.ts` (886 lines) | Isolated adapters behind `AgentRuntime`; splitting them needs its own behavior-preserving PR and runtime tests. | Dedicated runtime split PR. |
+| `exactOptionalPropertyTypes` deferred | Hundreds of optional properties intentionally accept `undefined`; enabling it is a data-shape decision, not a mechanical fix. | Compiler-hardening PR; see `docs/typescript-profile.md`. |
+| `effect` pinned at `4.1.0` | `@opencode/sdk@2.3.0` depends on it; the root pin prevents Prisma's `effect@3.21.0` from winning peer resolution. | Keep; guarded by `test/deployment-node.test.ts`. |
+| Preflight queue failures bypass `classifyQueueFailure` | The durable lookup/claim happens before the processing `try`; routing it through the classifier needs job context. | Documented in `docs/queue-reliability.md`; deferred. |
+| Reconciliation backoff is fixed (`exponential`, 5000 ms) | Attempt budgets are configuration-aware; backoff alignment is a follow-up. | Documented in `docs/queue-reliability.md`; deferred. |
+| Orphaned job rows for terminal reviews | A crash between the review and job failure writes leaves an operator-cleanable row. | Documented in `docs/queue-reliability.md`; deferred. |
+| Two source comments describe the old `/review` default as `standard` | `src/modules/webhooks/issue-comment.ts` and `src/shared/errors/classify.ts` carry stale comments; behavior and docs use `handbook` and the composed classifier. | Comment-only cleanup in a later PR. |
+
+## 9. Acceptance criteria
+
+| Criterion | Result |
+|---|---|
+| Every P0 gap closed | Yes — see the gap-analysis closure table. |
+| Remaining deviations documented with reason and owner | Yes — §8 and the profile. |
+| Service still deploys with the same commands | Yes — `npm run start:probot`, `npm run start:worker`, and the Compose smoke passed unchanged. |
+| All docs links resolve | Yes — relative-link check across `README.md`, `CONTRIBUTING.md`, `docs/`, `docs/adr/`, `docs/specs/`, and `docs/plans/`. |
+| No product behavior change | Yes — characterization baseline unchanged; docs/ADR-only commits in Phase 5. |
+
+## 10. Reproduction
+
+```bash
+npm ci
+npx prisma migrate deploy
+npm run metrics:quality
+npm run test:unit
+npm run test:contract
+npm run test:integration
+npm run test:characterization
+TMPDIR=/Users/surya/tmp npm test
+npm run lint
+npm run typecheck
+npm run typecheck:tests
+npm run build
+npm run security:audit
+bash scripts/smoke/docker-smoke.sh
+```

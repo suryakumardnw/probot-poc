@@ -44,7 +44,7 @@ npm package running Probot + BullMQ + Prisma, with no frontend.
 
 The adapt/adopt decisions live in [typescript-profile.md](./typescript-profile.md).
 
-## Scorecard
+## Scorecard (baseline, 2026-11-14)
 
 Status: **red** = non-compliant, **amber** = partial or adaptation needed,
 **gray** = not applicable.
@@ -67,6 +67,43 @@ Status: **red** = non-compliant, **amber** = partial or adaptation needed,
 | 14 SOLID | Amber | Several good interfaces; god files and duplicated runtime helpers. |
 | 15 Git & code review | Amber | Mostly Conventional Commits; no enforcement, PR template, or CI gate. |
 | 08 Repo standards | Red | No CI formatting/static checks/tests/dependency/secret scanning. |
+
+## Final scorecard (2026-11-15)
+
+Status: **green** = compliant, **green (adapted)** = compliant with a
+documented adaptation, **amber** = partial or deferred, **gray** = not
+applicable. Evidence is reproduced by `npm run metrics:quality`, the four test
+tiers, and CI.
+
+| Guideline | Status | Final summary |
+|---|---|---|
+| 01 Architecture | Green | One architecture: `webhooks → ingestion → worker → review → findings → publishing`; dead path deleted; persistence behind repositories. |
+| 02 Monorepo & structure | Green (adapted) | Single npm package (ADR 0003); vertical modules with public `index.ts`; platform/ports/contracts/shared layers; tests tiered by directory. |
+| 03 Contracts & schemas | Green | Zod at every process/network/queue/vendor boundary; `z.infer` types; zero boundary `JSON.parse(...) as` in `src`. |
+| 04 Backend modules | Green | HTTP/adapter, application, and persistence separated; zero Prisma imports outside `*.repository.ts` and `platform/db`; boundary lint enforces module APIs. |
+| 05 Services & DI | Green | Composition roots construct clients and inject ports; zero `process.env` reads outside `platform/config`; no import-time singletons. |
+| 06 State management | Gray/Amber | UI rules N/A; process state is explicit and injected. No change needed. |
+| 07 Data fetching | Green | `ModelProvider`, `AgentRuntime`, `GithubPublisher`, `KnowledgeFetcher`, and `GithubOAuthClient` ports; all network I/O in `platform`; responses parsed by contracts. |
+| 08 Error handling | Green | One `AppError` family with stable codes; `{ code, message, statusCode, details? }` envelope; one queue retry classifier (ADR 0006). |
+| 09 Components & UI | Gray | No frontend. |
+| 10 Design tokens | Gray | No frontend. |
+| 11 Forms | Gray | No frontend. |
+| 12 Testing | Green | 67 files / 1,059 tests: unit 500 + contract 194 are service-free; integration 280 and characterization 85 are explicit infrastructure tiers. |
+| 13 Coding standards | Green | ESLint + Prettier + strict `tsc` + CI; `src` has 0 explicit `any`, 0 non-null assertions, 0 boundary JSON casts; 11 localized `as unknown as` casts remain (documented). |
+| 14 SOLID | Amber | Repository/port seams and single-purpose modules are in place; two agent runtimes remain large (1,224 and 886 lines) behind the runtime port. |
+| 15 Git & code review | Green | Conventional Commits enforced by commitlint; PR template; six required CI jobs; each refactor PR kept one intent. |
+| 08 Repo standards | Green | CI runs formatting, lint, typecheck, metrics, four test tiers, build, Docker smoke, commitlint, dependency audit, and secret scan. |
+
+### P0 closure
+
+| P0 finding | Status | Evidence |
+|---|---|---|
+| 1. No enforceable tooling or CI | Resolved | `eslint.config.mjs`, Prettier, `tsconfig.test.json`, `.github/workflows/ci.yml`, six CI jobs. |
+| 2. Dead and parallel architecture | Resolved | Controller/service/view/models deleted in PR 0.5; single live module path. |
+| 3. Persistence is not behind a seam | Resolved | Module repositories + units of work; metric `Prisma imports outside repositories` is 0 for `src`. |
+| 4. Boundary shapes are cast, not parsed | Resolved | `src/contracts` Zod schemas; metric `Boundary JSON.parse(...) as` is 0 for `src`. |
+| 5. Error handling is fragmented | Resolved | Shared `AppError` family, HTTP envelope, single retry classifier. |
+| 6. Import-time environment and hidden singletons | Resolved | Composition roots + injected clients; metric `process.env outside platform/config` is 0 for `src`. |
 
 ## P0 findings — fix before the structural refactor
 
@@ -225,15 +262,31 @@ work does not ride along with a refactor.
 
 ## Reproducing the checks
 
+Final verification commands (2026-11-15):
+
 ```bash
+npm run metrics:quality
+npm run test:unit
+npm run test:contract
+npm run test:integration       # Postgres + Redis (+ Docker for the sandbox suite)
+npm run test:characterization  # Postgres + Redis
+TMPDIR=/Users/surya/tmp npm test
+npm run lint
+npm run typecheck
+npm run typecheck:tests
 npm run build
-npx vitest run test/env.test.ts test/logger.test.ts test/summary-format.test.ts
-rg -n ':\s*any\b|<any>|as any|any\[\]' src
-rg -n '[A-Za-z0-9_\)\]]!\.' src
-rg -n 'as unknown as' src
-rg -n 'JSON\.parse\([^\n]*\) as ' src
-rg -l '\b(prisma|tx)\.[a-zA-Z]+\.(find|create|update|delete|upsert|count|aggregate|groupBy|\$transaction)' src
+bash scripts/smoke/docker-smoke.sh
 ```
 
+Expected final counts: 67 test files / 1,059 tests (unit 500, contract 194,
+integration 280, characterization 85). In `src`, the quality script reports
+0 explicit `any`, 0 non-null assertions, 0 boundary `JSON.parse(...) as`,
+0 Prisma imports outside repositories/`platform/db`, 0 `process.env` reads
+outside `platform/config`, and 0 cross-module internal imports. The 11
+remaining `as unknown as` casts are listed in the
+[refactor report](./typescript-refactor-report.md).
+
 For the full suite, start Postgres and Redis first (the tests use the database
-named by `DATABASE_URL` and clean tables between cases).
+named by `DATABASE_URL` and clean tables between cases). The sandbox suite
+needs a running Docker daemon; on macOS the Docker volume mount also needs a
+shared `TMPDIR` (for example `TMPDIR=/Users/surya/tmp`).

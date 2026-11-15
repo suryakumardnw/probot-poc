@@ -5,7 +5,8 @@ Canonical source: `engineering-handbook`, branch
 `feat/CU-86bcdv1c9-typescript-guidelines`, snapshot `2c2182a`
 Companions: [TypeScript gap analysis](./typescript-gap-analysis.md) ·
 [Refactor design](./specs/2026-11-14-typescript-refactor-design.md) ·
-[Architecture](./architecture.md) · [ADRs](./adr/README.md)
+[Architecture](./architecture.md) · [ADRs](./adr/README.md) ·
+[Final verification report](./typescript-refactor-report.md)
 
 This file records how the Nativewit TypeScript guidelines apply to this
 repository. It is a decision record, not a copy of the handbook. Update it when
@@ -97,6 +98,11 @@ overrides must be marked `override`, and type-only imports must use
 ## Known gaps (current)
 
 These are tracked in full in the [gap analysis](./typescript-gap-analysis.md).
+Final verification on 2026-11-15: 67 test files / 1,059 tests pass
+(500 unit, 194 contract, 280 integration, 85 characterization); Docker Compose
+smoke passes. Details in the
+[final verification report](./typescript-refactor-report.md).
+
 At the end of the refactor:
 
 - **Tooling and CI are in place.** ESLint (with boundary, vendor, and
@@ -114,8 +120,8 @@ At the end of the refactor:
   defensive sites: `modules/workspace/git.ts` (Node error `code`), the SDK
   dynamic import and config redaction/clone helpers, the Octokit publisher
   adapter, metric internals, and a logger `child` capability probe. Each is
-  confined to a platform/module edge and documented in the profile and the
-  final verification report.
+  confined to a platform/module edge and listed in the
+  [final verification report](./typescript-refactor-report.md).
 - **Three test files are flagged by the service metric**: two
   characterization suites and `test/helpers/db.ts`. The characterization tier
   is intentionally an infrastructure tier; the helper imports Prisma to clean
