@@ -89,6 +89,33 @@ npm run build
 suite in `test/integration/execution-security.test.ts` also needs Docker; the
 remaining integration tests only need Postgres and Redis.
 
+## Docker Compose smoke test
+
+`scripts/smoke/docker-smoke.sh` builds the production image and starts the real
+Compose stack — Postgres, Redis, the one-shot migration, the Probot server, and
+the worker — from `deploy/docker-compose.yml`, `deploy/docker-compose.local.yml`,
+and `scripts/smoke/docker-compose.smoke.yml`. It then:
+
+- polls `GET /healthz` and `GET /readyz` on the published loopback port;
+- asserts the server reached its degraded start path (no GitHub App
+  credentials configured);
+- waits for the worker to log readiness with Postgres and Redis `ok` and for a
+  BullMQ consumer to connect to the review queue.
+
+No GitHub App or model-provider credentials are required, and no review runs.
+The script uses a unique Compose project name, publishes the server on
+`127.0.0.1` only, and always removes the containers, volumes, and network it
+created:
+
+```bash
+bash scripts/smoke/docker-smoke.sh
+```
+
+Requirements: Docker with Compose v2.24+ (the smoke override uses `!reset`) and
+Node (used to pick a free host port). Override `PROBOT_PORT`, `SMOKE_TIMEOUT`,
+or `SMOKE_LOG_DIR` when needed. On failure the script prints the container logs
+and writes them to `test-results/docker-smoke/`.
+
 ## Commands
 
 Run the same commands locally that CI runs. Everything must pass before review.
@@ -212,16 +239,19 @@ Work in Progress pull requests are also welcome to get feedback early on, or if 
 
 ## Continuous integration
 
-GitHub Actions runs four jobs on every pull request:
+GitHub Actions runs five jobs on every pull request:
 
 - `Quality`: `format:check`, `lint`, `typecheck`, `typecheck:tests`, and
   `metrics:quality`.
 - `Test`: Postgres 16 and Redis 7 service containers. It runs the tiers in
-  the same order as local: `test:unit`, `test:contract`, `prisma migrate
-deploy`, `test:integration`, `test:characterization`, then `build`. Unit
-  and contract tests run before migrations, so a logic failure fails fast.
-  On failure the job uploads the captured Vitest and build logs as the
-  `test-logs` artifact.
+  the same order as local: `test:unit`, `test:contract`,
+  `prisma migrate deploy`, `test:integration`, `test:characterization`, then
+  `build`. Unit and contract tests run before migrations, so a logic failure
+  fails fast. On failure the job uploads the captured Vitest and build logs as
+  the `test-logs` artifact.
+- `Docker smoke`: builds the production image and runs
+  `scripts/smoke/docker-smoke.sh` against the Compose stack. GitHub-hosted
+  runners provide Docker; local runs need Docker with Compose v2.24+.
 - `Commitlint`: the PR title and every commit in the branch.
 - `Security`: `npm run security:audit` and a gitleaks secret scan.
   `security:audit` runs `npm audit --audit-level=high` and fails on any
@@ -230,9 +260,9 @@ deploy`, `test:integration`, `test:characterization`, then `build`. Unit
   four current exceptions and their follow-ups are listed in
   [docs/security-audit-follow-ups.md](docs/security-audit-follow-ups.md).
 
-`Quality`, `Test`, `Commitlint`, and `Security` must pass before merge.
-Repository administrators must configure branch protection to require those
-checks; the workflow cannot enforce that setting itself.
+`Quality`, `Test`, `Docker smoke`, `Commitlint`, and `Security` must pass
+before merge. Repository administrators must configure branch protection to
+require those checks; the workflow cannot enforce that setting itself.
 
 ## Resources
 

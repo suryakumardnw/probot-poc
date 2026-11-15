@@ -1,0 +1,39 @@
+# Smoke-test override for `scripts/smoke/docker-smoke.sh`.
+#
+# Layered on top of deploy/docker-compose.yml and
+# deploy/docker-compose.local.yml. It removes the production `deploy/.env`
+# dependency (the smoke test must run on a clean checkout and without real
+# GitHub/model credentials) and supplies the values `config/review.json`
+# requires at startup.
+#
+# `!reset` clears the inherited env_file list; the Compose version used in CI
+# (>= 2.24) supports the tag. Only the smoke script consumes this file — the
+# production deployment continues to require deploy/.env.
+
+services:
+  migrate:
+    env_file: !reset []
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      MODEL_BASE_URL: http://127.0.0.1:9/v1
+      MODEL_NAME: smoke/model
+      MODEL_API_KEY: smoke-not-a-real-key
+
+  probot:
+    env_file: !reset []
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      MODEL_BASE_URL: http://127.0.0.1:9/v1
+      MODEL_NAME: smoke/model
+      MODEL_API_KEY: smoke-not-a-real-key
+
+  worker:
+    env_file: !reset []
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      MODEL_BASE_URL: http://127.0.0.1:9/v1
+      MODEL_NAME: smoke/model
+      MODEL_API_KEY: smoke-not-a-real-key
