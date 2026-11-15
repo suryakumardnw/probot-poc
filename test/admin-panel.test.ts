@@ -180,7 +180,7 @@ function makeHandlers(env: Env, configPath: string): Handlers {
     api: createAdminApi({
       env,
       audit,
-      ingestion: createTestIngestion({ queue: reviewQueue.queue, config }).services,
+      ingestion: createTestIngestion({ queue: reviewQueue, config }).services,
       config,
       logger,
     }),

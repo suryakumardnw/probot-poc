@@ -16,7 +16,7 @@ import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./su
 
 const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 const queue = reviewQueue.queue;
-const ingestion = createTestIngestion({ queue });
+const ingestion = createTestIngestion({ queue: reviewQueue });
 
 async function jobsWithId(jobId: string) {
   const jobs = await queue.getJobs(["waiting", "paused", "delayed", "active", "completed", "failed"]);
@@ -77,9 +77,10 @@ describe("outbox publication (§12.2)", () => {
       outbox: { status: "pending" },
     });
     const unavailableQueue = {
-      add: async () => {
+      enqueue: async () => {
         throw new Error("connect ECONNREFUSED 127.0.0.1:6379");
       },
+      close: async () => {},
     };
     const offlineIngestion = createTestIngestion({ queue: unavailableQueue });
 

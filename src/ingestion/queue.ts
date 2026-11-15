@@ -2,6 +2,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { ERROR_CODES } from "../contracts/errors.js";
 import { reviewJobPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
+import type { ReviewQueue, ReviewQueueEnqueueOptions } from "../ports/review-queue.js";
 import { ValidationError } from "../shared/errors/index.js";
 
 /**
@@ -81,32 +82,16 @@ function createQueueConnection(redisUrl: string): Redis {
 /**
  * A ready-to-use review queue plus its dedicated fast-fail connection.
  * `close()` shuts both down; bootstrap wires it into graceful shutdown.
+ *
+ * `queue`/`connection` stay exposed until the BullMQ adapter moves behind the
+ * platform module in PR 3.10; business code depends on the `ReviewQueue` port.
  */
-export interface ReviewQueue {
+export interface BullMqReviewQueue extends ReviewQueue {
   queue: Queue<ReviewJobPayload>;
   connection: Redis;
-  close(): Promise<void>;
 }
 
-/**
- * The subset of the BullMQ queue the outbox publisher uses. Keeping it narrow
- * lets tests inject a failing/fake writer without constructing Redis.
- */
-export interface ReviewQueueWriter {
-  add(
-    name: string,
-    data: ReviewJobPayload,
-    opts: {
-      jobId: string;
-      attempts: number;
-      backoff: { type: "exponential" | "fixed"; delay: number };
-      removeOnComplete: number;
-      removeOnFail: number;
-    },
-  ): Promise<{ id?: string | undefined }>;
-}
-
-export function createReviewQueue(redisUrl: string): ReviewQueue {
+export function createReviewQueue(redisUrl: string): BullMqReviewQueue {
   const connection = createQueueConnection(redisUrl);
   connection.on("error", () => {
     // Swallow connection errors: callers observe enqueue results and the
@@ -116,6 +101,17 @@ export function createReviewQueue(redisUrl: string): ReviewQueue {
   return {
     queue,
     connection,
+    enqueue(payload: ReviewJobPayload, options: ReviewQueueEnqueueOptions): Promise<{ id?: string }> {
+      // The durable ReviewJob.id is the BullMQ jobId. Re-publishing the same
+      // outbox event is therefore a silent no-op instead of a duplicate job.
+      return queue.add("review", payload, {
+        jobId: options.jobId,
+        attempts: options.attempts,
+        backoff: options.backoff,
+        removeOnComplete: options.removeOnComplete ?? 1000,
+        removeOnFail: options.removeOnFail ?? 5000,
+      });
+    },
     async close(): Promise<void> {
       try {
         await queue.close();

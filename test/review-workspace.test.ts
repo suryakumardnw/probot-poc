@@ -4,6 +4,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { UnrecoverableError } from "bullmq";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { AgentRuntimeError } from "../src/agent/types.js";
 import { createIngestionRepositories } from "../src/ingestion/prisma-ingestion.repository.js";
@@ -17,7 +18,7 @@ import {
   looksBinary,
 } from "../src/workspace/files.js";
 import { createPrismaWorkspaceRepository } from "../src/workspace/prisma-workspace.repository.js";
-import { processReviewJob, type ProcessReviewJobDeps } from "../src/workspace/processor.js";
+import { ReviewJobRetryError, processReviewJob, type ProcessReviewJobDeps } from "../src/workspace/processor.js";
 import { redactCredentials, sanitizeGitUrl } from "../src/workspace/redact.js";
 import {
   ReviewWorkspaceService,
@@ -619,30 +620,32 @@ describe("worker processor", () => {
       ...silentLogger,
       error: (obj: Record<string, unknown>) => errors.push(obj),
     };
-    const outcome = await processReviewJob(
-      chain.jobId,
-      {
-        reviewId: chain.reviewId,
-        jobKey: "k",
-        githubInstallationId: INSTALLATION_ID.toString(),
-        githubRepositoryId: "12345",
-        repositoryFullName: REPO_FULL_NAME,
-        pullRequestNumber: PR_NUMBER,
-        headSha,
-        reviewMode: "adaptive",
-        trigger: "opened",
-      },
-      {
-        ...makeDeps(service, capturingLogger),
-        onWorkspacePrepared: async () => {
-          throw new AgentRuntimeError("crash", "agent runtime exited with code 1", {
-            detail: "provider rejected request: model not found",
-          });
+    await expect(
+      processReviewJob(
+        chain.jobId,
+        {
+          reviewId: chain.reviewId,
+          jobKey: "k",
+          githubInstallationId: INSTALLATION_ID.toString(),
+          githubRepositoryId: "12345",
+          repositoryFullName: REPO_FULL_NAME,
+          pullRequestNumber: PR_NUMBER,
+          headSha,
+          reviewMode: "adaptive",
+          trigger: "opened",
         },
-      },
-    );
+        {
+          ...makeDeps(service, capturingLogger),
+          onWorkspacePrepared: async () => {
+            throw new AgentRuntimeError("crash", "agent runtime exited with code 1", {
+              detail: "provider rejected request: model not found",
+            });
+          },
+        },
+        { attempt: 1, maxAttempts: 3 },
+      ),
+    ).rejects.toBeInstanceOf(ReviewJobRetryError);
 
-    expect(outcome).toBe("failed");
     const failure = errors.find((entry) => entry.failure_class !== undefined);
     expect(failure?.error_code).toBe("crash");
     expect(failure?.failure_class).toBe("agent_crash");
@@ -747,27 +750,31 @@ describe("worker processor", () => {
   test("processing failure marks job + review failed and cleans up", async () => {
     const { service } = makeService({ cloneUrlBuilder: () => path.join(fixtureDir, "missing.git") });
     const chain = await createReviewChain();
-    const outcome = await processReviewJob(
-      chain.jobId,
-      {
-        reviewId: chain.reviewId,
-        jobKey: "k",
-        githubInstallationId: INSTALLATION_ID.toString(),
-        githubRepositoryId: "12345",
-        repositoryFullName: REPO_FULL_NAME,
-        pullRequestNumber: PR_NUMBER,
-        headSha,
-        reviewMode: "adaptive",
-        trigger: "opened",
-      },
-      makeDeps(service, silentLogger),
-    );
-    expect(outcome).toBe("failed");
+    // A direct caller owns one attempt: a retryable clone failure reported on
+    // its final attempt is terminal for this job.
+    await expect(
+      processReviewJob(
+        chain.jobId,
+        {
+          reviewId: chain.reviewId,
+          jobKey: "k",
+          githubInstallationId: INSTALLATION_ID.toString(),
+          githubRepositoryId: "12345",
+          repositoryFullName: REPO_FULL_NAME,
+          pullRequestNumber: PR_NUMBER,
+          headSha,
+          reviewMode: "adaptive",
+          trigger: "opened",
+        },
+        makeDeps(service, silentLogger),
+      ),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
     const job = await prisma.reviewJob.findUnique({ where: { id: chain.jobId } });
     expect(job?.status).toBe("failed");
     expect(job?.lastError).toContain("clone");
     const review = await prisma.review.findUnique({ where: { id: chain.reviewId } });
     expect(review?.state).toBe("failed");
+    expect(review?.errorCode).toBe("retry_exhausted");
   });
 });
 

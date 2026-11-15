@@ -25,16 +25,17 @@
 import type { Clock } from "../ports/clock.js";
 import type { Logger } from "../ports/logger.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";
+import type { ReviewQueue } from "../ports/review-queue.js";
 import { createIngestionReadService, type IngestionReadService } from "./ingestion-read.service.js";
 import { createIngestionService, type IngestionService } from "./ingestion.service.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 import { createOutboxService, type OutboxService } from "./outbox.service.js";
-import type { ReviewQueueWriter } from "./queue.js";
 import { createOutboxRecoveryService, type OutboxRecoveryService } from "./recovery.service.js";
 import { createReviewStateService, type ReviewStateService } from "./review-state.service.js";
 
 export { REVIEW_TYPES } from "../contracts/queue.js";
 export type { IngestOutcome, ReviewTypeValue } from "../contracts/queue.js";
+export type { ReviewState } from "./ingestion.repository.js";
 export {
   createIngestionReadService,
   type IngestionReadService,
@@ -94,7 +95,7 @@ export interface IngestionServicesDependencies {
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
   config: ReviewConfigStore;
-  queue: ReviewQueueWriter;
+  queue: ReviewQueue;
   logger: Logger;
   clock: Clock;
 }

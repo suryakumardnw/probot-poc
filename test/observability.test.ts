@@ -1,6 +1,7 @@
 import http from "node:http";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { AgentRuntimeError } from "../src/agent/types.js";
 import { reviewConfigSchema } from "../src/config/review-schema.js";
 import { AlertManager, loadAlertThresholds, type AlertSignal } from "../src/observability/alerts.js";
 import {
@@ -24,11 +25,14 @@ import {
 } from "../src/observability/metrics.js";
 import {
   classifyFailure,
+  classifyQueueFailure,
   retryPolicyFor,
   DEFAULT_RETRY_POLICY_CONFIG,
   retryPolicyConfigFromReviewConfig,
 } from "../src/observability/retry.js";
 import { startSpan, endSpan, reviewSpanAttributes, withSpanSync } from "../src/observability/tracing.js";
+import { ProviderError, RateLimitError, ValidationError } from "../src/shared/errors/index.js";
+import { ReviewRetrievalError } from "../src/workspace/workspace.js";
 
 /**
  * Ticket 12 unit tests: metrics registry, correlation logging, tracing,
@@ -448,6 +452,54 @@ describe("failure classification", () => {
       maxAttempts: 5,
       backoff: "fixed",
     });
+  });
+
+  test("the queue decision composes the shared AppError classifier with the policy", () => {
+    const policy = DEFAULT_RETRY_POLICY_CONFIG;
+
+    // Explicitly transient AppErrors retry within the configured budget.
+    expect(
+      classifyQueueFailure({ error: new RateLimitError("slow down"), message: "slow down", policy }),
+    ).toMatchObject({ failureClass: "github_api_transient", retryable: true, maxAttempts: 3 });
+
+    // Permanent AppErrors never retry.
+    expect(
+      classifyQueueFailure({ error: new ValidationError("bad input"), message: "bad input", policy }).retryable,
+    ).toBe(false);
+
+    // Operational errors use the §12.4 class policy.
+    expect(
+      classifyQueueFailure({
+        error: new ReviewRetrievalError("git clone failed", "clone_failed"),
+        errorCode: "clone_failed",
+        message: "git clone failed",
+        policy,
+      }),
+    ).toMatchObject({ failureClass: "clone_failure", retryable: true });
+    expect(
+      classifyQueueFailure({
+        error: new AgentRuntimeError("invalid_output", "model returned invalid JSON"),
+        errorCode: "invalid_output",
+        message: "model returned invalid JSON",
+        policy,
+      }).retryable,
+    ).toBe(false);
+
+    // Both layers must agree: a retryable provider error still respects
+    // providerUnavailable.enabled=false in the checked-in policy.
+    expect(
+      classifyQueueFailure({
+        error: new ProviderError("network", "connection reset"),
+        message: "connection reset",
+        policy,
+      }).retryable,
+    ).toBe(false);
+
+    // Unknown internal errors are not retried blindly.
+    expect(
+      classifyQueueFailure({ error: new Error("unclassified explosion"), message: "unclassified explosion", policy })
+        .retryable,
+    ).toBe(false);
   });
 });
 

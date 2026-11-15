@@ -145,7 +145,7 @@ function makeHandler(env: Env, configPath: string): Handler {
   const handler = createAdminApi({
     env,
     audit: createPrismaAuditRepository(prisma, logger),
-    ingestion: createTestIngestion({ queue: reviewQueue.queue, config }).services,
+    ingestion: createTestIngestion({ queue: reviewQueue, config }).services,
     config,
     logger,
   });

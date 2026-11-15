@@ -16,7 +16,8 @@ const privateKey = fs.readFileSync(path.join(__dirname, "fixtures/mock-cert.pem"
 
 const testIngestion = createTestIngestion({
   queue: {
-    add: async () => ({ id: "test-job" }),
+    enqueue: async () => ({ id: "test-job" }),
+    close: async () => {},
   },
 });
 const testApp = createApp({

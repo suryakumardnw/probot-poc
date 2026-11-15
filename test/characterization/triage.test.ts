@@ -23,7 +23,8 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 const testIngestion = createTestIngestion({
   queue: {
-    add: async () => ({ id: "test-job" }),
+    enqueue: async () => ({ id: "test-job" }),
+    close: async () => {},
   },
 });
 const testApp = createApp({

@@ -392,7 +392,10 @@ export interface ReviewRepository {
    * already has is an `unchanged` no-op and writes no audit row.
    */
   transitionState(input: TransitionReviewStateInput): Promise<TransitionReviewStateResult>;
-  /** Sanctioned backward move: recovery requeues a stuck review explicitly. */
+  /**
+   * Sanctioned backward move: recovery requeues a stuck review explicitly.
+   * Resets the row to `queued` and appends one audit transition atomically.
+   */
   resetForRecovery(reviewId: string): Promise<void>;
   /** Recovery-only terminal write: fail a review after requeue exhaustion. */
   markFailed(reviewId: string, errorCode: string, errorMessage: string | null): Promise<void>;
@@ -407,6 +410,12 @@ export interface ReviewJobRepository {
   create(input: CreateReviewJobInput): Promise<ReviewJobRecord>;
   update(reviewJobId: string, input: UpdateReviewJobInput): Promise<void>;
   markFailed(reviewJobId: string, lastError: string): Promise<void>;
+  /**
+   * Fail a job unless a concurrent actor already made it terminal
+   * (`completed`/`failed`/`superseded`). A supersede that raced the worker must
+   * never be overwritten by a failure write.
+   */
+  markFailedUnlessTerminal(reviewJobId: string, lastError: string): Promise<void>;
   /** Restore a failed enqueue to `pending_outbox` only when nobody else owns the job. */
   restorePendingOutbox(reviewJobId: string): Promise<void>;
   findIncompleteWithReviews(input: FindIncompleteJobsInput): Promise<ReviewJobWithReview[]>;

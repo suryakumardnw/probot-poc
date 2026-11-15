@@ -13,7 +13,7 @@ import {
 import { createLogger, type PlatformLogger } from "../lib/logger.js";
 import { checkPrisma, disconnectPrisma } from "../lib/prisma.js";
 import { checkRedis, disconnectRedis, waitRedisReady } from "../lib/redis.js";
-import { registerGracefulShutdown } from "../lib/shutdown.js";
+import { registerGracefulShutdown, runShutdownSteps, type ShutdownStep } from "../lib/shutdown.js";
 import { AlertManager } from "../observability/alerts.js";
 import { startMetricsServer, metricsServerPort } from "../observability/metrics-endpoint.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
@@ -199,6 +199,9 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
           logger,
           queue: clients.reviewQueue.queue,
           staleThresholdMs: Number(process.env.RECOVERY_STALE_THRESHOLD_MS) || undefined,
+          // Keep the durable recovery budget aligned with the BullMQ attempt
+          // budget configured in review.json.
+          maxJobAttempts: reviewConfig.queue.retry.infrastructure.maxAttempts,
           sweepExpiredWorkspaces: () => workspaceService.sweepExpired(reviewConfig.repository.workspace.retentionHours),
         });
         if (summary.scanned > 0) {
@@ -302,27 +305,46 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
     }
   }
 
-  function registerShutdown(): void {
-    registerGracefulShutdown(logger, [
-      { name: "outbox-recovery-timer", run: async () => clearInterval(outboxTimer) },
-      { name: "workspace-sweep-timer", run: async () => clearInterval(sweepTimer) },
-      { name: "reconciliation-timer", run: async () => clearInterval(reconciliationTimer) },
-      { name: "alert-timer", run: async () => clearInterval(alertTimer) },
+  /**
+   * Ordered teardown shared by signal handling and `close()`.
+   *
+   * Phases enforce the contract: stop timers, drain the BullMQ worker (active
+   * jobs finish), then close the queue/Redis/Postgres clients. Postgres stays
+   * open while the worker drains because the processor still writes state.
+   */
+  function shutdownSteps(): ShutdownStep[] {
+    return [
+      { name: "outbox-recovery-timer", phase: "stop-intake", run: async () => clearInterval(outboxTimer) },
+      { name: "workspace-sweep-timer", phase: "stop-intake", run: async () => clearInterval(sweepTimer) },
+      { name: "reconciliation-timer", phase: "stop-intake", run: async () => clearInterval(reconciliationTimer) },
+      { name: "alert-timer", phase: "stop-intake", run: async () => clearInterval(alertTimer) },
       {
         name: "metrics-server",
+        phase: "stop-intake",
         run: async () => {
           if (metricsServer) {
             await new Promise<void>((resolve) => metricsServer?.close(() => resolve()));
           }
         },
       },
-      { name: "review-worker", run: async () => (reviewWorker ? stopReviewWorker(reviewWorker) : undefined) },
-      { name: "review-queue", run: async () => clients.reviewQueue.close() },
-      { name: "redis-worker", run: async () => disconnectRedis(workerConnection) },
-      { name: "redis", run: async () => disconnectRedis(clients.redis) },
-      { name: "postgres", run: async () => disconnectPrisma(clients.prisma) },
-      { name: "logger-flush", run: async () => void logger.flush?.() },
-    ]);
+      {
+        name: "review-worker",
+        phase: "drain",
+        run: async () => (reviewWorker ? stopReviewWorker(reviewWorker) : undefined),
+      },
+      { name: "review-queue", phase: "close-connections", run: async () => clients.reviewQueue.close() },
+      { name: "redis-worker", phase: "close-connections", run: async () => disconnectRedis(workerConnection) },
+      { name: "redis", phase: "close-connections", run: async () => disconnectRedis(clients.redis) },
+      { name: "postgres", phase: "close-connections", run: async () => disconnectPrisma(clients.prisma) },
+      { name: "logger-flush", phase: "flush", run: async () => void logger.flush?.() },
+    ];
+  }
+
+  function registerShutdown(): void {
+    const configuredTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS);
+    registerGracefulShutdown(logger, shutdownSteps(), {
+      ...(Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0 ? { timeoutMs: configuredTimeoutMs } : {}),
+    });
   }
 
   return {
@@ -375,20 +397,9 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
         return;
       }
       closed = true;
-      clearInterval(sweepTimer);
-      clearInterval(outboxTimer);
-      clearInterval(reconciliationTimer);
-      clearInterval(alertTimer);
-      if (metricsServer) {
-        await new Promise<void>((resolve) => metricsServer?.close(() => resolve()));
-      }
-      if (reviewWorker) {
-        await stopReviewWorker(reviewWorker);
-      }
-      await clients.reviewQueue.close();
-      await disconnectRedis(workerConnection);
-      await disconnectRedis(clients.redis);
-      await disconnectPrisma(clients.prisma);
+      // Same phase-ordered teardown as SIGTERM/SIGINT: the worker drains before
+      // its queue/Redis/Postgres connections close.
+      await runShutdownSteps(logger, shutdownSteps());
     },
   };
 }

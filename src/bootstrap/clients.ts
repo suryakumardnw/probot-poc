@@ -11,13 +11,14 @@ import {
 } from "../ingestion/index.js";
 import { createIngestionRepositories } from "../ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../ingestion/prisma-ingestion.unit-of-work.js";
-import { createReviewQueue, type ReviewQueue } from "../ingestion/queue.js";
+import { createReviewQueue, type BullMqReviewQueue } from "../ingestion/queue.js";
 import { createLogger } from "../lib/logger.js";
 import { createPrisma } from "../lib/prisma.js";
 import { createRedis } from "../lib/redis.js";
 import { systemClock, type Clock } from "../ports/clock.js";
 import type { Logger } from "../ports/logger.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";
+import type { ReviewQueue } from "../ports/review-queue.js";
 import { createPublishingRepositories } from "../publishing/index.js";
 import type { PublishingRepositories } from "../publishing/publishing.repository.js";
 
@@ -32,7 +33,7 @@ import type { PublishingRepositories } from "../publishing/publishing.repository
 export interface PlatformClients {
   prisma: PrismaClient;
   redis: Redis;
-  reviewQueue: ReviewQueue;
+  reviewQueue: BullMqReviewQueue;
 }
 
 export function createPlatformClients(env: Env): PlatformClients {
@@ -75,7 +76,7 @@ export function createIngestionModule(input: {
     repositories,
     unitOfWork,
     config: input.config,
-    queue: input.queue.queue,
+    queue: input.queue,
     logger: input.logger,
     clock: input.clock ?? systemClock,
   });

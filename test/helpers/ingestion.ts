@@ -7,11 +7,12 @@ import {
 } from "../../src/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
-import { createReviewQueue, type ReviewQueue, type ReviewQueueWriter } from "../../src/ingestion/queue.js";
+import { createReviewQueue, type BullMqReviewQueue } from "../../src/ingestion/queue.js";
 import { createReviewStateService, type ReviewStateService } from "../../src/ingestion/review-state.service.js";
 import { systemClock, type Clock } from "../../src/ports/clock.js";
 import type { Logger } from "../../src/ports/logger.js";
 import type { ReviewConfigStore } from "../../src/ports/review-config.js";
+import type { ReviewQueue } from "../../src/ports/review-queue.js";
 import { prisma } from "./db.js";
 import { testEnv } from "./env.js";
 
@@ -34,7 +35,7 @@ export const silentLogger: Logger = {
 };
 
 export interface TestIngestionOptions {
-  queue?: ReviewQueueWriter;
+  queue?: ReviewQueue;
   config?: ReviewConfigStore;
   logger?: Logger;
   clock?: Clock;
@@ -44,13 +45,13 @@ export interface TestIngestion {
   services: IngestionServices;
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
-  reviewQueue?: ReviewQueue;
+  reviewQueue?: BullMqReviewQueue;
   close(): Promise<void>;
 }
 
 export function createTestIngestion(options: TestIngestionOptions = {}): TestIngestion {
   const reviewQueue = options.queue ? undefined : createReviewQueue(testEnv.REDIS_URL);
-  const queue = options.queue ?? reviewQueue?.queue;
+  const queue = options.queue ?? reviewQueue;
   if (!queue) {
     throw new Error("test ingestion requires a queue");
   }

@@ -6,7 +6,9 @@
  * is reconciled:
  *
  *  1. Identify incomplete review records (non-terminal review state whose
- *     ReviewJob is still pending_outbox / enqueued / processing).
+ *     ReviewJob is pending_outbox / enqueued / processing / failed). The
+ *     `failed` status covers a crash between the job and review failure writes
+ *     and an operator-requeued review; terminal reviews are never scanned.
  *  2. Reconcile durable jobs with queue state (§17.3 step 5).
  *  3. Detect stale worker sessions (no progress for `staleThresholdMs`).
  *  4. Recover or fail incomplete reviews per policy:
@@ -122,12 +124,8 @@ export async function resetReviewForRecovery(unitOfWork: IngestionUnitOfWork, re
     if (currentState === null) {
       throw new Error(`Review '${reviewId}' not found`);
     }
+    // The repository performs the reset and its audit transition atomically.
     await repos.reviews.resetForRecovery(reviewId);
-    await repos.stateTransitions.create({
-      reviewId,
-      fromState: currentState,
-      toState: "queued",
-    });
   });
 }
 
@@ -185,7 +183,10 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
   let jobs: ReviewJobWithReview[];
   try {
     jobs = await repositories.reviewJobs.findIncompleteWithReviews({
-      statuses: ["pending_outbox", "enqueued", "processing"],
+      // `failed` is included on purpose: a durable failure whose review never
+      // reached a terminal state is recoverable. Terminal reviews are filtered
+      // out below, so a processor-exhausted job is never requeued.
+      statuses: ["pending_outbox", "enqueued", "processing", "failed"],
       notInReviewStates: TERMINAL_REVIEW_STATES,
       limit: 200,
     });

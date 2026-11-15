@@ -1061,7 +1061,8 @@ Terminal states cannot be left. Every transition is stored in
 | Invalid config | `configuration_unavailable`, no review |
 | Redis down at enqueue | outbox event stays `pending`; worker retries |
 | Job superseded before processing | `skipped_superseded`, no clone or model call |
-| Clone/fetch/checkout fails | review `failed` with retrieval error code |
+| Clone/fetch/checkout fails | retried per `queue.retry.infrastructure`, then review `failed` with the retrieval error code |
+| Transient worker failure (clone, Redis/Postgres, GitHub 5xx) | BullMQ re-attempts within the configured budget; see `docs/queue-reliability.md` |
 | PR head moved before checkout | `stale_commit`, nothing published |
 | Empty diff | `empty_diff`, no model call |
 | Agent/provider unavailable | review `failed` immediately; no retry, no model switch |

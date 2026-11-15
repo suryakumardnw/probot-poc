@@ -30,17 +30,17 @@ one Postgres/Redis instance and truncates fixture tables between tests.
 
 ## Coverage map
 
-| File                        | Public boundary                                                                                                        | Design requirement                                                                                                                                                                                                                                 | Extends                                                                                                                               |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `webhook-ingestion.test.ts` | Probot `receive` → ingestion/orchestrator rows and BullMQ                                                              | Webhook ingestion (`opened`, `synchronize`, `ready_for_review`, manual `/review`, unsupported action, bot author, draft PR), duplicate delivery and review identity (§4, §4.1, §4.4, §12.1, §12.3, §13.1)                                          | `test/review-ingestion.test.ts`                                                                                                       |
-| `review-state.test.ts`      | `transitionReviewState` + Review/ReviewStateTransition rows                                                            | Every allowed transition, every invalid transition, idempotent same-state move, terminal states reject further moves (§4.3)                                                                                                                        | `test/review-ingestion.test.ts` (state-machine block), `test/recovery.test.ts` (`resetReviewForRecovery`)                             |
-| `outbox.test.ts`            | `publishOutboxEvent` / `recoverOutbox` + real BullMQ queue + OutboxEvent/ReviewJob rows                                | Redis available publishes, Redis unavailable leaves pending, second publish is idempotent, superseded job discarded, recovery drains pending events (§12.2)                                                                                        | `test/review-ingestion.test.ts` (`transactional outbox recovery`, `outbox publish ordering`)                                          |
-| `queue-retry.test.ts`       | `classifyFailure` / `retryPolicyFor`, outbox enqueue options, `processReviewJob`, `reconcileIncompleteReviews`         | Policy only (classification marks retryable/non-retryable); BullMQ execution is a gap (PR 2.8). Attempts/backoff metadata, reconciliation re-enqueue, exhausted job ends failed (§12.4, §17.3)                                                     | `test/observability.test.ts` (retry policy), `test/review-workspace.test.ts` (worker processor), `test/recovery.test.ts` (exhaustion) |
-| `findings.test.ts`          | `persistReviewFindings` / `getFindingsForReview` / `supersedeFindingsForReview` + Finding/FindingStatusTransition rows | Persist, fingerprint dedupe, supersede, lifecycle transition, transaction rollback leaves no partial rows (§7.1–§7.3, §13.1)                                                                                                                       | `test/findings.test.ts`                                                                                                               |
-| `publishing.test.ts`        | `publishReview` with an injected Octokit + ReviewComment rows                                                          | Stale head rejects publication, invalid inline position falls back to summary, duplicate summary/comments are not re-published, worker death after `createReview` retries without duplicates, GitHub 5xx retries, 4xx does not (§4.4, §7.4, §13.1) | `test/publishing.test.ts`                                                                                                             |
-| `admin-auth.test.ts`        | `createAdminApi` HTTP handler (+ `setGithubFetch`) + AuditLog rows                                                     | OAuth state/CSRF, session cookie, org membership, allowlist vs role policy, rate limit, audit row, unauthenticated/forbidden responses (§14.2, §15)                                                                                                | `test/admin-api.test.ts`                                                                                                              |
-| `worker-shutdown.test.ts`   | `registerGracefulShutdown` child process + real BullMQ worker with `stopReviewWorker`                                  | SIGTERM helper waits for an active step within the deadline; forced timeout does not acknowledge unfinished work; `stopReviewWorker` waits for a real active job (§12.4, §17.3)                                                                    | `test/logger.test.ts` (`registerGracefulShutdown` registration smoke test)                                                            |
-| `triage.test.ts`            | Probot `issues.opened` handler + global fetch transport                                                                | `issues.opened` posts a comment, bot issues are skipped, provider failure is logged without crashing the webhook (§1.2, §6.7)                                                                                                                      | `test/index.test.ts`                                                                                                                  |
+| File                        | Public boundary                                                                                                                            | Design requirement                                                                                                                                                                                                                                         | Extends                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `webhook-ingestion.test.ts` | Probot `receive` → ingestion/orchestrator rows and BullMQ                                                                                  | Webhook ingestion (`opened`, `synchronize`, `ready_for_review`, manual `/review`, unsupported action, bot author, draft PR), duplicate delivery and review identity (§4, §4.1, §4.4, §12.1, §12.3, §13.1)                                                  | `test/review-ingestion.test.ts`                                                                                                       |
+| `review-state.test.ts`      | `transitionReviewState` + Review/ReviewStateTransition rows                                                                                | Every allowed transition, every invalid transition, idempotent same-state move, terminal states reject further moves (§4.3)                                                                                                                                | `test/review-ingestion.test.ts` (state-machine block), `test/recovery.test.ts` (`resetReviewForRecovery`)                             |
+| `outbox.test.ts`            | `publishOutboxEvent` / `recoverOutbox` + real BullMQ queue + OutboxEvent/ReviewJob rows                                                    | Redis available publishes, Redis unavailable leaves pending, second publish is idempotent, superseded job discarded, recovery drains pending events (§12.2)                                                                                                | `test/review-ingestion.test.ts` (`transactional outbox recovery`, `outbox publish ordering`)                                          |
+| `queue-retry.test.ts`       | `classifyFailure` / `retryPolicyFor`, outbox enqueue options, real BullMQ worker retries, `processReviewJob`, `reconcileIncompleteReviews` | Policy marks transient/permanent failures; outbox passes attempts/backoff; BullMQ executes retries (transient retried, permanent not); durable retry decision; failed-job recovery and exhaustion (§12.4, §17.3)                                           | `test/observability.test.ts` (retry policy), `test/review-workspace.test.ts` (worker processor), `test/recovery.test.ts` (exhaustion) |
+| `findings.test.ts`          | `persistReviewFindings` / `getFindingsForReview` / `supersedeFindingsForReview` + Finding/FindingStatusTransition rows                     | Persist, fingerprint dedupe, supersede, lifecycle transition, transaction rollback leaves no partial rows (§7.1–§7.3, §13.1)                                                                                                                               | `test/findings.test.ts`                                                                                                               |
+| `publishing.test.ts`        | `publishReview` with an injected Octokit + ReviewComment rows                                                                              | Stale head rejects publication, invalid inline position falls back to summary, duplicate summary/comments are not re-published, worker death after `createReview` retries without duplicates, GitHub 5xx retries, 4xx does not (§4.4, §7.4, §13.1)         | `test/publishing.test.ts`                                                                                                             |
+| `admin-auth.test.ts`        | `createAdminApi` HTTP handler (+ `setGithubFetch`) + AuditLog rows                                                                         | OAuth state/CSRF, session cookie, org membership, allowlist vs role policy, rate limit, audit row, unauthenticated/forbidden responses (§14.2, §15)                                                                                                        | `test/admin-api.test.ts`                                                                                                              |
+| `worker-shutdown.test.ts`   | `registerGracefulShutdown` child process + real BullMQ worker with `stopReviewWorker` + `orderShutdownSteps`                               | SIGTERM helper waits for an active step within the deadline; forced timeout does not acknowledge unfinished work; worker drains before connection teardown; an active attempt that fails transiently during shutdown is retried, never lost (§12.4, §17.3) | `test/logger.test.ts` (`registerGracefulShutdown` registration smoke test)                                                            |
+| `triage.test.ts`            | Probot `issues.opened` handler + global fetch transport                                                                                    | `issues.opened` posts a comment, bot issues are skipped, provider failure is logged without crashing the webhook (§1.2, §6.7)                                                                                                                              | `test/index.test.ts`                                                                                                                  |
 
 ## Per-test / per-describe map
 
@@ -75,12 +75,17 @@ one Postgres/Redis instance and truncates fixture tables between tests.
 
 ### `queue-retry.test.ts`
 
-- `retry policy from configuration > the configured policy marks transient failures as retryable` — **policy only**; exported `classifyFailure`/`retryPolicyFor`. No BullMQ job is enqueued or retried; execution is the PR 2.8 gap.
-- `retry policy from configuration > the configured policy marks permanent failures as non-retryable` — **policy only**; same caveat.
-- `retry policy from configuration > the outbox enqueues with the configured attempts and backoff` — queue options visible to BullMQ.
-- `job exhaustion (§12.4, §17.3) > reconciliation re-enqueues a stale transient failure …` — working reconciliation retry path.
-- `job exhaustion (§12.4, §17.3) > reconciliation fails a stale review once … exhausted` — exhausted job ends failed.
-- `job exhaustion (§12.4, §17.3) > a failing processing attempt leaves the durable job failed …` — first-attempt terminal state; documents the production gap.
+- `retry policy from configuration > the configured policy marks transient failures as retryable` — exported `classifyFailure`/`retryPolicyFor`; classification marks transient classes retryable.
+- `retry policy from configuration > the configured policy marks permanent failures as non-retryable` — permanent classes fail without retrying.
+- `retry policy from configuration > the outbox enqueues with the configured attempts and backoff` — queue options visible to the `ReviewQueue` port.
+- `worker retry execution > a transient failure is retried by BullMQ and the review completes` — a real worker retries a clone failure once and the second attempt succeeds.
+- `worker retry execution > a permanent failure fails once without consuming the retry budget` — invalid model output ends failed on attempt 1.
+- `durable retry decisions > a transient attempt with budget remaining rethrows and stays claimable` — `ReviewJobRetryError`, job stays `processing`, review reset to `queued`.
+- `durable retry decisions > the final transient attempt fails the job and review with retry_exhausted` — last attempt terminates with a stable code.
+- `durable retry decisions > a permanent failure fails the job and review on the first attempt` — no retry budget consumed.
+- `failed-job recovery > reconciliation requeues a failed durable job whose review is not terminal` — failed jobs are recoverable when work remains.
+- `failed-job recovery > reconciliation fails a failed job once its attempt budget is exhausted` — `recovery_exhausted`.
+- `failed-job recovery > a terminal failed review is never requeued by reconciliation` — no duplicate/replayed work.
 
 ### `findings.test.ts`
 
@@ -113,9 +118,11 @@ one Postgres/Redis instance and truncates fixture tables between tests.
 
 ### `worker-shutdown.test.ts`
 
+- `shutdown phase ordering > the worker drains before queue/Redis/Postgres connections close` — phase ordering is independent of array order.
 - `graceful shutdown helper (synthetic active step) > SIGTERM during an active job …` — helper waits for the synthetic active step before exit 0.
 - `graceful shutdown helper (synthetic active step) > a deadline breach forces exit …` — helper timeout does not acknowledge unfinished work.
 - `real BullMQ worker drain > stopReviewWorker waits for a real active job …` — a real BullMQ worker picks up an enqueued job, the processor blocks, `stopReviewWorker` does not resolve until the job completes; the durable job ends `completed`.
+- `real BullMQ worker retry during shutdown > SIGTERM while an active attempt fails transiently …` — the retry is scheduled as `delayed`, the durable job stays claimable, and a restarted worker completes it.
 
 ### `triage.test.ts`
 
@@ -135,46 +142,35 @@ one Postgres/Redis instance and truncates fixture tables between tests.
   (global `fetch`) or through the production `setGithubFetch` seam. No test
   reaches the network.
 
-## Known gaps and production findings
+## Known gaps
 
 These flows could not be exercised end-to-end without adding a production seam,
 which PR 0.4 forbids. They are tested through the closest existing public
 boundary and must be revisited when the relevant module is moved.
 
-1. **Known production gap (deferred to PR 2.8): BullMQ retry execution is not
-   wired.** `processReviewJob` records the retry decision in structured logs but
-   resolves `"failed"` instead of rethrowing, and it immediately marks both the
-   review and the durable `ReviewJob` `failed`. BullMQ therefore treats the run
-   as successful and never applies the configured `attempts`/`backoff`; failed
-   durable jobs are also not picked up by reconciliation (it scans only
-   `pending_outbox`/`enqueued`/`processing`). The queue-level retry
-   configuration is currently metadata only. This is a **production finding**,
-   not merely a test gap, and is explicitly out of scope for this tests-only PR.
-   `queue-retry.test.ts` pins the policy decisions, outbox options, the working
-   reconciliation re-enqueue path, and first-attempt failure; it does **not**
-   claim that a transient failure is re-attempted by BullMQ. PR 2.8 should fix
-   the worker contract and update these assertions.
-2. **Full worker process shutdown.** `src/worker.ts` boots the agent runtime,
+1. **Full worker process shutdown.** `src/worker.ts` boots the agent runtime,
    workspace service, knowledge cache, metrics server and BullMQ worker.
    Starting that whole process in a test would require real provider/agent
-   wiring. The suite covers the shared shutdown helper in a child process and a
-   real BullMQ worker draining a real active job; the worker's concrete step
-   list and ordering are still not asserted here.
-3. **Real Redis outage for the outbox.** `outbox.test.ts` simulates an
-   unavailable Redis by injecting a failing `Queue` through the exported
-   `publishOutboxEvent(eventId, queue)` parameter. The existing
-   `test/review-ingestion.test.ts` performs the real container stop/start.
-4. **Admin auth stores are process-local.** OAuth states, sessions and rate-limit
+   wiring. The suite covers the shared shutdown helper in a child process, the
+   phase ordering used by the worker composition root, and a real BullMQ worker
+   draining a real active job. The concrete worker step list is still assembled
+   by `createWorkerRuntime`; `orderShutdownSteps` guarantees the drain-before-
+   connections contract it relies on.
+2. **Real Redis outage for the outbox.** `outbox.test.ts` simulates an
+   unavailable Redis by injecting a failing `ReviewQueue` port through
+   `createTestIngestion`. The existing `test/review-ingestion.test.ts` performs
+   the real container stop/start.
+3. **Admin auth stores are process-local.** OAuth states, sessions and rate-limit
    buckets are in-memory maps. The tests use the exports intended for lifecycle
    management (`clearOauthStates`, `clearSessions`, `clearRateLimitBuckets`)
    rather than adding a new storage seam.
-5. **Findings transaction rollback.** Rollback is induced with a real unique-key
+4. **Findings transaction rollback.** Rollback is induced with a real unique-key
    conflict inside the transaction, not a database outage; the assertion (no
    partial finding or transition rows) is the same externally visible contract.
-6. **GitHub publication transport.** `publishReview` is driven through its
+5. **GitHub publication transport.** `publishReview` is driven through its
    public injectable Octokit parameter, not a live GitHub API. Retry/fallback
    semantics are asserted from the calls GitHub would have received.
-7. **Triage provider.** The LLM is stubbed at the fetch boundary; provider
+6. **Triage provider.** The LLM is stubbed at the fetch boundary; provider
    success and failure are real code paths in `llm.service`, but no real model
    is called.
 

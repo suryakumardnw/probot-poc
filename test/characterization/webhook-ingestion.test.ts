@@ -104,7 +104,7 @@ const jsonResponse = (data: unknown, status = 200): Response =>
 let captured: CapturedRequest[] = [];
 
 const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
-const ingestion = createTestIngestion({ queue: reviewQueue.queue });
+const ingestion = createTestIngestion({ queue: reviewQueue });
 const testApp = createApp({
   ingestion: ingestion.services,
   ingestionRepositories: ingestion.repositories,

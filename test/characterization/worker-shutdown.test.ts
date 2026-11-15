@@ -9,9 +9,10 @@ import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
 import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/ingestion/queue.js";
 import { disconnectRedis } from "../../src/lib/redis.js";
+import { orderShutdownSteps } from "../../src/lib/shutdown.js";
 import { NullTokenProvider } from "../../src/workspace/credentials.js";
 import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
-import { ReviewWorkspaceService, type WorkspaceResult } from "../../src/workspace/workspace.js";
+import { ReviewRetrievalError, ReviewWorkspaceService, type WorkspaceResult } from "../../src/workspace/workspace.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestReviewState, silentLogger } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
@@ -124,6 +125,28 @@ afterAll(async () => {
   await reviewQueue.close();
   await cleanDatabase();
   await disconnectDatabase();
+});
+
+describe("shutdown phase ordering", () => {
+  test("the worker drains before queue/Redis/Postgres connections close", () => {
+    const ordered = orderShutdownSteps([
+      { name: "postgres", phase: "close-connections", run: async () => {} },
+      { name: "redis", phase: "close-connections", run: async () => {} },
+      { name: "review-queue", phase: "close-connections", run: async () => {} },
+      { name: "review-worker", phase: "drain", run: async () => {} },
+      { name: "metrics-server", phase: "stop-intake", run: async () => {} },
+      { name: "logger-flush", phase: "flush", run: async () => {} },
+    ]);
+
+    expect(ordered.map((step) => step.name)).toEqual([
+      "metrics-server",
+      "review-worker",
+      "postgres",
+      "redis",
+      "review-queue",
+      "logger-flush",
+    ]);
+  });
 });
 
 describe("graceful shutdown helper (synthetic active step)", () => {
@@ -249,6 +272,139 @@ describe("real BullMQ worker drain", () => {
     } finally {
       releasePrepare();
       await stopPromise?.catch(() => {});
+      await stopReviewWorker(worker).catch(() => {});
+      await disconnectRedis(workerConnection);
+      await queueJob.remove().catch(() => {});
+    }
+  }, 30_000);
+});
+
+describe("real BullMQ worker retry during shutdown", () => {
+  test("SIGTERM while an active attempt fails transiently schedules the retry instead of losing it", async () => {
+    const chain = await seedReviewChain({
+      prefix: "shutdown-retry",
+      state: "queued",
+      job: { status: "enqueued" },
+    });
+    if (!chain.jobId) {
+      throw new Error("seeded review chain is missing its job id");
+    }
+
+    let prepareCalls = 0;
+    let prepareStarted!: () => void;
+    const prepareStartedPromise = new Promise<void>((resolve) => {
+      prepareStarted = resolve;
+    });
+    let releasePrepare!: () => void;
+    const releasePreparePromise = new Promise<void>((resolve) => {
+      releasePrepare = resolve;
+    });
+    const service = {
+      prepare: async (): Promise<WorkspaceResult> => {
+        prepareCalls += 1;
+        if (prepareCalls === 1) {
+          prepareStarted();
+          await releasePreparePromise;
+          throw new ReviewRetrievalError("git clone failed: transient network reset", "clone_failed");
+        }
+        return {
+          workspacePath: "/tmp/characterization-shutdown-retry",
+          headSha: chain.headSha,
+          baseSha: null,
+          mergeBaseSha: null,
+          diff: "",
+          changedFiles: [],
+        };
+      },
+      cleanupAfterReview: async () => {},
+      cleanupAfterFailure: async () => {},
+    } as unknown as ReviewWorkspaceService;
+
+    const workerConnection = createWorkerConnection(testEnv.REDIS_URL);
+    const worker = startReviewWorker(workerConnection, {
+      repositories: createIngestionRepositories(prisma),
+      service,
+      logger: silentLogger,
+      transitionReviewState,
+      concurrency: 1,
+    });
+    await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
+
+    const payload: ReviewJobPayload = {
+      reviewId: chain.reviewId,
+      jobKey: chain.jobKey!,
+      githubInstallationId: String(chain.githubInstallationId),
+      githubRepositoryId: String(chain.githubRepositoryId),
+      repositoryFullName: chain.repositoryFullName,
+      pullRequestNumber: 101,
+      headSha: chain.headSha,
+      baseSha: null,
+      reviewMode: "adaptive",
+      reviewType: "standard",
+      trigger: "opened",
+    };
+    const queueJob = await queue.add("review", payload, {
+      jobId: chain.jobId,
+      attempts: 3,
+      backoff: { type: "fixed", delay: 60_000 },
+    });
+
+    let stopPromise: Promise<void> | undefined;
+    let retryWorker: ReturnType<typeof startReviewWorker> | undefined;
+    let retryConnection: ReturnType<typeof createWorkerConnection> | undefined;
+    try {
+      const active = once(worker, "active");
+      await active;
+      await prepareStartedPromise;
+
+      stopPromise = stopReviewWorker(worker);
+      // The worker is draining the blocked attempt; the job is not acknowledged
+      // early and not abandoned.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await queueJob.getState()).toBe("active");
+
+      releasePrepare();
+      await stopPromise;
+
+      // The transient failure was scheduled for retry, not recorded as success
+      // or as a terminal failure.
+      expect(await queueJob.getState()).toBe("delayed");
+      const failedJob = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+      expect(failedJob.status).toBe("processing");
+      expect(failedJob.attempts).toBe(1);
+      expect(failedJob.lastError).toContain("clone failed");
+      const failedReview = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+      expect(failedReview.state).toBe("queued");
+      expect(failedReview.errorCode).toBeNull();
+
+      // A restarted worker picks the same queue job up: the retry completes.
+      await queueJob.promote();
+      retryConnection = createWorkerConnection(testEnv.REDIS_URL);
+      retryWorker = startReviewWorker(retryConnection, {
+        repositories: createIngestionRepositories(prisma),
+        service,
+        logger: silentLogger,
+        transitionReviewState,
+        concurrency: 1,
+      });
+      const completed = once(retryWorker, "completed");
+      await retryWorker.waitUntilReady();
+      await completed;
+
+      expect(prepareCalls).toBe(2);
+      expect(await queueJob.getState()).toBe("completed");
+      const completedJob = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+      expect(completedJob.status).toBe("completed");
+      expect(completedJob.attempts).toBe(2);
+    } finally {
+      releasePrepare();
+      await stopPromise?.catch(() => {});
+      if (retryWorker) {
+        await stopReviewWorker(retryWorker).catch(() => {});
+      }
+      if (retryConnection) {
+        await disconnectRedis(retryConnection);
+      }
       await stopReviewWorker(worker).catch(() => {});
       await disconnectRedis(workerConnection);
       await queueJob.remove().catch(() => {});

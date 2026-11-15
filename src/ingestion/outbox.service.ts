@@ -2,10 +2,10 @@ import { ERROR_CODES } from "../contracts/errors.js";
 import { outboxPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
 import type { Logger } from "../ports/logger.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";
+import type { ReviewQueue } from "../ports/review-queue.js";
 import { AppError, ValidationError } from "../shared/errors/index.js";
 import type { OutboxEventRecord } from "./ingestion.repository.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
-import type { ReviewQueueWriter } from "./queue.js";
 
 /**
  * Transactional outbox publisher (ARCHITECTURE.md §12.2).
@@ -71,8 +71,8 @@ export type OutboxServiceDependencies = {
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
   config: ReviewConfigStore;
-  /** Durable BullMQ queue bound by the composition root. */
-  queue: ReviewQueueWriter;
+  /** Review queue bound by the composition root (BullMQ today). */
+  queue: ReviewQueue;
   logger: Logger;
 };
 
@@ -116,12 +116,10 @@ export function createOutboxService(deps: OutboxServiceDependencies): OutboxServ
 
       const queueJob = await (async () => {
         try {
-          return await deps.queue.add("review", payload, {
+          return await deps.queue.enqueue(payload, {
             jobId: job.id, // idempotent: same ReviewJob.id never enqueued twice
             attempts: retry.attempts,
             backoff: retry.backoff,
-            removeOnComplete: 1000,
-            removeOnFail: 5000,
           });
         } catch (error) {
           // Publish failed (e.g. Redis down): restore the durable pre-publish

@@ -558,9 +558,22 @@ export function createReviewRepository(client: PrismaDatabaseClient): ReviewRepo
     },
 
     async resetForRecovery(reviewId: string): Promise<void> {
-      await client.review.update({
-        where: { id: reviewId },
-        data: { state: "queued", errorCode: null, errorMessage: null },
+      await runInTransaction(client, async (tx) => {
+        const current = await tx.review.findUnique({
+          where: { id: reviewId },
+          select: { state: true },
+        });
+        if (!current) {
+          throw new Error(`Review '${reviewId}' not found`);
+        }
+        await tx.review.update({
+          where: { id: reviewId },
+          data: { state: "queued", errorCode: null, errorMessage: null },
+        });
+        // Recovery is the one sanctioned backward move; keep the audit trail.
+        await tx.reviewStateTransition.create({
+          data: { reviewId, fromState: current.state, toState: "queued" },
+        });
       });
     },
 
@@ -628,6 +641,13 @@ export function createReviewJobRepository(client: PrismaDatabaseClient): ReviewJ
     async markFailed(reviewJobId: string, lastError: string): Promise<void> {
       await client.reviewJob.update({
         where: { id: reviewJobId },
+        data: { status: "failed", lastError },
+      });
+    },
+
+    async markFailedUnlessTerminal(reviewJobId: string, lastError: string): Promise<void> {
+      await client.reviewJob.updateMany({
+        where: { id: reviewJobId, status: { notIn: ["completed", "failed", "superseded"] } },
         data: { status: "failed", lastError },
       });
     },

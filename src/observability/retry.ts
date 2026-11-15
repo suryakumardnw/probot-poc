@@ -19,6 +19,8 @@
  */
 
 import type { ReviewConfig } from "../config/review-schema.js";
+import { ERROR_CODES } from "../contracts/errors.js";
+import { AppError, classifyAppFailure } from "../shared/errors/index.js";
 
 export type FailureClass =
   | "github_api_transient"
@@ -226,4 +228,61 @@ export function retryPolicyFor(
     case "unknown":
       return NO_RETRY("Unclassified failure: fail immediately rather than retry blindly");
   }
+}
+
+export interface QueueFailureDecision {
+  /** §12.4 failure class (metrics and structured logs). */
+  failureClass: FailureClass;
+  /** Whether BullMQ may re-attempt the job. */
+  retryable: boolean;
+  /** Total attempt budget; `1` when the failure is terminal. */
+  maxAttempts: number;
+  backoff: "fixed" | "exponential";
+  /** Stable code recorded on the durable failure. */
+  errorCode: string;
+  /** Human-readable rationale for the structured failure log. */
+  reason: string;
+}
+
+/**
+ * One retry decision at the worker boundary.
+ *
+ * Two existing classifiers are authoritative for different error families and
+ * must not be re-implemented here:
+ *
+ *  - `classifyAppFailure` owns every `AppError` (the shared HTTP/queue/outbox
+ *    family): its `retryable` flag decides whether the failure may be retried.
+ *  - `classifyFailure`/`retryPolicyFor` own operational errors outside that
+ *    family (`ReviewRetrievalError`, `AgentRuntimeError`, unknown throws) and
+ *    supply the §12.4 failure class plus the configuration-driven budget.
+ *
+ * An `AppError` is retried only when both layers agree: the error is explicitly
+ * transient *and* the checked-in configuration permits an infrastructure retry.
+ * Everything else is terminal, matching the "unknown internal errors are not
+ * retried" rule in design §6.9.
+ */
+export function classifyQueueFailure(input: {
+  error: unknown;
+  /** Normalized code carried by non-AppError runtime/retrieval failures. */
+  errorCode?: string | null;
+  message: string;
+  policy?: RetryPolicyConfig;
+}): QueueFailureDecision {
+  const policy = input.policy ?? DEFAULT_RETRY_POLICY_CONFIG;
+  const appFailure = classifyAppFailure(input.error, "queue");
+  const errorCode = input.errorCode ?? (input.error instanceof AppError ? appFailure.code : ERROR_CODES.INTERNAL_ERROR);
+  const failureClass = classifyFailure({ errorCode, message: input.message });
+  const policyDecision = retryPolicyFor(failureClass, policy);
+  const retryable =
+    input.error instanceof AppError ? appFailure.disposition === "retry" && policyDecision.retry : policyDecision.retry;
+
+  return {
+    failureClass,
+    retryable,
+    maxAttempts: retryable ? policyDecision.maxAttempts : 1,
+    backoff: retryable ? policyDecision.backoff : "fixed",
+    errorCode,
+    reason:
+      input.error instanceof AppError ? `${appFailure.reason}; ${policyDecision.rationale}` : policyDecision.rationale,
+  };
 }

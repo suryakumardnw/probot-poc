@@ -183,7 +183,7 @@ async function receiveDelivery(
  */
 const healthRedis = createRedis(testEnv);
 let reviewQueue = createReviewQueue(testEnv.REDIS_URL);
-let ingestion = createTestIngestion({ queue: reviewQueue.queue });
+let ingestion = createTestIngestion({ queue: reviewQueue });
 
 function makeTestApp() {
   return createApp({
@@ -212,7 +212,7 @@ async function ensureQueueReady(timeoutMs = 10_000): Promise<void> {
     if (status === "end" || status === "close") {
       await reviewQueue.close().catch(() => {});
       reviewQueue = createReviewQueue(testEnv.REDIS_URL);
-      ingestion = createTestIngestion({ queue: reviewQueue.queue });
+      ingestion = createTestIngestion({ queue: reviewQueue });
       testApp = makeTestApp();
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -854,12 +854,13 @@ describe("outbox publish ordering", () => {
     const { jobId, eventId } = await seedPendingJob();
     const statusAtAdd: string[] = [];
     const queue = {
-      add: async (_name: string, _payload: ReviewJobPayload, opts: { jobId?: string } = {}) => {
+      enqueue: async (_payload: ReviewJobPayload, opts: { jobId?: string } = {}) => {
         const row = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
         statusAtAdd.push(row.status);
         expect(opts.jobId).toBe(jobId);
         return { id: jobId };
       },
+      close: async () => {},
     };
 
     await expect(createTestIngestion({ queue }).services.publishOutboxEvent(eventId)).resolves.toBe("published");
@@ -876,9 +877,10 @@ describe("outbox publish ordering", () => {
   test("restores pending_outbox and leaves the event pending when publish fails", async () => {
     const { jobId, eventId } = await seedPendingJob();
     const queue = {
-      add: async () => {
+      enqueue: async () => {
         throw new Error("connect ECONNREFUSED 127.0.0.1:6379");
       },
+      close: async () => {},
     };
 
     await expect(createTestIngestion({ queue }).services.publishOutboxEvent(eventId)).resolves.toBe("failed");

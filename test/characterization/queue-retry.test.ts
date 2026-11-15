@@ -1,42 +1,102 @@
-import type { Queue } from "bullmq";
+import { once } from "node:events";
+import { UnrecoverableError, type Queue } from "bullmq";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { AgentRuntimeError } from "../../src/agent/types.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/config/review-loader.js";
 import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
-import type { ReviewJobPayload } from "../../src/ingestion/queue.js";
+import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/ingestion/queue.js";
+import { disconnectRedis } from "../../src/lib/redis.js";
 import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/observability/retry.js";
 import { reconcileIncompleteReviews } from "../../src/recovery/reconciliation.js";
-import { processReviewJob } from "../../src/workspace/processor.js";
-import type { ReviewWorkspaceService } from "../../src/workspace/workspace.js";
+import {
+  ReviewJobRetryError,
+  processReviewJob,
+  startReviewWorker,
+  stopReviewWorker,
+} from "../../src/workspace/processor.js";
+import {
+  ReviewRetrievalError,
+  type ReviewWorkspaceService,
+  type WorkspaceResult,
+} from "../../src/workspace/workspace.js";
+import { testEnv } from "../helpers/env.js";
 import { createTestIngestion, createTestReviewState, silentLogger } from "../helpers/ingestion.js";
-import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
+import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, type SeededReviewChain } from "./support.js";
 
 /**
- * Characterization: queue retry policy (ARCHITECTURE.md §12.4).
+ * Characterization: queue retry policy and execution (ARCHITECTURE.md §12.4,
+ * §17.3).
  *
- * Three boundaries are pinned:
+ * Four boundaries are pinned:
  *  1. the exported policy marks failure classes retryable or terminal;
- *  2. the outbox passes the configured attempts/backoff to BullMQ;
- *  3. an exhausted durable job ends `failed`.
- *
- * POLICY ONLY: the two policy tests below call the exported classifier/policy
- * functions directly. They do not enqueue or observe a retried BullMQ job.
- * Worker retry execution is a known production gap deferred to PR 2.8; see
- * test/characterization/README.md.
+ *  2. the outbox passes the configured attempts/backoff to the queue port;
+ *  3. the real BullMQ worker applies the retry budget: transient failures are
+ *     re-attempted, permanent failures are not;
+ *  4. exhausted/stuck durable jobs are either recovered by reconciliation
+ *     (non-terminal review, attempts remain) or failed with a stable code.
  */
+
+const repositories = createIngestionRepositories(prisma);
+const unitOfWork = createIngestionUnitOfWork(prisma);
+const reviewQueue = createReviewQueue(testEnv.REDIS_URL);
+const queue = reviewQueue.queue;
+
+const retryPolicy = {
+  infrastructure: { enabled: true, maxAttempts: 3, backoff: "exponential" as const },
+  providerUnavailable: { enabled: false },
+};
 
 async function ageJobRow(jobId: string): Promise<void> {
   await prisma.$executeRaw`UPDATE review_jobs SET updated_at = now() - interval '30 minutes' WHERE id = ${jobId}`;
 }
 
-const repositories = createIngestionRepositories(prisma);
-const unitOfWork = createIngestionUnitOfWork(prisma);
+async function clearQueuedJobs(): Promise<void> {
+  await queue.waitUntilReady();
+  const jobs = await queue.getJobs(["waiting", "paused", "delayed", "failed", "completed"]);
+  await Promise.all(jobs.map((job) => job.remove().catch(() => {})));
+}
+
+function payloadFor(chain: SeededReviewChain): ReviewJobPayload {
+  if (!chain.jobId || !chain.jobKey) {
+    throw new Error("seeded review chain is missing its job identity");
+  }
+  return {
+    reviewId: chain.reviewId,
+    jobKey: chain.jobKey,
+    githubInstallationId: String(chain.githubInstallationId),
+    githubRepositoryId: String(chain.githubRepositoryId),
+    repositoryFullName: chain.repositoryFullName,
+    pullRequestNumber: 101,
+    headSha: chain.headSha,
+    baseSha: null,
+    reviewMode: "adaptive",
+    reviewType: "standard",
+    trigger: "opened",
+  };
+}
+
+function workspaceResult(headSha: string): WorkspaceResult {
+  return {
+    workspacePath: "/tmp/characterization-queue-retry",
+    headSha,
+    baseSha: null,
+    mergeBaseSha: null,
+    diff: "",
+    changedFiles: [],
+  };
+}
+
+const reviewState = createTestReviewState();
 
 beforeEach(async () => {
   await cleanDatabase();
+  await clearQueuedJobs();
 });
 
 afterAll(async () => {
+  await clearQueuedJobs();
+  await reviewQueue.close();
   await cleanDatabase();
   await disconnectDatabase();
 });
@@ -97,10 +157,11 @@ describe("retry policy from configuration (§12.4)", () => {
     });
     const added: Array<{ opts: { attempts?: number; backoff?: { type: string; delay: number } } }> = [];
     const capturingQueue = {
-      add: async (_name: string, _payload: ReviewJobPayload, opts: { attempts?: number; backoff?: unknown } = {}) => {
+      enqueue: async (_payload: ReviewJobPayload, opts: { attempts?: number; backoff?: unknown } = {}) => {
         added.push({ opts: opts as { attempts?: number; backoff?: { type: string; delay: number } } });
         return { id: chain.jobId };
       },
+      close: async () => {},
     };
 
     await expect(
@@ -113,22 +174,263 @@ describe("retry policy from configuration (§12.4)", () => {
   });
 });
 
-describe("job exhaustion (§12.4, §17.3)", () => {
-  test("reconciliation re-enqueues a stale transient failure when attempts remain", async () => {
+describe("worker retry execution (§12.4)", () => {
+  test("a transient failure is retried by BullMQ and the review completes", async () => {
     const chain = await seedReviewChain({
-      prefix: "retry-transient",
+      prefix: "retry-transient-worker",
+      state: "queued",
+      job: { status: "enqueued" },
+    });
+    if (!chain.jobId) {
+      throw new Error("seeded review chain is missing its job id");
+    }
+
+    let prepareCalls = 0;
+    const service = {
+      prepare: async (): Promise<WorkspaceResult> => {
+        prepareCalls += 1;
+        if (prepareCalls === 1) {
+          throw new ReviewRetrievalError("git clone failed: transient network reset", "clone_failed");
+        }
+        return workspaceResult(chain.headSha);
+      },
+      cleanupAfterReview: async () => {},
+      cleanupAfterFailure: async () => {},
+    } as unknown as ReviewWorkspaceService;
+
+    const connection = createWorkerConnection(testEnv.REDIS_URL);
+    const worker = startReviewWorker(connection, {
+      repositories,
+      service,
+      logger: silentLogger,
+      transitionReviewState: reviewState.transitionReviewState,
+      concurrency: 1,
+      retryPolicy,
+    });
+    const failedAttempts: number[] = [];
+    worker.on("failed", (job) => {
+      failedAttempts.push(job?.attemptsMade ?? -1);
+    });
+    await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
+
+    const completed = once(worker, "completed");
+    const queueJob = await queue.add("review", payloadFor(chain), {
+      jobId: chain.jobId,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 25 },
+    });
+
+    try {
+      await completed;
+      // BullMQ re-attempted exactly once and the second attempt succeeded.
+      expect(failedAttempts).toEqual([1]);
+      expect(prepareCalls).toBe(2);
+      expect(await queueJob.getState()).toBe("completed");
+
+      const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+      expect(job.status).toBe("completed");
+      // One increment per processing attempt, including the failed one.
+      expect(job.attempts).toBe(2);
+      const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+      expect(review.state).toBe("analyzing");
+      expect(review.errorCode).toBeNull();
+    } finally {
+      await queueJob.remove().catch(() => {});
+      await stopReviewWorker(worker).catch(() => {});
+      await disconnectRedis(connection);
+    }
+  }, 30_000);
+
+  test("a permanent failure fails once without consuming the retry budget", async () => {
+    const chain = await seedReviewChain({
+      prefix: "retry-permanent-worker",
+      state: "queued",
+      job: { status: "enqueued" },
+    });
+    if (!chain.jobId) {
+      throw new Error("seeded review chain is missing its job id");
+    }
+
+    let prepareCalls = 0;
+    const service = {
+      prepare: async (): Promise<WorkspaceResult> => {
+        prepareCalls += 1;
+        throw new AgentRuntimeError("invalid_output", "model returned invalid JSON");
+      },
+      cleanupAfterReview: async () => {},
+      cleanupAfterFailure: async () => {},
+    } as unknown as ReviewWorkspaceService;
+
+    const connection = createWorkerConnection(testEnv.REDIS_URL);
+    const worker = startReviewWorker(connection, {
+      repositories,
+      service,
+      logger: silentLogger,
+      transitionReviewState: reviewState.transitionReviewState,
+      concurrency: 1,
+      retryPolicy,
+    });
+    await Promise.all([worker.waitUntilReady(), queue.waitUntilReady()]);
+
+    const failed = new Promise<number | undefined>((resolve) => {
+      worker.once("failed", (job) => resolve(job?.attemptsMade));
+    });
+    const queueJob = await queue.add("review", payloadFor(chain), {
+      jobId: chain.jobId,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 25 },
+    });
+
+    try {
+      // One attempt only: invalid model output cannot become valid by retrying.
+      expect(await failed).toBe(1);
+      expect(prepareCalls).toBe(1);
+      expect(await queueJob.getState()).toBe("failed");
+
+      const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+      expect(job.status).toBe("failed");
+      expect(job.attempts).toBe(1);
+      const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+      expect(review.state).toBe("failed");
+      expect(review.errorCode).toBe("invalid_output");
+    } finally {
+      await queueJob.remove().catch(() => {});
+      await stopReviewWorker(worker).catch(() => {});
+      await disconnectRedis(connection);
+    }
+  }, 30_000);
+});
+
+describe("durable retry decisions (§12.4)", () => {
+  test("a transient attempt with budget remaining rethrows and stays claimable", async () => {
+    const chain = await seedReviewChain({
+      prefix: "retry-durable-transient",
+      state: "queued",
+      job: { status: "enqueued" },
+    });
+    const service = {
+      prepare: async () => {
+        throw new ReviewRetrievalError("git clone failed: transient network reset", "clone_failed");
+      },
+      cleanupAfterFailure: async () => {},
+      cleanupAfterReview: async () => {},
+    } as unknown as ReviewWorkspaceService;
+
+    await expect(
+      processReviewJob(
+        chain.jobId!,
+        payloadFor(chain),
+        {
+          repositories,
+          service,
+          logger: silentLogger,
+          concurrency: 1,
+          transitionReviewState: reviewState.transitionReviewState,
+          retryPolicy,
+        },
+        { attempt: 1, maxAttempts: 3 },
+      ),
+    ).rejects.toBeInstanceOf(ReviewJobRetryError);
+
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    // Not failed: the durable row must remain claimable for the retry.
+    expect(job.status).toBe("processing");
+    expect(job.attempts).toBe(1);
+    expect(job.lastError).toContain("clone failed");
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+    expect(review.state).toBe("queued");
+    expect(review.errorCode).toBeNull();
+  });
+
+  test("the final transient attempt fails the job and review with retry_exhausted", async () => {
+    const chain = await seedReviewChain({
+      prefix: "retry-durable-exhausted",
+      state: "queued",
+      job: { status: "enqueued", attempts: 2 },
+    });
+    const service = {
+      prepare: async () => {
+        throw new ReviewRetrievalError("git clone failed: transient network reset", "clone_failed");
+      },
+      cleanupAfterFailure: async () => {},
+      cleanupAfterReview: async () => {},
+    } as unknown as ReviewWorkspaceService;
+
+    await expect(
+      processReviewJob(
+        chain.jobId!,
+        payloadFor(chain),
+        {
+          repositories,
+          service,
+          logger: silentLogger,
+          concurrency: 1,
+          transitionReviewState: reviewState.transitionReviewState,
+          retryPolicy,
+        },
+        { attempt: 3, maxAttempts: 3 },
+      ),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
+
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    expect(job.status).toBe("failed");
+    expect(job.attempts).toBe(3);
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+    expect(review.state).toBe("failed");
+    expect(review.errorCode).toBe("retry_exhausted");
+  });
+
+  test("a permanent failure fails the job and review on the first attempt", async () => {
+    const chain = await seedReviewChain({
+      prefix: "retry-durable-permanent",
+      state: "queued",
+      job: { status: "enqueued" },
+    });
+    const service = {
+      prepare: async () => {
+        throw new AgentRuntimeError("invalid_output", "model returned invalid JSON");
+      },
+      cleanupAfterFailure: async () => {},
+      cleanupAfterReview: async () => {},
+    } as unknown as ReviewWorkspaceService;
+
+    await expect(
+      processReviewJob(
+        chain.jobId!,
+        payloadFor(chain),
+        {
+          repositories,
+          service,
+          logger: silentLogger,
+          concurrency: 1,
+          transitionReviewState: reviewState.transitionReviewState,
+          retryPolicy,
+        },
+        { attempt: 1, maxAttempts: 3 },
+      ),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
+
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    expect(job.status).toBe("failed");
+    expect(job.attempts).toBe(1);
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+    expect(review.state).toBe("failed");
+    expect(review.errorCode).toBe("invalid_output");
+  });
+});
+
+describe("failed-job recovery (§12.4, §17.3)", () => {
+  test("reconciliation requeues a failed durable job whose review is not terminal", async () => {
+    const chain = await seedReviewChain({
+      prefix: "retry-failed-recover",
       state: "analyzing",
-      job: { status: "processing", attempts: 1 },
+      job: { status: "failed", attempts: 1 },
     });
     await ageJobRow(chain.jobId!);
-    const added: Array<{ jobId?: string; attempts?: number; backoff?: { type: string; delay: number } }> = [];
-    const queue = {
+    const added: Array<{ jobId?: string; attempts?: number }> = [];
+    const fakeQueue = {
       getJob: async () => undefined,
-      add: async (
-        _name: string,
-        _payload: ReviewJobPayload,
-        opts: { jobId?: string; attempts?: number; backoff?: { type: string; delay: number } } = {},
-      ) => {
+      add: async (_name: string, _payload: ReviewJobPayload, opts: { jobId?: string; attempts?: number } = {}) => {
         added.push(opts);
         return { id: opts.jobId };
       },
@@ -138,26 +440,25 @@ describe("job exhaustion (§12.4, §17.3)", () => {
       repositories,
       unitOfWork,
       logger: silentLogger,
-      queue,
+      queue: fakeQueue,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
     });
 
     expect(summary).toMatchObject({ requeued: 1, failed: 0 });
     expect(added).toHaveLength(1);
-    // Same durable identity — recovery can never create a duplicate queue job.
-    expect(added[0]).toMatchObject({ jobId: chain.jobId, attempts: 2, backoff: { type: "exponential", delay: 5000 } });
-    const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
-    expect(review.state).toBe("queued");
+    expect(added[0]).toMatchObject({ jobId: chain.jobId, attempts: 2 });
     const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
     expect(job.status).toBe("enqueued");
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
+    expect(review.state).toBe("queued");
   });
 
-  test("reconciliation fails a stale review once the durable attempt budget is exhausted", async () => {
+  test("reconciliation fails a failed job once its attempt budget is exhausted", async () => {
     const chain = await seedReviewChain({
-      prefix: "retry-exhausted",
+      prefix: "retry-failed-exhausted",
       state: "analyzing",
-      job: { status: "processing", attempts: 3 },
+      job: { status: "failed", attempts: 3 },
     });
     await ageJobRow(chain.jobId!);
 
@@ -177,54 +478,24 @@ describe("job exhaustion (§12.4, §17.3)", () => {
     expect(job.status).toBe("failed");
   });
 
-  test("a failing processing attempt leaves the durable job failed with the error", async () => {
+  test("a terminal failed review is never requeued by reconciliation", async () => {
     const chain = await seedReviewChain({
-      prefix: "retry-process-failure",
-      state: "queued",
-      job: { status: "enqueued" },
+      prefix: "retry-failed-terminal",
+      state: "failed",
+      job: { status: "failed", attempts: 3 },
     });
-    const service = {
-      prepare: async () => {
-        throw new Error("git clone failed: repository not found");
-      },
-      cleanupAfterFailure: async () => {},
-      cleanupAfterReview: async () => {},
-    } as unknown as ReviewWorkspaceService;
+    await ageJobRow(chain.jobId!);
 
-    const outcome = await processReviewJob(
-      chain.jobId!,
-      {
-        reviewId: chain.reviewId,
-        jobKey: chain.jobKey!,
-        githubInstallationId: String(chain.githubInstallationId),
-        githubRepositoryId: String(chain.githubRepositoryId),
-        repositoryFullName: "retry-process-failure-org/retry-process-failure-repo",
-        pullRequestNumber: 101,
-        headSha: chain.headSha,
-        reviewMode: "adaptive",
-        reviewType: "standard",
-        trigger: "opened",
-      },
-      {
-        repositories: createIngestionRepositories(prisma),
-        service,
-        logger: silentLogger,
-        concurrency: 1,
-        transitionReviewState: createTestReviewState().transitionReviewState,
-        retryPolicy: {
-          infrastructure: { enabled: true, maxAttempts: 3, backoff: "exponential" },
-          providerUnavailable: { enabled: false },
-        },
-      },
-    );
+    const summary = await reconcileIncompleteReviews({
+      repositories,
+      unitOfWork,
+      logger: silentLogger,
+      staleThresholdMs: 15 * 60_000,
+      maxJobAttempts: 3,
+    });
 
-    expect(outcome).toBe("failed");
+    expect(summary).toMatchObject({ scanned: 0, requeued: 0, failed: 0 });
     const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
     expect(job.status).toBe("failed");
-    expect(job.attempts).toBe(1);
-    expect(job.lastError).toContain("clone failed");
-    const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
-    expect(review.state).toBe("failed");
-    expect(review.errorCode).toBe("retrieval_failed");
   });
 });
