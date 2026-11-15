@@ -38,18 +38,13 @@ jobs:
         run: npm run typecheck
       - name: Typecheck tests
         run: npm run typecheck:tests
-      # Unit and contract tiers need no Postgres, Redis, or Docker. Running
-      # them in the service-free job proves that boundary stays intact.
-      - name: Unit tests
-        run: npm run test:unit
-      - name: Contract tests
-        run: npm run test:contract
       - name: Quality metrics
         run: npm run metrics:quality
 
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -89,17 +84,47 @@ jobs:
         run: npm ci
       - name: Generate Prisma client
         run: npm run db:generate
+      # Cheapest tiers first: unit and contract need no migrated database, so
+      # a logic or contract failure fails the job before the infrastructure
+      # tiers spend time on migrations and review fixtures. Logs are tee'd so
+      # the failure artifact below includes the full Vitest output.
+      - name: Unit tests
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run test:unit 2>&1 | tee test-results/unit.log
+      - name: Contract tests
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run test:contract 2>&1 | tee test-results/contract.log
       - name: Apply database migrations
         run: npx prisma migrate deploy
       # The infrastructure tiers share one Postgres/Redis instance and run
       # with a single worker each; keep them in separate steps so a failure
       # names the tier.
       - name: Integration tests
-        run: npm run test:integration
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run test:integration 2>&1 | tee test-results/integration.log
       - name: Characterization tests
-        run: npm run test:characterization
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run test:characterization 2>&1 | tee test-results/characterization.log
       - name: Build
-        run: npm run build
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run build 2>&1 | tee test-results/build.log
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: test-results/
+          if-no-files-found: ignore
 
   commitlint:
     name: Commitlint

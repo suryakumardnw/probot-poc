@@ -28,11 +28,66 @@ Prerequisites:
 ```bash
 npm ci
 npm run db:generate      # generate the Prisma client
-cp .env.example .env        # optional for local runs; tests set their own defaults
+cp .env.example .env     # provides DATABASE_URL/REDIS_URL defaults for Prisma CLI
 npx prisma migrate deploy   # only needed for a fresh database
 npm run build
 npm test
 ```
+
+### Local Postgres and Redis
+
+The integration and characterization tiers expect Postgres on
+`localhost:5432` and Redis on `localhost:6379` by default. Start throwaway
+containers with the same commands on every machine (the defaults match the
+values in `.env.example`):
+
+```bash
+docker run -d --name probot-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=reviewer \
+  -p 5432:5432 postgres:16
+
+docker run -d --name probot-redis -p 6379:6379 redis:7
+
+# Apply the schema once, and again after pulling new migrations. Prisma CLI
+# reads DATABASE_URL from .env or from the command environment.
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/reviewer \
+  npx prisma migrate deploy
+```
+
+If the ports are taken or you use a shared database, point the suites at it
+with `DATABASE_URL` and `REDIS_URL`. The test process reads those variables
+directly, so the same commands work locally and in CI:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/reviewer \
+REDIS_URL=redis://localhost:6379 \
+npm run test:integration
+```
+
+Stop and remove the containers with:
+
+```bash
+docker rm -f probot-postgres probot-redis
+```
+
+Run the tiers in the same order as CI — cheapest first, so a unit failure
+fails fast without touching the database:
+
+```bash
+npm run test:unit
+npm run test:contract
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/reviewer \
+  npx prisma migrate deploy
+npm run test:integration
+npm run test:characterization
+npm run build
+```
+
+`npm test` runs every tier in one Vitest process. The sandbox integration
+suite in `test/integration/execution-security.test.ts` also needs Docker; the
+remaining integration tests only need Postgres and Redis.
 
 ## Commands
 
@@ -159,9 +214,14 @@ Work in Progress pull requests are also welcome to get feedback early on, or if 
 
 GitHub Actions runs four jobs on every pull request:
 
-- `Quality`: `format:check`, `lint`, `typecheck`, and `metrics:quality`.
-- `Test`: Postgres 16 and Redis 7 service containers, migrations, `npm test`,
-  and `npm run build`.
+- `Quality`: `format:check`, `lint`, `typecheck`, `typecheck:tests`, and
+  `metrics:quality`.
+- `Test`: Postgres 16 and Redis 7 service containers. It runs the tiers in
+  the same order as local: `test:unit`, `test:contract`, `prisma migrate
+deploy`, `test:integration`, `test:characterization`, then `build`. Unit
+  and contract tests run before migrations, so a logic failure fails fast.
+  On failure the job uploads the captured Vitest and build logs as the
+  `test-logs` artifact.
 - `Commitlint`: the PR title and every commit in the branch.
 - `Security`: `npm run security:audit` and a gitleaks secret scan.
   `security:audit` runs `npm audit --audit-level=high` and fails on any

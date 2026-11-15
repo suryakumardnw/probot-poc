@@ -4,6 +4,7 @@ npm-debug.log
 !mock-cert.pem
 .env
 coverage
+/test-results/
 /lib/
 tsconfig.tsbuildinfo
 tsconfig.build.tsbuildinfo
