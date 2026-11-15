@@ -168,6 +168,74 @@ describe("ingest-time supersession", () => {
     expect(job.status).toBe("completed");
   });
 
+  test("retries a non-terminal conflict and still supersedes the stale review", async () => {
+    const seed = await seedReviewChain({
+      prefix: "supersede-retry",
+      state: "analyzing",
+      job: { status: "processing" },
+    });
+    if (!seed.jobId) {
+      throw new Error("fixture did not seed a job");
+    }
+    const snapshot = await staleSnapshot(seed);
+    let attempts = 0;
+
+    const racingUnitOfWork: IngestionUnitOfWork = {
+      execute<T>(work: (repos: IngestionRepositories) => Promise<T>): Promise<T> {
+        return unitOfWork.execute((repos) =>
+          work({
+            ...repos,
+            reviews: {
+              ...repos.reviews,
+              findInFlight: async () => [snapshot],
+              transitionState: async (input) => {
+                attempts += 1;
+                if (attempts === 1) {
+                  // The worker advanced the review after the in-flight snapshot
+                  // but before supersede's guarded write.
+                  const advanced = await repos.reviews.transitionState({
+                    reviewId: input.reviewId,
+                    toState: "investigating",
+                    allowedFromStates: ["analyzing"],
+                    patch: {},
+                  });
+                  if (advanced.outcome !== "transitioned") {
+                    throw new Error("expected the simulated worker advance to succeed");
+                  }
+                  return { outcome: "conflict", currentState: "investigating" };
+                }
+                return repos.reviews.transitionState(input);
+              },
+            },
+          }),
+        );
+      },
+    };
+
+    const result = await createService(racingUnitOfWork).ingestReviewRequest(
+      await ingestInput(seed, {
+        headSha: "5555eeee5555eeee5555eeee5555eeee5555eeee",
+        deliveryId: "supersede-retry",
+      }),
+    );
+    expect(result.outcome).toBe("created");
+    expect(attempts).toBe(2);
+
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: seed.reviewId } });
+    expect(review.state).toBe("superseded");
+    expect(review.supersededByReviewId).toBe(result.reviewId);
+
+    const transitions = await prisma.reviewStateTransition.findMany({ where: { reviewId: seed.reviewId } });
+    expect(transitions.filter((row) => row.toState === "superseded")).toHaveLength(1);
+    expect(transitions.map((row) => `${row.fromState}->${row.toState}`).sort()).toEqual([
+      "analyzing->investigating",
+      "investigating->superseded",
+    ]);
+
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: seed.jobId } });
+    expect(job.status).toBe("superseded");
+  });
+
   test("concurrent supersedes of one in-flight review write exactly one transition row", async () => {
     const seed = await seedReviewChain({
       prefix: "supersede-race",

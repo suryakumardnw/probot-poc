@@ -1,6 +1,7 @@
 import { REVIEW_TYPES, outboxPayloadSchema, type ReviewModeValue, type ReviewTypeValue } from "../contracts/queue.js";
 import type { Logger } from "../ports/logger.js";
 import type { LoadedReviewConfig, ReviewConfigStore } from "../ports/review-config.js";
+import type { TransitionReviewStateResult } from "./ingestion.repository.js";
 import type { IngestReviewRequestInput, IngestReviewRequestResult } from "./ingestion.types.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 import type { PublishResult } from "./outbox.service.js";
@@ -13,6 +14,44 @@ import { REVIEW_STATES, TERMINAL_REVIEW_STATES, canTransition } from "./review-s
 
 /** Non-terminal states the state machine permits a move into `superseded`. */
 const SUPERSEDE_ALLOWED_FROM_STATES = REVIEW_STATES.filter((state) => canTransition(state, "superseded"));
+
+/**
+ * Supersede can lose a race to a worker that advances the review through a
+ * non-terminal state. Retry against the winning state a bounded number of
+ * times; a terminal winner is never overwritten.
+ */
+const SUPERSEDE_MAX_ATTEMPTS = 3;
+
+async function transitionToSuperseded(
+  repos: IngestionRepositories,
+  input: { reviewId: string; replacementReviewId: string; supersededAt: Date },
+): Promise<TransitionReviewStateResult> {
+  const transition = {
+    reviewId: input.reviewId,
+    toState: "superseded" as const,
+    patch: {
+      supersededByReviewId: input.replacementReviewId,
+      supersededAt: input.supersededAt,
+    },
+  };
+
+  let result = await repos.reviews.transitionState({
+    ...transition,
+    allowedFromStates: SUPERSEDE_ALLOWED_FROM_STATES,
+  });
+
+  for (let attempt = 1; attempt < SUPERSEDE_MAX_ATTEMPTS; attempt += 1) {
+    if (result.outcome !== "conflict" || !canTransition(result.currentState, "superseded")) {
+      return result;
+    }
+    result = await repos.reviews.transitionState({
+      ...transition,
+      allowedFromStates: [result.currentState],
+    });
+  }
+
+  return result;
+}
 
 export function buildJobKey(parts: {
   installationId: string;
@@ -209,14 +248,10 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
       });
 
       for (const outdated of inFlight) {
-        const superseded = await repos.reviews.transitionState({
+        const superseded = await transitionToSuperseded(repos, {
           reviewId: outdated.review.id,
-          toState: "superseded",
-          allowedFromStates: SUPERSEDE_ALLOWED_FROM_STATES,
-          patch: {
-            supersededByReviewId: review.id,
-            supersededAt: new Date(),
-          },
+          replacementReviewId: review.id,
+          supersededAt: new Date(),
         });
 
         // The in-flight snapshot can go stale while this transaction runs. A
@@ -225,7 +260,7 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
         if (superseded.outcome === "conflict") {
           deps.logger.info(
             { reviewId: outdated.review.id, currentState: superseded.currentState, replacementReviewId: review.id },
-            "Skipped supersede: review already left an in-flight state",
+            "Skipped supersede: review kept advancing or reached a terminal state",
           );
           continue;
         }
