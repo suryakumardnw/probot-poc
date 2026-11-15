@@ -17,7 +17,7 @@ import {
  *
  * Review types (§4.1): the command accepts an optional type argument:
  *
- *   /review                → github.defaultReviewType (default: standard)
+ *   /review                → github.defaultReviewType (handbook in the shipped config)
  *   /review type:skill     → skill
  *   /review type:handbook  → handbook
  *   /review skill          → shorthand for type:skill

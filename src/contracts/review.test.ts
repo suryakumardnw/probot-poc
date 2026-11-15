@@ -151,8 +151,8 @@ describe("analysisOutputSchema", () => {
   });
 });
 
-describe("temporary review module re-export", () => {
-  test("keeps the moved schemas identical until PR 3.12 removes the shim", () => {
+describe("documented review module compatibility re-export", () => {
+  test("keeps the schemas identical; removing the shim is a documented follow-up", () => {
     expect(reviewResultSchemaFromEngine).toBe(reviewResultSchema);
     expect(analysisOutputSchemaFromEngine).toBe(analysisOutputSchema);
   });

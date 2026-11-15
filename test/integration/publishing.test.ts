@@ -1147,7 +1147,7 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
     ]);
   });
 
-  test("publication reads only active findings in deterministic repository order", async () => {
+  test("publication reads only active findings in deterministic severity-rank order", async () => {
     const seed = await seedReview("fp-active-order");
     await prisma.review.update({ where: { id: seed.reviewId }, data: { state: "validating" } });
 
@@ -1164,7 +1164,7 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
     );
 
     // Persist in the opposite order of the repository's read order
-    // (verified desc, severity asc, createdAt asc).
+    // (verified desc, severity rank, createdAt asc).
     const medium = makeFinding({ title: "Medium issue", severity: "medium", line: 2 });
     const critical = makeFinding({
       title: "Critical issue",
@@ -1184,7 +1184,7 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
     expect(state.createReviewCalls).toHaveLength(1);
     const call = first(state.createReviewCalls);
     expect(call.comments).toHaveLength(2);
-    // Severity-ascending repository order, not the persist order.
+    // Severity-rank repository order, not the persist order.
     expect(first(call.comments)?.body).toContain("Critical issue");
     expect(call.comments[1]?.body).toContain("Medium issue");
     expect(call.body).not.toContain("Superseded issue");

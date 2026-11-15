@@ -2,9 +2,10 @@
 
 Date: 2026-11-15
 Status: complete
-Baseline: `e6a1b36` (536 tests) · Phase 4 code: `5cef56b` · Docs: `738d8e1`
-Scope: PRs 5.1–5.2. Documentation and verification only; no product behavior
-changes.
+Baseline: `e6a1b36` (536 tests) · Phase 4 code: `5cef56b` · Final fixes: `b76df7a`
+Scope: PRs 5.1–5.2 plus the final whole-branch review fixes. Documentation,
+verification, and targeted correctness/configuration fixes; the intentional
+behavior changes are listed in §1.1.
 
 Companions: [TypeScript profile](./typescript-profile.md) ·
 [Gap analysis](./typescript-gap-analysis.md) ·
@@ -20,10 +21,36 @@ run the same commands locally and remotely. All six P0 findings from the
 [gap analysis](./typescript-gap-analysis.md) are closed at the HTTP/queue/outbox
 edge scope; the internal error-family migration remains a documented follow-up.
 
+The frozen characterization baseline is unchanged. The whole-branch review
+also produced deliberate fixes that change edge behavior: atomic
+ingestion/recovery writes, cross-module service boundaries, vendor adapters,
+OAuth response parsing, and the configuration/correctness items in §1.1. No
+characterization assertions were edited to make these pass.
+
 The refactor added no `any`, no non-null assertions, no boundary
 `JSON.parse(...) as` casts, and no `@ts-ignore`/`@ts-expect-error` to `src`.
 The 11 remaining `as unknown as` casts predate or replace localized adapter
 casts and are listed in §8.
+
+### 1.1 Intentional correctness and configuration changes
+
+These are intentional, test-pinned departures from the pre-refactor behavior.
+They are not refactor side effects and do not alter the core review/publish
+baseline; each is covered by unit, contract, integration, or characterization
+tests.
+
+| Area | Before | After | Why |
+|---|---|---|---|
+| Triage model call | Provider call could hang indefinitely. | 30 s default provider timeout (`GROQ_TRIAGE_DEFAULT_TIMEOUT_MS`). | Bounded best-effort triage; a slow provider no longer blocks the webhook handler forever. |
+| Admin query input | Malformed `limit`, `offset`, or `pr` values were clamped/defaulted. | Invalid values return HTTP 400 with a validation `details` array. | Boundary validation should reject malformed input, not silently change it. |
+| Admin OAuth configuration | Missing `ADMIN_OAUTH_CALLBACK_URL` produced a redirect containing `undefined`. | Admin is unconfigured and `/api/admin/*` returns the existing 503 envelope. | Fail closed on partial configuration instead of issuing a broken redirect. |
+| `/review` environment | The handler could observe environment changes made after boot. | Handler uses the boot-time environment snapshot; `config/review.json` is still re-read per call. | Static deployment environment is the intended contract; the review config remains live. |
+| `AgentRuntimeError("unknown")` | Message-pattern fallback could classify unknown agent failures as retryable. | Terminal by code; `AppError` codes no longer fall through to message matching. | Unknown agent failures follow the fail-immediately policy. |
+| Publication findings | Repository rows were published in database-return order, including inactive rows. | Only active findings publish; order is `verified desc`, severity rank (`critical`→`informational`), then `createdAt asc`. | Superseded/resolved/dismissed findings must never publish; ordering is deterministic. |
+| Automatic ingestion | `review.enabled`, `review.triggers.automatic`, and per-type switches were not consistently enforced. | Automatic triggers skip before any durable write when any switch is off; the per-type switch applies to manual ingestion too. | Configuration switches must actually control ingestion. |
+| Reconciliation retries | Stale jobs were re-enqueued even when infrastructure retry was disabled. | `queue.retry.infrastructure.enabled=false` stops re-enqueueing; the `fail` policy still terminalizes. | Honor the operator's retry switch. |
+| OAuth response parsing | Unchecked casts; missing/unknown membership fields defaulted to `member`/`active`. | Zod-parsed responses; malformed or missing fields fail closed with `GithubOauthError("unexpected_response")` (admin 502 envelope). | Never guess an authorization input. |
+| Legacy `review_mode` | Queue recovery rejected legacy `standard`/`full` rows as invalid. | `LEGACY_REVIEW_MODES` are accepted at the queue boundary; new ingestion still writes `adaptive`/`fixed`. | Old non-terminal rows remain recoverable without changing new writes. |
 
 ## 2. Verification environment
 
@@ -41,9 +68,10 @@ casts and are listed in §8.
 
 ## 3. Final quality metrics
 
-`npm run metrics:quality` scans 199 TypeScript files under `src/` and 68 under
+`npm run metrics:quality` scans 208 TypeScript files under `src/` and 69 under
 `test/` (baseline: 112 and 31). `Count` is occurrences; `Files` is the number
-of files with at least one occurrence.
+of files with at least one occurrence. The final counts include the
+whole-branch review fixes.
 
 | Metric | Scope | Baseline count | Final count | Baseline files | Final files |
 |---|---|---:|---:|---:|---:|
@@ -51,12 +79,12 @@ of files with at least one occurrence.
 | `any` type positions | test | 17 | 5 | 6 | 2 |
 | Non-null assertions (`!`) | src | 28 | **0** | 15 | **0** |
 | Non-null assertions (`!`) | test | 120 | 54 | 13 | 5 |
-| `as const` | src | 26 | 49 | 13 | 20 |
-| `as const` | test | 6 | 11 | 3 | 7 |
-| Other `as` casts | src | 132 | 69 | 43 | 31 |
+| `as const` | src | 26 | 52 | 13 | 20 |
+| `as const` | test | 6 | 17 | 3 | 12 |
+| Other `as` casts | src | 132 | 66 | 43 | 30 |
 | Other `as` casts | test | 103 | 103 | 22 | 27 |
 | `as unknown as` | src | 26 | 11 | 11 | 6 |
-| `as unknown as` | test | 40 | 36 | 14 | 12 |
+| `as unknown as` | test | 40 | 35 | 14 | 12 |
 | Boundary `JSON.parse(...) as` | src | 13 | **0** | 9 | **0** |
 | Boundary `JSON.parse(...) as` | test | 22 | 24 | 8 | 9 |
 | Prisma imports outside repositories/platform DB | src | 17 | **0** | 16 | **0** |
@@ -81,19 +109,21 @@ zero unsafe boundary casts, not zero casts.
 
 | Tier | Files | Tests | Duration | Infrastructure |
 |---|---:|---:|---:|---|
-| `npm run test:unit` | 26 | 500 | 2.74 s | None (service-free) |
-| `npm run test:contract` | 9 | 194 | 1.34 s | None (service-free) |
-| `npm run test:integration` | 22 | 280 | 28.92 s | Postgres + Redis + Docker sandbox |
-| `npm run test:characterization` | 10 | 85 | 4.98 s | Postgres + Redis |
-| **`TMPDIR=/Users/surya/tmp npm test`** | **67** | **1,059** | **42.25 s** | Full suite |
+| `npm run test:unit` | 27 | 517 | 2.70 s | None (service-free) |
+| `npm run test:contract` | 10 | 207 | 1.35 s | None (service-free) |
+| `npm run test:integration` | 22 | 293 | 27.40 s | Postgres + Redis + Docker sandbox |
+| `npm run test:characterization` | 10 | 86 | 5.24 s | Postgres + Redis |
+| **`TMPDIR=/Users/surya/tmp npm test`** | **69** | **1,103** | **40.59 s** | Full suite |
 
-The unit and contract tiers (694 tests) are service-free: CI runs them in a job
+The unit and contract tiers (724 tests) are service-free: CI runs them in a job
 with no Postgres/Redis service containers or dependency URLs. The integration
 tier includes the Docker sandbox security suite; the characterization tier is
 the frozen black-box behavioral baseline.
 
-Baseline comparison: 31 files / 536 tests. Final: 67 files / 1,059 tests
-(+36 files, +523 tests).
+Baseline comparison: 31 files / 536 tests. Final: 69 files / 1,103 tests
+(+38 files, +567 tests). The final fixes added the ingestion/recovery,
+boundary, ordering, configuration-switch, and OAuth tests on top of the
+1,059-test Phase 4 result.
 
 ## 5. Command results
 
@@ -105,11 +135,11 @@ Baseline comparison: 31 files / 536 tests. Final: 67 files / 1,059 tests
 | `npm run typecheck:tests` | Pass |
 | `npm run build` | Pass |
 | `npm run metrics:quality` | Pass — final counts in §3 |
-| `npm run test:unit` | Pass — 26 files / 500 tests |
-| `npm run test:contract` | Pass — 9 files / 194 tests |
-| `npm run test:integration` | Pass — 22 files / 280 tests |
-| `npm run test:characterization` | Pass — 10 files / 85 tests |
-| `TMPDIR=/Users/surya/tmp npm test` | Pass — 67 files / 1,059 tests |
+| `npm run test:unit` | Pass — 27 files / 517 tests |
+| `npm run test:contract` | Pass — 10 files / 207 tests |
+| `npm run test:integration` | Pass with `TMPDIR=/Users/surya/tmp` — 22 files / 293 tests |
+| `npm run test:characterization` | Pass — 10 files / 86 tests |
+| `TMPDIR=/Users/surya/tmp npm test` | Pass — 69 files / 1,103 tests |
 | `npm run security:audit` | Pass — 43 advisories, all high/critical allowlisted in `scripts/npm-audit-allowlist.json` |
 | `bash scripts/smoke/docker-smoke.sh` | Pass — see §6 |
 
@@ -142,7 +172,7 @@ build artifact).
 
 ## 7. Characterization evidence
 
-The 10 characterization suites (85 tests) cover the frozen behavioral baseline:
+The 10 characterization suites (86 tests) cover the frozen behavioral baseline:
 
 - webhook ingestion and idempotency (`webhook-ingestion`),
 - review state transitions and supersession (`review-state`),
@@ -162,7 +192,9 @@ baseline.
 ## 8. Remaining deviations and follow-ups
 
 Every deviation below is either an approved stack adaptation or a localized,
-documented implementation detail. None changes product behavior.
+documented implementation detail. The intentional edge behavior changes are
+listed separately in §1.1; the items here are omissions or deferred cleanups,
+not hidden behavior changes.
 
 ### 8.1 Eleven `as unknown as` casts in `src`
 
@@ -209,26 +241,27 @@ classified at the edge. A complete single-family migration remains a follow-up.
   `test/characterization/worker-shutdown.test.ts`, and `test/helpers/db.ts`.
   Characterization is intentionally an infrastructure tier, and the helper
   imports Prisma only to clean the database.
-- Test-scope `as unknown as` (36) and `JSON.parse(...) as` (24) counts are
+- Test-scope `as unknown as` (35) and `JSON.parse(...) as` (24) counts are
   fixture-construction and vendor-row assertions, not application boundaries.
 
 ### 8.4 Code and dependency follow-ups
 
 | Item | Reason | Owner / next step |
 |---|---|---|
+| `manualReviewBodySchema` in `src/bootstrap/http.ts` | The only Zod schema still defined outside `src/contracts`; validated at the `/api/reviews` HTTP edge. | Move to `src/contracts/admin.ts` and import it from the composition root in a small `refactor(http)` PR. See ADR 0004. |
+| Findings supersession is not wired into ingestion | `supersedeFindingsForReview` exists and is tested, but a superseded review does not mark its findings superseded. Publication filters to active findings, so stale rows cannot publish; the lifecycle gap remains. | Wire ingestion's supersede path to the findings store, or record the active-review filter as the permanent contract. |
+| Manual `/api/reviews` still returns `{ error }` and is unauthenticated by design | The admin envelope migration covered `/api/admin/*` only. The manual trigger is an internal/deployment-scoped endpoint and intentionally has no session auth. | Decide whether to align it with the admin envelope and an auth policy; otherwise document it as a permanent interface exception. |
+| Preflight queue failures bypass `classifyQueueFailure` | The durable lookup/claim happens before the processing `try`; routing it through the classifier needs job context. | Documented in `docs/queue-reliability.md`; deferred. |
+| Docker sandbox tests need a shared `TMPDIR` on macOS | Docker volume mounts must be visible to the daemon; the integration suite passes with `TMPDIR=/Users/surya/tmp`. | Environmental, not a code regression; documented in `CONTRIBUTING.md` and this report. |
+| Security-audit allowlist (4 high/critical advisory IDs) | Prisma 7 / Vitest 5 / upstream `@opencode/sdk` upgrades are major or upstream-blocked. | Tracked in `docs/security-audit-follow-ups.md`; `scripts/npm-audit-allowlist.json` fails on any new ID. |
 | `src/modules/review/result-schema.ts` compatibility re-export | Keeps the contract move behavior-preserving; one contract test imports the shim. | Replace that import with `src/contracts/review.ts`, then delete the shim in a small `refactor(review)` PR. |
 | `src/platform/agents/opencode-runtime.ts` (1,224 lines) and `opencode-sdk-runtime.ts` (886 lines) | Isolated adapters behind `AgentRuntime`; splitting them needs its own behavior-preserving PR and runtime tests. | Dedicated runtime split PR. |
 | `exactOptionalPropertyTypes` deferred | Hundreds of optional properties intentionally accept `undefined`; enabling it is a data-shape decision, not a mechanical fix. | Compiler-hardening PR; see `docs/typescript-profile.md`. |
 | `effect` pinned at `4.1.0` | `@opencode/sdk@2.3.0` depends on it; the root pin prevents Prisma's `effect@3.21.0` from winning peer resolution. | Keep; guarded by `test/deployment-node.test.ts`. |
-| Preflight queue failures bypass `classifyQueueFailure` | The durable lookup/claim happens before the processing `try`; routing it through the classifier needs job context. | Documented in `docs/queue-reliability.md`; deferred. |
 | Reconciliation backoff is fixed (`exponential`, 5000 ms) | Attempt budgets are configuration-aware; backoff alignment is a follow-up. | Documented in `docs/queue-reliability.md`; deferred. |
 | Orphaned job rows for terminal reviews | A crash between the review and job failure writes leaves an operator-cleanable row. | Documented in `docs/queue-reliability.md`; deferred. |
-| Docker sandbox tests need a shared `TMPDIR` on macOS | Docker volume mounts must be visible to the daemon; the integration suite passes with `TMPDIR=/Users/surya/tmp`. | Environmental, not a code regression; documented in `CONTRIBUTING.md` and this report. |
-| Security-audit allowlist (4 high/critical advisory IDs) | Prisma 7 / Vitest 5 / upstream `@opencode/sdk` upgrades are major or upstream-blocked. | Tracked in `docs/security-audit-follow-ups.md`; `scripts/npm-audit-allowlist.json` fails on any new ID. |
-| `manualReviewBodySchema` in `src/bootstrap/http.ts` | The only Zod schema still defined outside `src/contracts`; validated at the `/api/reviews` HTTP edge. | Move to `src/contracts/admin.ts` and import it from the composition root in a small `refactor(http)` PR. See ADR 0004. |
-| 75 source files contain 76 stale `ARCHITECTURE.md §...` / `architecture §...` comment references | The architecture doc was renumbered/shortened; comments still cite old section numbers. Comments only, no behavior. | Comment-only sweep in a later PR; update each reference to the current `docs/architecture.md` section or remove it. |
-| `src/modules/webhooks/issue-comment.ts` comment says the `/review` default is `standard` | Shipped bare `/review` uses `config.github.defaultReviewType` (`handbook`). | Comment-only cleanup in a later PR. |
-| `src/shared/errors/classify.ts` comment says the queue policy integration is still pending and that `src/shared/retry.ts` remains live “until that staged migration lands” | `classifyQueueFailure` now composes `classifyAppFailure`; the comment describes an earlier staging state, not a `/review` default. | Comment-only cleanup in a later PR. |
+| 81 source files contain a stale `ARCHITECTURE.md` section reference (80 with `§...`) | The architecture doc was renumbered/shortened; comments still cite old section numbers. Comments only, no behavior. | Comment-only sweep in a later PR; update each reference to the current `docs/architecture.md` section or remove it. |
+| `src/shared/errors/classify.ts` comment says the queue policy integration is still pending and that `src/shared/retry.ts` remains live “until that staged migration lands” | `classifyQueueFailure` now composes `classifyAppFailure`; the comment describes an earlier staging state. | Comment-only cleanup in a later PR. |
 
 ## 9. Acceptance criteria
 
@@ -238,7 +271,7 @@ classified at the edge. A complete single-family migration remains a follow-up.
 | Remaining deviations documented with reason and owner | Yes — §8 and the profile. |
 | Service still deploys with the same commands | Yes — `npm run start:probot`, `npm run start:worker`, and the Compose smoke passed unchanged. |
 | All docs links resolve | Yes — relative-link check across `README.md`, `CONTRIBUTING.md`, `docs/`, `docs/adr/`, `docs/specs/`, and `docs/plans/`. |
-| No product behavior change | Yes — characterization baseline unchanged; docs/ADR-only commits in Phase 5. |
+| Product behavior | Characterized review/publish behavior preserved; intentional edge changes are listed in §1.1 and covered by tests. | Qualified — the refactor was not literally behavior-free, and this report does not claim it was. |
 
 ## 10. Reproduction
 

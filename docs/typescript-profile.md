@@ -98,11 +98,15 @@ overrides must be marked `override`, and type-only imports must use
 ## Known gaps (current)
 
 Baseline gaps are tracked in the [gap analysis](./typescript-gap-analysis.md).
-Final verification on 2026-11-15: 67 test files / 1,065 tests pass; Docker
-Compose smoke passes. The [final verification report](./typescript-refactor-report.md)
-§8 lists every remaining deviation, including the queue follow-ups (preflight
-classifier bypass, fixed reconciliation backoff, orphaned terminal-review job
-rows), the macOS Docker `TMPDIR` requirement, and the security-audit allowlist.
+Final verification on 2026-11-15: 69 test files / 1,103 tests pass (unit 517,
+contract 207, integration 293, characterization 86); Docker Compose smoke
+passes. The [final verification report](./typescript-refactor-report.md) §1.1
+lists the intentional correctness/configuration behavior changes, and §8 lists
+every remaining deviation, including the queue follow-ups (preflight classifier
+bypass, fixed reconciliation backoff, orphaned terminal-review job rows),
+findings supersession not being wired into ingestion, the manual `/api/reviews`
+envelope/auth exception, the macOS Docker `TMPDIR` requirement, and the
+security-audit allowlist.
 
 At the end of the refactor:
 
@@ -117,9 +121,14 @@ At the end of the refactor:
   `src/platform/queue/review-worker.ts`, GitHub App auth is
   `src/platform/github/app-auth.ts`, and modules depend on the
   `ReviewJobProcessor`, `ReviewQueue`, and `InstallationTokenProvider` ports.
+  The final whole-branch boundary fixes are complete: BullMQ worker creation,
+  GitHub App token minting/cache, and the Octokit publisher adapter all live in
+  `platform`, and the vendor packages are declared directly in `package.json`.
 - **Cross-module access is through services.** Webhooks use ingestion's public
   services (`findReviewTarget`, `InstallationService`); the workspace processor
   uses `ReviewJobService`. No module imports another module's repository ports.
+  The final review removed the last direct ingestion-repository and unit-of-work
+  injection from `AppServices`.
 - **Boundary shapes are parsed.** There are zero boundary
   `JSON.parse(...) as` casts and zero explicit `any` type positions in `src`.
 - **No non-null assertions in `src`.** The frozen characterization suite keeps
@@ -147,10 +156,26 @@ At the end of the refactor:
 - **`manualReviewBodySchema`** is the one Zod schema still defined in a
   composition root (`src/bootstrap/http.ts`). Follow-up: move it to
   `src/contracts/admin.ts` (ADR 0004).
-- **Stale comments:** 75 source files contain 76 `ARCHITECTURE.md §...` /
-  `architecture §...` references to the old numbering, plus two staging
-  comments (`issue-comment.ts`, `errors/classify.ts`). Comment-only cleanup is
-  a documented follow-up.
+- **Findings supersession is not wired into ingestion.** The findings store
+  exports and tests `supersedeFindingsForReview`, but the ingestion supersede
+  path does not call it. Publication filters to active findings, so superseded
+  rows cannot publish; the durable lifecycle cleanup remains a follow-up.
+- **Manual `/api/reviews` still uses `{ error }` responses and has no
+  authentication by design.** The admin envelope covers `/api/admin/*` only;
+  the manual trigger is deployment-scoped. Aligning it with the admin contract
+  or adding auth is an open decision, not an accidental omission.
+- **Queue preflight failures bypass `classifyQueueFailure`.** The durable
+  lookup/claim happens before the processing `try`; routing it through the
+  classifier needs job context. Documented in `docs/queue-reliability.md`.
+- **Docker sandbox tests need a shared `TMPDIR` on macOS** (for example
+  `TMPDIR=/Users/surya/tmp`). This is environmental, not a code regression.
+- **Security-audit allowlist:** four high/critical advisory IDs are allowlisted
+  in `scripts/npm-audit-allowlist.json` pending Prisma 7 / Vitest 5 / upstream
+  `@opencode/sdk` upgrades. See `docs/security-audit-follow-ups.md`.
+- **Stale comments:** 81 source files contain a stale `ARCHITECTURE.md` section
+  reference (80 with `§...`). The `/review` default comment in
+  `issue-comment.ts` was corrected; `errors/classify.ts` still has a staging
+  comment. Comment-only cleanup is a documented follow-up.
 - **`effect` stays pinned at `4.1.0`.** It has no direct imports, but
   `@opencode/sdk@2.3.0` depends on it and the root pin keeps Prisma's
   `effect@3.21.0` from winning peer resolution. Guarded by
@@ -179,6 +204,13 @@ Resolved during the refactor:
 - **Error and retry policy:** one `AppError` family and one queue classifier
   for failures crossing HTTP/queue/outbox — [ADR 0006](./adr/0006-failure-classification.md).
   Internal domain errors are still being migrated (see Known gaps).
+- **Intentional behavior corrections:** the triage timeout, strict admin query
+  validation, fail-closed admin OAuth configuration, boot-time `/review`
+  environment snapshot, terminal `AgentRuntimeError("unknown")`, active-finding
+  publication and severity-rank ordering, config-switch-aware ingestion and
+  reconciliation, fail-closed OAuth response parsing, and legacy `review_mode`
+  acceptance are listed in the
+  [final verification report](./typescript-refactor-report.md) §1.1.
 
 Still open (owner: refactor maintainer):
 

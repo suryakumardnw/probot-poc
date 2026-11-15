@@ -73,7 +73,8 @@ Status: **red** = non-compliant, **amber** = partial or adaptation needed,
 Status: **green** = compliant, **green (adapted)** = compliant with a
 documented adaptation, **amber** = partial or deferred, **gray** = not
 applicable. Evidence is reproduced by `npm run metrics:quality`, the four test
-tiers, and CI.
+tiers, and CI. A row is not marked plain green where a documented exception
+remains; the exceptions are linked rather than hidden.
 
 | Guideline | Status | Final summary |
 |---|---|---|
@@ -84,15 +85,28 @@ tiers, and CI.
 | 05 Services & DI | Green | Composition roots construct clients and inject ports; zero `process.env` reads outside `platform/config`; no import-time singletons. |
 | 06 State management | Gray/Amber | UI rules N/A; process state is explicit and injected. No change needed. |
 | 07 Data fetching | Green | `ModelProvider`, `AgentRuntime`, `GithubPublisher`, `KnowledgeFetcher`, and `GithubOAuthClient` ports; all network I/O in `platform`; responses parsed by contracts. |
-| 08 Error handling | Green (adapted) | `AppError` family, `{ code, message, statusCode, details? }` envelope, and one queue retry classifier at HTTP/queue/outbox edges; internal domain/adapter errors still extend plain `Error` (report §8.2). |
+| 08 Error handling | Green (adapted) | `AppError` family, `{ code, message, statusCode, details? }` envelope, and one queue retry classifier at HTTP/queue/outbox edges; internal domain/adapter errors still extend plain `Error` (report §8.2). The manual `/api/reviews` endpoint keeps its `{ error }` shape and is unauthenticated by design. |
 | 09 Components & UI | Gray | No frontend. |
 | 10 Design tokens | Gray | No frontend. |
 | 11 Forms | Gray | No frontend. |
-| 12 Testing | Green | 67 files / 1,059 tests: unit 500 + contract 194 are service-free; integration 280 and characterization 85 are explicit infrastructure tiers. |
-| 13 Coding standards | Green | ESLint + Prettier + strict `tsc` + CI; `src` has 0 explicit `any`, 0 non-null assertions, 0 boundary JSON casts; 11 localized `as unknown as` casts remain (documented). |
+| 12 Testing | Green (adapted) | 69 files / 1,103 tests: unit 517 + contract 207 are service-free; integration 293 and characterization 86 are explicit infrastructure tiers. Three test files are intentionally flagged by the service metric, and the characterization tier keeps a narrow `any`/`!` allowance. |
+| 13 Coding standards | Green (adapted) | ESLint + Prettier + strict `tsc` + CI; `src` has 0 explicit `any`, 0 non-null assertions, 0 boundary JSON casts; 11 localized `as unknown as` casts remain (documented). |
 | 14 SOLID | Amber | Repository/port seams and single-purpose modules are in place; two agent runtimes remain large (1,224 and 886 lines) behind the runtime port. |
 | 15 Git & code review | Green | Conventional Commits enforced by commitlint; PR template; six required CI jobs; each refactor PR kept one intent. |
 | 08 Repo standards | Green | CI runs formatting, lint, typecheck, metrics, four test tiers, build, Docker smoke, commitlint, dependency audit, and secret scan. |
+
+Final-state note (2026-11-15): the whole-branch review added atomic
+ingestion/recovery writes, ingestion service boundaries, platform queue and
+GitHub auth adapters, OAuth response contracts, configuration-switch
+enforcement, and active-finding/severity-rank publication. Those intentional
+behavior changes are listed in the
+[refactor report](./typescript-refactor-report.md) §1.1. Remaining documented
+exceptions are in report §8: 11 localized `as unknown as` casts, plain-`Error`
+domain classes, the `manualReviewBodySchema` composition-root exception, stale
+`ARCHITECTURE.md` section comments, unwired findings supersession, the manual
+API envelope/auth exception, queue preflight classification, the macOS Docker
+`TMPDIR` requirement, and the security-audit allowlist. No scorecard row claims
+more than that evidence supports.
 
 ### P0 closure
 
@@ -258,7 +272,10 @@ The refactor should be phased and behaviour-preserving:
    module boundaries.
 
 Each phase should be a separate, reviewable PR with no behaviour change. Feature
-work does not ride along with a refactor.
+work does not ride along with a refactor. The implemented whole-branch fixes
+carry the intentional edge corrections listed in the
+[refactor report](./typescript-refactor-report.md) §1.1; they are not covered by
+this historical "no behaviour change" plan statement.
 
 ## Reproducing the checks
 
@@ -278,13 +295,14 @@ npm run build
 bash scripts/smoke/docker-smoke.sh
 ```
 
-Expected final counts: 67 test files / 1,059 tests (unit 500, contract 194,
-integration 280, characterization 85). In `src`, the quality script reports
-0 explicit `any`, 0 non-null assertions, 0 boundary `JSON.parse(...) as`,
-0 Prisma imports outside repositories/`platform/db`, 0 `process.env` reads
-outside `platform/config`, and 0 cross-module internal imports. The 11
-remaining `as unknown as` casts are listed in the
-[refactor report](./typescript-refactor-report.md).
+Expected final counts: 69 test files / 1,103 tests (unit 517, contract 207,
+integration 293, characterization 86). In `src`, the quality script scans 208
+files and reports 0 explicit `any`, 0 non-null assertions, 0 boundary
+`JSON.parse(...) as`, 0 Prisma imports outside repositories/`platform/db`,
+0 `process.env` reads outside `platform/config`, and 0 cross-module internal
+imports. The 11 remaining `as unknown as` casts and every other documented
+exception are listed in the
+[refactor report](./typescript-refactor-report.md) §8.
 
 For the full suite, start Postgres and Redis first (the tests use the database
 named by `DATABASE_URL` and clean tables between cases). The sandbox suite
