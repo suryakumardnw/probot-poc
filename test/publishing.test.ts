@@ -6,7 +6,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi 
 import type { AgentRuntime } from "../src/agent/types.js";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
 import type { StoredFinding } from "../src/findings/index.js";
-import { createFindingsDependencies, getFindingsForReview, persistReviewFindings } from "../src/findings/index.js";
+import {
+  createFindingsDependencies,
+  getFindingsForReview,
+  persistReviewFindings,
+  supersedeFindingsForReview,
+} from "../src/findings/index.js";
 import type { ReviewJobPayload } from "../src/ingestion/queue.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { parseUnifiedDiff, resolveInlinePosition } from "../src/publishing/diff-positions.js";
@@ -1131,6 +1136,55 @@ describe("finalizeReview pipeline (engine → persist → publish → terminal s
       "validating->publishing",
       "publishing->completed",
     ]);
+  });
+
+  test("publication reads only active findings in deterministic repository order", async () => {
+    const seed = await seedReview("fp-active-order");
+    await prisma.review.update({ where: { id: seed.reviewId }, data: { state: "validating" } });
+
+    // A finding of this review that a newer review superseded must never be
+    // published, even though it still points at this review id.
+    const inactive = await insertStoredFinding(seed.reviewId, seed.repositoryId, {
+      title: "Superseded issue",
+      fingerprint: "fp1:superseded-issue",
+      severity: "high",
+      lineNumber: 2,
+    });
+    expect(await supersedeFindingsForReview(seed.reviewId, "newer-review-id", createFindingsDependencies(prisma))).toBe(
+      1,
+    );
+
+    // Persist in the opposite order of the repository's read order
+    // (verified desc, severity asc, createdAt asc).
+    const medium = makeFinding({ title: "Medium issue", severity: "medium", line: 2 });
+    const critical = makeFinding({
+      title: "Critical issue",
+      severity: "critical",
+      line: 4,
+      description: "the added return line is unsafe",
+      evidence: evidence({ line: 4, excerpt: "  return a + b; // fine" }),
+    });
+    const state = makeState(seed.headSha);
+
+    await finalizeReview(
+      makeDeps(state),
+      { payload: makePayload(seed.reviewId, seed.headSha), workspace: makeWorkspace(seed.headSha) },
+      { result: makeResult({ findings: [medium, critical] }), meta: makeMeta() },
+    );
+
+    expect(state.createReviewCalls).toHaveLength(1);
+    const call = state.createReviewCalls[0];
+    expect(call.comments).toHaveLength(2);
+    // Severity-ascending repository order, not the persist order.
+    expect(call.comments[0]?.body).toContain("Critical issue");
+    expect(call.comments[1]?.body).toContain("Medium issue");
+    expect(call.body).not.toContain("Superseded issue");
+
+    expect(await prisma.reviewComment.count({ where: { reviewId: seed.reviewId, findingId: inactive.id } })).toBe(0);
+    const inlineRows = await prisma.reviewComment.findMany({
+      where: { reviewId: seed.reviewId, commentType: "inline" },
+    });
+    expect(inlineRows).toHaveLength(2);
   });
 
   test("logs one post-publication telemetry summary with per-stage token usage", async () => {

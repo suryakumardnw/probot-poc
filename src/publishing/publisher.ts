@@ -205,7 +205,7 @@ export interface PublishReviewInput {
   diff: string;
   /** Engine summary text. */
   summary: string;
-  /** All stored findings of this review (verified + uncertain). */
+  /** Active stored findings of this review (verified + uncertain). */
   findings: StoredFinding[];
   config: {
     /** Publish the review summary body (default true). */

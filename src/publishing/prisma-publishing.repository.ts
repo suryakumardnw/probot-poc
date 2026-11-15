@@ -23,7 +23,7 @@ function toGithubCommentId(value: bigint | null): number | null {
   return value === null ? null : Number(value);
 }
 
-export function createReviewCommentRepository(client: PrismaRootClient): ReviewCommentRepository {
+function createReviewCommentRepository(client: PrismaRootClient): ReviewCommentRepository {
   return {
     async listPublishedFingerprints(reviewId: string): Promise<PublishedFingerprintRecord[]> {
       const rows = await client.reviewComment.findMany({
@@ -95,7 +95,7 @@ export function createReviewCommentRepository(client: PrismaRootClient): ReviewC
   };
 }
 
-export function createReviewPublicationRepository(client: PrismaRootClient): ReviewPublicationRepository {
+function createReviewPublicationRepository(client: PrismaRootClient): ReviewPublicationRepository {
   return {
     async findReviewContext(reviewId: string): Promise<ReviewPublicationContext | null> {
       const row = await client.review.findUnique({
@@ -124,7 +124,12 @@ export function createReviewPublicationRepository(client: PrismaRootClient): Rev
   };
 }
 
-/** Build the publishing repository bundle for one root Prisma client. */
+/**
+ * Build the publishing repository bundle for one root Prisma client.
+ *
+ * This is the temporary module-edge wiring for PR 2.4; PR 2.6 replaces it with
+ * the bootstrap composition root (same role as `createFindingsDependencies`).
+ */
 export function createPublishingRepositories(prisma: PrismaRootClient): PublishingRepositories {
   return {
     comments: createReviewCommentRepository(prisma),

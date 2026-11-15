@@ -12,11 +12,8 @@ import type { ReviewTypeValue } from "../contracts/queue.js";
 // Domain enumerations (mirror the Prisma enums without importing them)
 // ---------------------------------------------------------------------------
 
-export const REVIEW_COMMENT_TYPES = ["summary", "inline"] as const;
-export type ReviewCommentType = (typeof REVIEW_COMMENT_TYPES)[number];
-
-export const REVIEW_COMMENT_STATUSES = ["published", "failed", "superseded"] as const;
-export type ReviewCommentStatus = (typeof REVIEW_COMMENT_STATUSES)[number];
+export type ReviewCommentType = "summary" | "inline";
+export type ReviewCommentStatus = "published" | "failed" | "superseded";
 
 // ---------------------------------------------------------------------------
 // Review-comment records

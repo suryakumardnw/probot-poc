@@ -54,11 +54,7 @@ export type {
   ReviewPublicationContext,
   ReviewPublicationRepository,
 } from "./publishing.repository.js";
-export {
-  createPublishingRepositories,
-  createReviewCommentRepository,
-  createReviewPublicationRepository,
-} from "./prisma-publishing.repository.js";
+export { createPublishingRepositories } from "./prisma-publishing.repository.js";
 export {
   createReviewPipelineHook,
   type ReviewKnowledgeDependencies,
