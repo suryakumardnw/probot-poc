@@ -24,7 +24,7 @@
 import { Octokit } from "@octokit/core";
 import { restEndpointMethods } from "@octokit/plugin-rest-endpoint-methods";
 import { retry } from "@octokit/plugin-retry";
-import type { StoredFinding } from "../findings/index.js";
+import type { StoredFinding } from "../modules/findings/index.js";
 import type { CreatedReviewResponse, PublisherOctokit } from "../ports/github-publisher.js";
 import { resolveInlinePosition, parseUnifiedDiff, type InlinePosition } from "./diff-positions.js";
 import type { ReviewCommentRepository } from "./publishing.repository.js";

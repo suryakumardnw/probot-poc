@@ -1,7 +1,11 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { outboxPayloadSchema } from "../../src/contracts/queue.js";
-import type { CreateReviewInput, ReviewJobRecord, ReviewRecord } from "../../src/ingestion/ingestion.repository.js";
-import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
+import type {
+  CreateReviewInput,
+  ReviewJobRecord,
+  ReviewRecord,
+} from "../../src/modules/ingestion/ingestion.repository.js";
+import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
 import { cleanDatabase } from "../characterization/support.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 

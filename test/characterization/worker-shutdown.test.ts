@@ -6,10 +6,10 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
-import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/ingestion/queue.js";
 import { disconnectRedis } from "../../src/lib/redis.js";
 import { orderShutdownSteps } from "../../src/lib/shutdown.js";
+import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
+import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/modules/ingestion/queue.js";
 import { NullTokenProvider } from "../../src/workspace/credentials.js";
 import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
 import {

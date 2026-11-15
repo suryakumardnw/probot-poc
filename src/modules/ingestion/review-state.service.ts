@@ -1,5 +1,5 @@
-import type { Clock } from "../ports/clock.js";
-import { InvalidStateTransitionError } from "../shared/errors/index.js";
+import type { Clock } from "../../ports/clock.js";
+import { InvalidStateTransitionError } from "../../shared/errors/index.js";
 import { REVIEW_STATES, type ReviewState, type ReviewStatePatch } from "./ingestion.repository.js";
 import type { IngestionRepositories } from "./ingestion.unit-of-work.js";
 

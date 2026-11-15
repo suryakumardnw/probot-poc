@@ -1,5 +1,5 @@
 import type { Probot } from "probot";
-import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
+import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../config/review-loader.js";
 import {
   REVIEW_TYPES,
   type IngestionRepositories,

@@ -3,12 +3,12 @@ import { UnrecoverableError, type Queue } from "bullmq";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { AgentRuntimeError } from "../../src/agent/types.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/config/review-loader.js";
-import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
-import { createIngestionUnitOfWork } from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
-import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/ingestion/queue.js";
 import { disconnectRedis } from "../../src/lib/redis.js";
+import { reconcileIncompleteReviews } from "../../src/modules/ingestion/index.js";
+import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
+import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/modules/ingestion/queue.js";
 import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/observability/retry.js";
-import { reconcileIncompleteReviews } from "../../src/recovery/reconciliation.js";
 import {
   ReviewJobRetryError,
   processReviewJob,

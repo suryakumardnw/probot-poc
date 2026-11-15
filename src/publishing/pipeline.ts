@@ -19,6 +19,7 @@
 import { resolveModelId } from "../agent/index.js";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
+import type { MaterializeKnowledgeResult } from "../knowledge/index.js";
 import {
   getFindingsForReview,
   isActiveFindingStatus,
@@ -26,10 +27,9 @@ import {
   type FindingRecord,
   type FindingsServiceDependencies,
   type StoredFinding,
-} from "../findings/index.js";
-import type { ReviewStateService } from "../ingestion/index.js";
-import type { ReviewJobPayload } from "../ingestion/queue.js";
-import type { MaterializeKnowledgeResult } from "../knowledge/index.js";
+} from "../modules/findings/index.js";
+import type { ReviewStateService } from "../modules/ingestion/index.js";
+import type { ReviewJobPayload } from "../modules/ingestion/queue.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 import type { PublisherOctokit } from "../ports/github-publisher.js";
 import type { Logger } from "../ports/logger.js";

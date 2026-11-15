@@ -14,8 +14,8 @@
  */
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
-import type { ReviewStateService } from "../ingestion/index.js";
-import type { ReviewJobPayload } from "../ingestion/queue.js";
+import type { ReviewStateService } from "../modules/ingestion/index.js";
+import type { ReviewJobPayload } from "../modules/ingestion/queue.js";
 import { recordProviderCall, recordReviewFindings } from "../observability/metrics.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
 import type { Logger } from "../ports/logger.js";

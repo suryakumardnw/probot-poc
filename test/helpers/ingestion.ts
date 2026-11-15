@@ -1,14 +1,15 @@
 import { createReviewConfigStore } from "../../src/config/review-config-store.js";
 import {
   createIngestionServices,
+  createReviewStateService,
   type IngestionRepositories,
   type IngestionServices,
   type IngestionUnitOfWork,
-} from "../../src/ingestion/index.js";
-import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
-import { createIngestionUnitOfWork } from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
-import { createReviewQueue, type BullMqReviewQueue } from "../../src/ingestion/queue.js";
-import { createReviewStateService, type ReviewStateService } from "../../src/ingestion/review-state.service.js";
+  type ReviewStateService,
+} from "../../src/modules/ingestion/index.js";
+import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
+import { createReviewQueue, type BullMqReviewQueue } from "../../src/modules/ingestion/queue.js";
 import { systemClock, type Clock } from "../../src/ports/clock.js";
 import type { Logger } from "../../src/ports/logger.js";
 import type { ReviewConfigStore } from "../../src/ports/review-config.js";

@@ -1,6 +1,11 @@
-import { REVIEW_TYPES, outboxPayloadSchema, type ReviewModeValue, type ReviewTypeValue } from "../contracts/queue.js";
-import type { Logger } from "../ports/logger.js";
-import type { LoadedReviewConfig, ReviewConfigStore } from "../ports/review-config.js";
+import {
+  REVIEW_TYPES,
+  outboxPayloadSchema,
+  type ReviewModeValue,
+  type ReviewTypeValue,
+} from "../../contracts/queue.js";
+import type { Logger } from "../../ports/logger.js";
+import type { LoadedReviewConfig, ReviewConfigStore } from "../../ports/review-config.js";
 import type { TransitionReviewStateResult } from "./ingestion.repository.js";
 import type { IngestReviewRequestInput, IngestReviewRequestResult } from "./ingestion.types.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";

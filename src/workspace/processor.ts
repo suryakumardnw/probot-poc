@@ -7,8 +7,8 @@ import {
   type IngestionRepositories,
   type ReviewState,
   type ReviewStateService,
-} from "../ingestion/index.js";
-import { parseReviewJobPayload, REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../ingestion/queue.js";
+} from "../modules/ingestion/index.js";
+import { parseReviewJobPayload, REVIEW_QUEUE_NAME, type ReviewJobPayload } from "../modules/ingestion/queue.js";
 import {
   createReviewLogger,
   startStage,

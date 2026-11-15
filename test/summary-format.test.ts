@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { StoredFinding } from "../src/findings/index.js";
+import type { StoredFinding } from "../src/modules/findings/index.js";
 import { buildInlineCommentBody, buildReviewBody, extractFingerprint } from "../src/publishing/summary.js";
 
 const finding = (overrides: Partial<StoredFinding> = {}): StoredFinding => ({

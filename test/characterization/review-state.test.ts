@@ -1,6 +1,10 @@
 import type { ReviewState } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { InvalidStateTransitionError, REVIEW_STATES, isTerminalReviewState } from "../../src/ingestion/index.js";
+import {
+  InvalidStateTransitionError,
+  REVIEW_STATES,
+  isTerminalReviewState,
+} from "../../src/modules/ingestion/index.js";
 import { AppError } from "../../src/shared/errors/index.js";
 import { createTestReviewState } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";

@@ -5,9 +5,9 @@ import {
   type FindingsRepositories,
   type FindingsServiceDependencies,
   type PersistReviewFindingsInput,
-} from "../../src/findings/index.js";
-import { createFindingsRepositories } from "../../src/findings/prisma-findings.repository.js";
-import { createFindingsDependencies } from "../../src/findings/prisma-findings.unit-of-work.js";
+} from "../../src/modules/findings/index.js";
+import { createFindingsRepositories } from "../../src/modules/findings/prisma-findings.repository.js";
+import { createFindingsDependencies } from "../../src/modules/findings/prisma-findings.unit-of-work.js";
 import type { Finding } from "../../src/review-engine/index.js";
 import {
   cleanDatabase,

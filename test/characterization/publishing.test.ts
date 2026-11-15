@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import type { StoredFinding } from "../../src/findings/index.js";
+import type { StoredFinding } from "../../src/modules/findings/index.js";
 import { createPublishingRepositories } from "../../src/publishing/prisma-publishing.repository.js";
 import {
   StaleHeadError,

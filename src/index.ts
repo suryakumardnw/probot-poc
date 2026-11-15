@@ -3,9 +3,7 @@ import type { AppServices } from "./bootstrap/clients.js";
 import { createWebhookServices } from "./bootstrap/clients.js";
 import { loadEnv } from "./config/env.js";
 import { handleIssuesOpened } from "./controllers/issue.controller.js";
-import { registerInstallationHandlers } from "./handlers/installation.js";
-import { registerIssueCommentHandlers } from "./handlers/issue-comment.js";
-import { registerPullRequestHandlers } from "./handlers/pull-request.js";
+import { registerWebhooks } from "./modules/webhooks/index.js";
 
 /**
  * Probot application definition.
@@ -28,12 +26,11 @@ export function createApp(services: AppServices): (app: Probot) => void {
     // Durable review ingestion (ticket 03): persist the review request and
     // enqueue it through the transactional outbox — the webhook handler never
     // runs the review itself.
-    registerPullRequestHandlers(app, { ingestion: services.ingestion });
-    registerIssueCommentHandlers(app, {
+    registerWebhooks(app, {
       ingestion: services.ingestion,
       repositories: services.ingestionRepositories,
+      unitOfWork: services.ingestionUnitOfWork,
     });
-    registerInstallationHandlers(app, { unitOfWork: services.ingestionUnitOfWork });
 
     // For more information on building apps:
     // https://probot.github.io/docs/

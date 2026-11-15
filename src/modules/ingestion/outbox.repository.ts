@@ -1,4 +1,4 @@
-import type { OutboxPayload } from "../contracts/queue.js";
+import type { OutboxPayload } from "../../contracts/queue.js";
 import type { OutboxEventRecord, OutboxEventWithJob } from "./ingestion.repository.js";
 
 /**

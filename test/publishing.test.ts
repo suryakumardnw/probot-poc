@@ -5,14 +5,14 @@ import type pino from "pino";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { AgentRuntime } from "../src/agent/types.js";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
-import type { StoredFinding } from "../src/findings/index.js";
+import type { StoredFinding } from "../src/modules/findings/index.js";
 import {
   createFindingsDependencies,
   getFindingsForReview,
   persistReviewFindings,
   supersedeFindingsForReview,
-} from "../src/findings/index.js";
-import type { ReviewJobPayload } from "../src/ingestion/queue.js";
+} from "../src/modules/findings/index.js";
+import type { ReviewJobPayload } from "../src/modules/ingestion/queue.js";
 import { parseUnifiedDiff, resolveInlinePosition } from "../src/publishing/diff-positions.js";
 import { finalizeReview, type ReviewPipelineDeps } from "../src/publishing/pipeline.js";
 import { createPublishingRepositories } from "../src/publishing/prisma-publishing.repository.js";
@@ -49,8 +49,8 @@ import { createTestReviewState } from "./helpers/ingestion.js";
 // persistReviewFindings is mocked so the persistence-failure path of
 // finalizeReview can be exercised deterministically; every other export of
 // the findings module stays real.
-vi.mock("../src/findings/index.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/findings/index.js")>();
+vi.mock("../src/modules/findings/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/modules/findings/index.js")>();
   return { ...actual, persistReviewFindings: vi.fn(actual.persistReviewFindings) };
 });
 

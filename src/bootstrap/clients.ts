@@ -2,19 +2,19 @@ import type { PrismaClient } from "@prisma/client";
 import type { Redis } from "ioredis";
 import type { Env } from "../config/env.js";
 import { createReviewConfigStore } from "../config/review-config-store.js";
-import { createFindingsDependencies, type FindingsServiceDependencies } from "../findings/index.js";
+import { createLogger } from "../lib/logger.js";
+import { createPrisma } from "../lib/prisma.js";
+import { createRedis } from "../lib/redis.js";
+import { createFindingsDependencies, type FindingsServiceDependencies } from "../modules/findings/index.js";
 import {
   createIngestionServices,
   type IngestionRepositories,
   type IngestionServices,
   type IngestionUnitOfWork,
-} from "../ingestion/index.js";
-import { createIngestionRepositories } from "../ingestion/prisma-ingestion.repository.js";
-import { createIngestionUnitOfWork } from "../ingestion/prisma-ingestion.unit-of-work.js";
-import { createReviewQueue, type BullMqReviewQueue } from "../ingestion/queue.js";
-import { createLogger } from "../lib/logger.js";
-import { createPrisma } from "../lib/prisma.js";
-import { createRedis } from "../lib/redis.js";
+} from "../modules/ingestion/index.js";
+import { createIngestionRepositories } from "../modules/ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "../modules/ingestion/prisma-ingestion.unit-of-work.js";
+import { createReviewQueue, type BullMqReviewQueue } from "../modules/ingestion/queue.js";
 import { systemClock, type Clock } from "../ports/clock.js";
 import type { Logger } from "../ports/logger.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";

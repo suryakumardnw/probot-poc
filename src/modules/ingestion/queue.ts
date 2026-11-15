@@ -1,9 +1,9 @@
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import { ERROR_CODES } from "../contracts/errors.js";
-import { reviewJobPayloadSchema, type ReviewJobPayload } from "../contracts/queue.js";
-import type { ReviewQueue, ReviewQueueEnqueueOptions } from "../ports/review-queue.js";
-import { ValidationError } from "../shared/errors/index.js";
+import { ERROR_CODES } from "../../contracts/errors.js";
+import { reviewJobPayloadSchema, type ReviewJobPayload } from "../../contracts/queue.js";
+import type { ReviewQueue, ReviewQueueEnqueueOptions } from "../../ports/review-queue.js";
+import { ValidationError } from "../../shared/errors/index.js";
 
 /**
  * BullMQ review queue (ARCHITECTURE.md §4.4, §12.2).
@@ -32,7 +32,7 @@ export {
   ingestOutcomeSchema,
   outboxPayloadSchema,
   reviewJobPayloadSchema,
-} from "../contracts/queue.js";
+} from "../../contracts/queue.js";
 export type {
   IngestOutcome,
   OutboxPayload,
@@ -40,7 +40,7 @@ export type {
   ReviewModeValue,
   ReviewTriggerValue,
   ReviewTypeValue,
-} from "../contracts/queue.js";
+} from "../../contracts/queue.js";
 
 /**
  * Parse a BullMQ job's `data` at the worker boundary.

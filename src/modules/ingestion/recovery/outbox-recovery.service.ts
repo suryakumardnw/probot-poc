@@ -1,5 +1,5 @@
-import type { IngestionRepositories } from "./ingestion.unit-of-work.js";
-import type { PublishResult } from "./outbox.service.js";
+import type { IngestionRepositories } from "../ingestion.unit-of-work.js";
+import type { PublishResult } from "../outbox.service.js";
 
 /**
  * Outbox recovery loop (ARCHITECTURE.md §12.2).

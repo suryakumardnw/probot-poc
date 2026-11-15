@@ -13,7 +13,7 @@ import { clearSessions, createSession, sessionCookieValue } from "../src/admin/s
 import { loadEnv, type Env } from "../src/config/env.js";
 import { createReviewConfigStore } from "../src/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH, LAST_KNOWN_GOOD_SUFFIX } from "../src/config/review-loader.js";
-import { createReviewQueue } from "../src/ingestion/queue.js";
+import { createReviewQueue } from "../src/modules/ingestion/queue.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { testEnv } from "./helpers/env.js";
 import { createTestIngestion } from "./helpers/ingestion.js";

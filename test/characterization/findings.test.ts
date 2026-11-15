@@ -5,7 +5,7 @@ import {
   persistReviewFindings,
   supersedeFindingsForReview,
   createFindingsDependencies,
-} from "../../src/findings/index.js";
+} from "../../src/modules/findings/index.js";
 import type { Finding } from "../../src/review-engine/index.js";
 import {
   cleanDatabase,

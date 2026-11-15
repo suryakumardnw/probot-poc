@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { UnrecoverableError } from "bullmq";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { AgentRuntimeError } from "../src/agent/types.js";
-import { createIngestionRepositories } from "../src/ingestion/prisma-ingestion.repository.js";
+import { createIngestionRepositories } from "../src/modules/ingestion/prisma-ingestion.repository.js";
 import type { InstallationTokenProvider } from "../src/workspace/credentials.js";
 import {
   parseNameStatus,

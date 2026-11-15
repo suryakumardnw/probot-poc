@@ -2,7 +2,6 @@ import path from "node:path";
 import type { Worker } from "bullmq";
 import { createAgentRuntime } from "../agent/index.js";
 import { loadEnv, type Env } from "../config/env.js";
-import { createWorkerConnection } from "../ingestion/queue.js";
 import {
   ensureKnowledgeSources,
   getKnowledgeSnapshot,
@@ -14,12 +13,13 @@ import { createLogger, type PlatformLogger } from "../lib/logger.js";
 import { checkPrisma, disconnectPrisma } from "../lib/prisma.js";
 import { checkRedis, disconnectRedis, waitRedisReady } from "../lib/redis.js";
 import { registerGracefulShutdown, runShutdownSteps, type ShutdownStep } from "../lib/shutdown.js";
+import { reconcileIncompleteReviews } from "../modules/ingestion/index.js";
+import { createWorkerConnection } from "../modules/ingestion/queue.js";
 import { AlertManager } from "../observability/alerts.js";
 import { startMetricsServer, metricsServerPort } from "../observability/metrics-endpoint.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
 import { retryPolicyConfigFromReviewConfig } from "../observability/retry.js";
 import { createReviewPipelineHook } from "../publishing/index.js";
-import { reconcileIncompleteReviews } from "../recovery/reconciliation.js";
 import { workspaceDirectorySizeBytes } from "../workspace/disk.js";
 import { createPrismaWorkspaceRepository } from "../workspace/prisma-workspace.repository.js";
 import { createDefaultTokenProvider, startReviewWorker, stopReviewWorker } from "../workspace/processor.js";

@@ -1,4 +1,4 @@
-import type { IngestOutcome, ReviewTriggerValue, ReviewTypeValue } from "../contracts/queue.js";
+import type { IngestOutcome, ReviewTriggerValue, ReviewTypeValue } from "../../contracts/queue.js";
 import type { ReviewState } from "./ingestion.repository.js";
 
 /**

@@ -12,7 +12,7 @@ import {
   supersedeFindingsForReview,
   getFindingsForReview,
   createFindingsDependencies,
-} from "../src/findings/index.js";
+} from "../src/modules/findings/index.js";
 import type { Finding, FindingEvidence } from "../src/review-engine/index.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 

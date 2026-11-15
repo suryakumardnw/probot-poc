@@ -1,4 +1,4 @@
-import type { ReviewTypeValue } from "../contracts/queue.js";
+import type { ReviewTypeValue } from "../../contracts/queue.js";
 
 /**
  * Ingestion repository ports and domain types (ARCHITECTURE.md §4, §12, §13.1).

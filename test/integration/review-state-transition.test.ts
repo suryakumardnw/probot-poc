@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { REVIEW_STATES, TERMINAL_REVIEW_STATES, createReviewStateService } from "../../src/ingestion/index.js";
-import { createIngestionRepositories } from "../../src/ingestion/prisma-ingestion.repository.js";
-import { createIngestionUnitOfWork } from "../../src/ingestion/prisma-ingestion.unit-of-work.js";
+import { REVIEW_STATES, TERMINAL_REVIEW_STATES, createReviewStateService } from "../../src/modules/ingestion/index.js";
+import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
 import { systemClock } from "../../src/ports/clock.js";
 import { AppError, InvalidStateTransitionError } from "../../src/shared/errors/index.js";
 import { cleanDatabase, seedReviewChain } from "../characterization/support.js";

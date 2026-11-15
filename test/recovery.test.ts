@@ -2,12 +2,15 @@ import type { Queue } from "bullmq";
 import pino from "pino";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { reviewJobPayloadSchema } from "../src/contracts/queue.js";
-import { createIngestionRepositories } from "../src/ingestion/prisma-ingestion.repository.js";
-import { createIngestionUnitOfWork } from "../src/ingestion/prisma-ingestion.unit-of-work.js";
-import type { ReviewJobPayload } from "../src/ingestion/queue.js";
+import {
+  REDIS_PERSISTENCE_COMMANDLINE,
+  reconcileIncompleteReviews,
+  resetReviewForRecovery,
+} from "../src/modules/ingestion/index.js";
+import { createIngestionRepositories } from "../src/modules/ingestion/prisma-ingestion.repository.js";
+import { createIngestionUnitOfWork } from "../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
+import type { ReviewJobPayload } from "../src/modules/ingestion/queue.js";
 import { getMetricsRegistry } from "../src/observability/metrics.js";
-import { reconcileIncompleteReviews, resetReviewForRecovery } from "../src/recovery/reconciliation.js";
-import { REDIS_PERSISTENCE_COMMANDLINE } from "../src/recovery/redis-persistence.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 /**
