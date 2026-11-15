@@ -11,6 +11,12 @@
  * implementation at call time, so a test can set the fake before or after
  * constructing the client.
  */
+import {
+  githubOauthTokenErrorSchema,
+  githubOauthTokenSuccessSchema,
+  githubOrgMembershipResponseSchema,
+  githubUserResponseSchema,
+} from "../../contracts/github.js";
 import type { GithubFetch, GithubOAuthClient, GithubUser, OrgMembership } from "../../ports/github-oauth.js";
 import { GithubOauthError } from "../../shared/errors/index.js";
 
@@ -27,6 +33,20 @@ export function setGithubFetch(impl: GithubFetch): void {
 /** Restore the real fetch implementation. */
 export function resetGithubFetch(): void {
   githubFetchImpl = fetch;
+}
+
+/**
+ * Read a JSON response body without leaking its content into the error. A
+ * malformed body becomes a typed failure at the same boundary as a malformed
+ * shape; neither the raw body nor its parse error is surfaced.
+ */
+async function readJsonBody(response: Response, operation: string): Promise<unknown> {
+  try {
+    const payload: unknown = await response.json();
+    return payload;
+  } catch {
+    throw new GithubOauthError("unexpected_response", `GitHub ${operation} response was not valid JSON`);
+  }
 }
 
 /**
@@ -54,16 +74,21 @@ async function exchangeOAuthCode(
   if (!response.ok) {
     throw new GithubOauthError("token_exchange_failed", `GitHub token exchange failed (${response.status})`);
   }
-  const body = (await response.json()) as { access_token?: string; error?: string; error_description?: string };
-  if (!body.access_token) {
+  const payload = await readJsonBody(response, "token exchange");
+  const success = githubOauthTokenSuccessSchema.safeParse(payload);
+  if (success.success) {
+    return success.data.access_token;
+  }
+  const failure = githubOauthTokenErrorSchema.safeParse(payload);
+  if (failure.success) {
     // GitHub reports failures with error codes; the description is GitHub's
     // own message about the code — it never contains the client secret.
     throw new GithubOauthError(
-      body.error ?? "token_exchange_failed",
-      body.error_description ?? "GitHub did not return an access token",
+      failure.data.error,
+      failure.data.error_description ?? "GitHub did not return an access token",
     );
   }
-  return body.access_token;
+  throw new GithubOauthError("unexpected_response", "GitHub token exchange response was malformed");
 }
 
 /** Fetch the authenticated GitHub user profile. */
@@ -81,11 +106,11 @@ async function fetchGithubUser(fetcher: GithubFetch, accessToken: string): Promi
   if (!response.ok) {
     throw new GithubOauthError("github_unavailable", `GitHub user lookup failed (${response.status})`);
   }
-  const body = (await response.json()) as { login?: string; id?: number };
-  if (!body.login || typeof body.id !== "number") {
+  const body = githubUserResponseSchema.safeParse(await readJsonBody(response, "user"));
+  if (!body.success) {
     throw new GithubOauthError("unexpected_response", "GitHub user payload was missing expected fields");
   }
-  return { login: body.login, id: body.id };
+  return { login: body.data.login, id: body.data.id };
 }
 
 /**
@@ -117,10 +142,11 @@ async function fetchOrgMembership(
   if (!response.ok) {
     throw new GithubOauthError("github_unavailable", `GitHub membership lookup failed (${response.status})`);
   }
-  const body = (await response.json()) as { role?: string; state?: string };
-  const role = body.role === "admin" ? "admin" : "member";
-  const state = body.state === "pending" ? "pending" : "active";
-  return { role, state };
+  const body = githubOrgMembershipResponseSchema.safeParse(await readJsonBody(response, "org membership"));
+  if (!body.success) {
+    throw new GithubOauthError("unexpected_response", "GitHub org membership payload was missing expected fields");
+  }
+  return { role: body.data.role, state: body.data.state };
 }
 
 /** Create a GitHub OAuth client bound to the current test/production fetch. */

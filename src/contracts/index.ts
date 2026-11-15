@@ -119,6 +119,20 @@ export type { Env, ReviewConfig } from "./config.js";
 export { ERROR_CODES, errorCodeSchema, errorEnvelopeSchema } from "./errors.js";
 export type { ErrorEnvelope, KnownErrorCode } from "./errors.js";
 
+// GitHub OAuth identity responses.
+export {
+  githubOauthTokenErrorSchema,
+  githubOauthTokenSuccessSchema,
+  githubOrgMembershipResponseSchema,
+  githubUserResponseSchema,
+} from "./github.js";
+export type {
+  GithubOauthTokenError,
+  GithubOauthTokenSuccess,
+  GithubOrgMembershipResponse,
+  GithubUserResponse,
+} from "./github.js";
+
 // Benchmark suite files.
 export {
   benchmarkCaseSchema,
