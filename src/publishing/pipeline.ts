@@ -16,35 +16,62 @@
  *  - GitHub API failure after bounded retries → `completed_with_warnings`
  *    (the review data is retained; publication can be retried later).
  */
-import type { PrismaClient } from "@prisma/client";
 import type pino from "pino";
 import { resolveModelId } from "../agent/index.js";
 import type { AgentRuntime } from "../agent/types.js";
 import type { ReviewConfig } from "../config/review-schema.js";
-import { createFindingsDependencies, persistReviewFindings } from "../findings/index.js";
+import {
+  getFindingsForReview,
+  isActiveFindingStatus,
+  persistReviewFindings,
+  type FindingRecord,
+  type FindingsServiceDependencies,
+  type StoredFinding,
+} from "../findings/index.js";
 import { transitionReviewState } from "../ingestion/index.js";
 import type { ReviewJobPayload } from "../ingestion/queue.js";
-import { getKnowledgeSnapshot, materializeReviewKnowledge, persistKnowledgeMetrics } from "../knowledge/index.js";
+import type { MaterializeKnowledgeResult } from "../knowledge/index.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../observability/tracing.js";
+import type { PublisherOctokit } from "../ports/github-publisher.js";
 import { createReviewEngineHook } from "../review-engine/hook.js";
 import { resolveReviewInjection } from "../review-engine/injection.js";
-import type { PromptInjection, RunReviewOutput } from "../review-engine/types.js";
+import type { KnowledgeInjectionMetrics, PromptInjection, RunReviewOutput } from "../review-engine/types.js";
 import type { InstallationTokenProvider } from "../workspace/credentials.js";
 import { redactCredentials } from "../workspace/redact.js";
 import type { WorkspaceResult } from "../workspace/workspace.js";
-import {
-  StaleHeadError,
-  createGitHubOctokit,
-  publishReview,
-  recordPublicationFailure,
-  type PublisherOctokit,
-} from "./publisher.js";
+import { StaleHeadError, createGitHubOctokit, publishReview, recordPublicationFailure } from "./publisher.js";
+import type { PublishingRepositories, ReviewPublicationRepository } from "./publishing.repository.js";
+
+/**
+ * Knowledge materialization and metrics writes, bound to the worker's
+ * database client at the composition edge. The pipeline stays free of the
+ * concrete Prisma client; PR 2.6 moves this wiring into bootstrap.
+ */
+export interface ReviewKnowledgeDependencies {
+  /** Materialize the review's own knowledge copy and persist its identity. */
+  materialize(input: {
+    reviewId: string;
+    reviewType: string;
+    workspacePath: string;
+  }): Promise<MaterializeKnowledgeResult>;
+  /** Persist the injection funnel metrics (best-effort at the call site). */
+  persistMetrics(input: {
+    reviewId: string;
+    profile: "skill" | "handbook";
+    metrics: KnowledgeInjectionMetrics;
+  }): Promise<void>;
+}
 
 export interface ReviewPipelineDeps {
   runtime: AgentRuntime;
   config: ReviewConfig;
   logger: pino.Logger;
-  prisma: PrismaClient;
+  /** Review-comment persistence and review publication state. */
+  publishing: PublishingRepositories;
+  /** Findings persistence and the publication-input read. */
+  findings: FindingsServiceDependencies;
+  /** Review-type knowledge materialization. */
+  knowledge: ReviewKnowledgeDependencies;
   /** Installation-token provider used to authenticate the GitHub API calls. */
   tokenProvider: InstallationTokenProvider;
   /** Octokit factory (tests inject a fake; default builds a real one). */
@@ -62,17 +89,51 @@ export type ReviewPipelineHook = (ctx: {
  * Best-effort aggregate token usage persistence (§16.1). Returns whether the
  * write succeeded so the telemetry record can state it.
  */
-async function persistReviewUsage(prisma: PrismaClient, reviewId: string, output: RunReviewOutput): Promise<boolean> {
-  return prisma.review
-    .update({
-      where: { id: reviewId },
-      data: {
-        inputTokens: output.meta.usage.totalInputTokens,
-        outputTokens: output.meta.usage.totalOutputTokens,
-      },
+async function persistReviewUsage(
+  reviews: ReviewPublicationRepository,
+  reviewId: string,
+  output: RunReviewOutput,
+): Promise<boolean> {
+  return reviews
+    .recordUsage({
+      reviewId,
+      inputTokens: output.meta.usage.totalInputTokens,
+      outputTokens: output.meta.usage.totalOutputTokens,
     })
     .then(() => true)
     .catch(() => false);
+}
+
+/**
+ * Project a persisted finding into the publication shape.
+ *
+ * Only active lifecycle statuses are publishable: a review's own findings are
+ * always active, while resolved/dismissed/superseded rows belong to a
+ * superseded review and must never be published.
+ */
+function toStoredFinding(row: FindingRecord): StoredFinding | null {
+  if (!isActiveFindingStatus(row.status)) {
+    return null;
+  }
+  return {
+    id: row.id,
+    fingerprint: row.fingerprint,
+    category: row.category,
+    severity: row.severity,
+    confidence: row.confidence,
+    title: row.title,
+    filePath: row.filePath,
+    lineNumber: row.lineNumber,
+    description: row.description,
+    ...(row.impact ? { impact: row.impact } : {}),
+    ...(row.recommendation ? { recommendation: row.recommendation } : {}),
+    ...(row.guideline ? { guideline: row.guideline } : {}),
+    ...(row.evidence ? { evidence: row.evidence } : {}),
+    verified: row.verified,
+    status: row.status,
+    // Publication does not consume the lifecycle history flag.
+    reopened: false,
+  };
 }
 
 /**
@@ -165,29 +226,26 @@ export async function finalizeReview(
   output: RunReviewOutput,
   promptInjection?: PromptInjection | null,
 ): Promise<void> {
-  const { logger, prisma } = deps;
+  const { logger } = deps;
   const { payload, workspace } = ctx;
   const reviewId = payload.reviewId;
 
   // Findings persistence (ticket 08). The workspace is still present here —
   // verification needs the checked-out files; cleanup happens afterwards.
-  const review = await prisma.review.findUnique({
-    where: { id: reviewId },
-    select: { id: true, reviewType: true, pullRequest: { select: { repositoryId: true } } },
-  });
+  const review = await deps.publishing.reviews.findReviewContext(reviewId);
   if (!review) {
     throw new Error(`Review '${reviewId}' not found for findings persistence`);
   }
   try {
     await persistReviewFindings({
-      repositoryId: review.pullRequest.repositoryId,
+      repositoryId: review.repositoryId,
       repositoryFullName: payload.repositoryFullName,
       reviewId,
       workspacePath: workspace.workspacePath,
       findings: output.result.findings,
       uncertainFindings: output.result.uncertainFindings,
       config: deps.config,
-      dependencies: createFindingsDependencies(prisma),
+      dependencies: deps.findings,
       logger,
     });
   } catch (error) {
@@ -224,7 +282,7 @@ export async function finalizeReview(
       { reviewId, reviewType: review.reviewType },
       "Publishing gate: review type is not publishable; findings persisted but GitHub publication skipped",
     );
-    await prisma.review.update({ where: { id: reviewId }, data: { publishSkipped: true } }).catch(() => {
+    await deps.publishing.reviews.markPublishSkipped(reviewId).catch(() => {
       /* row gone — ignore */
     });
     await transitionReviewState(reviewId, "completed");
@@ -237,7 +295,7 @@ export async function finalizeReview(
         reviewType: review.reviewType,
         output,
         outcome: "publish_skipped",
-        usagePersisted: await persistReviewUsage(prisma, reviewId, output),
+        usagePersisted: await persistReviewUsage(deps.publishing.reviews, reviewId, output),
       }),
       "Review telemetry summary",
     );
@@ -253,8 +311,13 @@ export async function finalizeReview(
       ? deps.octokitFactory(token.token)
       : createGitHubOctokit(token.token, process.env.GITHUB_BASE_URL);
 
+    const storedFindings = (await getFindingsForReview(reviewId, deps.findings)).flatMap((row) => {
+      const finding = toStoredFinding(row);
+      return finding ? [finding] : [];
+    });
+
     const publish = await publishReview({
-      prisma,
+      comments: deps.publishing.comments,
       octokit,
       reviewId,
       repositoryFullName: payload.repositoryFullName,
@@ -262,35 +325,7 @@ export async function finalizeReview(
       headSha: workspace.headSha,
       diff: workspace.diff,
       summary: output.result.summary,
-      findings: await prisma.finding.findMany({ where: { reviewId } }).then((rows) =>
-        rows.map((row) => ({
-          id: row.id,
-          fingerprint: row.fingerprint,
-          category: row.category,
-          severity: row.severity,
-          confidence: row.confidence,
-          title: row.title,
-          filePath: row.filePath,
-          lineNumber: row.lineNumber,
-          description: row.description,
-          ...(row.impact ? { impact: row.impact } : {}),
-          ...(row.recommendation ? { recommendation: row.recommendation } : {}),
-          ...(row.guideline ? { guideline: row.guideline } : {}),
-          ...(row.evidence
-            ? {
-                evidence: row.evidence as unknown as Array<{
-                  file: string;
-                  line?: number;
-                  excerpt: string;
-                  reason: string;
-                }>,
-              }
-            : {}),
-          verified: row.verified,
-          status: row.status as "new" | "existing" | "updated" | "uncertain",
-          reopened: false,
-        })),
-      ),
+      findings: storedFindings,
       config: {
         publishSummary: deps.config.review.reporting.summary,
         publishUncertainInSummary: deps.config.review.findings.publishUncertainInSummary,
@@ -318,7 +353,7 @@ export async function finalizeReview(
     });
 
     // Persist aggregate token usage (§16.1 comparison endpoint).
-    const usagePersisted = await persistReviewUsage(prisma, reviewId, output);
+    const usagePersisted = await persistReviewUsage(deps.publishing.reviews, reviewId, output);
 
     await transitionReviewState(reviewId, "completed");
     endSpan(publishSpan);
@@ -358,7 +393,7 @@ export async function finalizeReview(
           output,
           outcome: "stale_commit",
           errorCode: "stale_commit",
-          usagePersisted: await persistReviewUsage(prisma, reviewId, output),
+          usagePersisted: await persistReviewUsage(deps.publishing.reviews, reviewId, output),
         }),
         "Review telemetry summary",
       );
@@ -366,7 +401,7 @@ export async function finalizeReview(
     }
     endSpan(publishSpan, error);
     const message = redactCredentials(error instanceof Error ? error.message : String(error));
-    const usagePersisted = await persistReviewUsage(prisma, reviewId, output);
+    const usagePersisted = await persistReviewUsage(deps.publishing.reviews, reviewId, output);
     logger.info(
       buildReviewTelemetry({
         config: deps.config,
@@ -380,7 +415,7 @@ export async function finalizeReview(
       "Review telemetry summary",
     );
     logger.error({ reviewId, err: message }, "GitHub publication failed");
-    await recordPublicationFailure(prisma, reviewId);
+    await recordPublicationFailure(deps.publishing.comments, reviewId);
     // The review data is intact and retained; only the GitHub write failed.
     await transitionReviewState(reviewId, "completed_with_warnings").catch(() => {
       /* already terminal */
@@ -410,13 +445,10 @@ export function createReviewPipelineHook(deps: ReviewPipelineDeps): ReviewPipeli
     // in-flight review.
     let promptInjection: PromptInjection | null = null;
     if (reviewType !== "standard") {
-      const materialized = await materializeReviewKnowledge({
+      const materialized = await deps.knowledge.materialize({
         reviewId: ctx.payload.reviewId,
         reviewType,
         workspacePath: ctx.workspace.workspacePath,
-        snapshot: getKnowledgeSnapshot(),
-        prisma: deps.prisma,
-        logger: deps.logger,
       });
       promptInjection = await resolveReviewInjection({
         reviewType,
@@ -431,20 +463,21 @@ export function createReviewPipelineHook(deps: ReviewPipelineDeps): ReviewPipeli
       // knowledgeSnapshot JSON. Best-effort — a metrics write failure must
       // never fail the review.
       if (promptInjection?.metrics) {
-        await persistKnowledgeMetrics(
-          deps.prisma,
-          ctx.payload.reviewId,
-          promptInjection.profile,
-          promptInjection.metrics,
-        ).catch((error) => {
-          deps.logger.warn(
-            {
-              reviewId: ctx.payload.reviewId,
-              err: redactCredentials(error instanceof Error ? error.message : String(error)),
-            },
-            "Failed to persist knowledge injection metrics (non-fatal)",
-          );
-        });
+        await deps.knowledge
+          .persistMetrics({
+            reviewId: ctx.payload.reviewId,
+            profile: promptInjection.profile,
+            metrics: promptInjection.metrics,
+          })
+          .catch((error) => {
+            deps.logger.warn(
+              {
+                reviewId: ctx.payload.reviewId,
+                err: redactCredentials(error instanceof Error ? error.message : String(error)),
+              },
+              "Failed to persist knowledge injection metrics (non-fatal)",
+            );
+          });
       }
     }
     // Engine run + state up to `validating` (ticket 07 hook).

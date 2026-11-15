@@ -6,15 +6,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi 
 import type { AgentRuntime } from "../src/agent/types.js";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
 import type { StoredFinding } from "../src/findings/index.js";
-import { persistReviewFindings, getFindingsForReview } from "../src/findings/index.js";
+import { createFindingsDependencies, getFindingsForReview, persistReviewFindings } from "../src/findings/index.js";
 import type { ReviewJobPayload } from "../src/ingestion/queue.js";
 import { getPrisma, disconnectPrisma } from "../src/lib/prisma.js";
 import { parseUnifiedDiff, resolveInlinePosition } from "../src/publishing/diff-positions.js";
 import { finalizeReview, type ReviewPipelineDeps } from "../src/publishing/pipeline.js";
+import { createPublishingRepositories } from "../src/publishing/prisma-publishing.repository.js";
 import {
   DEFAULT_RETRY,
   StaleHeadError,
   appendSummaryMarker,
+  isRetryableGitHubError,
   publishReview,
   recordPublicationFailure,
   withRetry,
@@ -49,6 +51,7 @@ vi.mock("../src/findings/index.js", async (importOriginal) => {
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
 
 const prisma = getPrisma();
+const publishing = createPublishingRepositories(prisma);
 
 const REPO_FULL_NAME = "fixture/publish-repo";
 const INSTALLATION_ID = 77_009n;
@@ -339,7 +342,7 @@ function makePublishInput(
   headSha: string = state.currentSha ?? "missing",
 ) {
   return {
-    prisma,
+    comments: publishing.comments,
     octokit: makeFakeOctokit(state),
     reviewId,
     repositoryFullName: REPO_FULL_NAME,
@@ -423,7 +426,12 @@ function makeDeps(state: FakeState, overrides: Partial<ReviewPipelineDeps> = {})
     runtime: {} as AgentRuntime,
     config,
     logger: fakeLogger,
-    prisma,
+    publishing,
+    findings: createFindingsDependencies(prisma),
+    knowledge: {
+      materialize: async () => ({ knowledgeDir: null, snapshot: null }),
+      persistMetrics: async () => {},
+    },
     tokenProvider: {
       getInstallationToken: async () => ({
         token: "fake-installation-token",
@@ -780,6 +788,23 @@ describe("retry policy", () => {
   });
 });
 
+describe("GitHub error classification", () => {
+  const withStatus = (status: number) => Object.assign(new Error("api error"), { status });
+
+  test("transient statuses and unknown failures are retryable", () => {
+    for (const status of [408, 409, 429, 500, 502, 503]) {
+      expect(isRetryableGitHubError(withStatus(status))).toBe(true);
+    }
+    expect(isRetryableGitHubError(new Error("socket closed"))).toBe(true);
+  });
+
+  test("deterministic client errors are not retried", () => {
+    for (const status of [400, 401, 403, 404, 422]) {
+      expect(isRetryableGitHubError(withStatus(status))).toBe(false);
+    }
+  });
+});
+
 describe("publishReview (fake octokit + Postgres)", () => {
   test("publishes inline comments for anchored findings, summary for the rest, always COMMENT", async () => {
     const seed = await seedReview("pub1");
@@ -1056,7 +1081,7 @@ describe("publishReview (fake octokit + Postgres)", () => {
     // Nothing was published, so nothing is marked published.
     expect(await prisma.reviewComment.count({ where: { reviewId: seed.reviewId, status: "published" } })).toBe(0);
 
-    await recordPublicationFailure(prisma, seed.reviewId);
+    await recordPublicationFailure(publishing.comments, seed.reviewId);
     const failed = await prisma.reviewComment.findFirst({ where: { reviewId: seed.reviewId, status: "failed" } });
     expect(failed?.commentType).toBe("summary");
     expect(failed?.githubCommentId).toBeNull();

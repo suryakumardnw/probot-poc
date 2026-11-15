@@ -21,6 +21,12 @@ export {
   type FindingsBodyInput,
   type ReviewBodyMeta,
 } from "./summary.js";
+export type {
+  CreatedReview,
+  CreatedReviewResponse,
+  PublisherOctokit,
+  ReviewCommentParams,
+} from "../ports/github-publisher.js";
 export {
   StaleHeadError,
   createGitHubOctokit,
@@ -29,11 +35,33 @@ export {
   withRetry,
   appendSummaryMarker,
   DEFAULT_RETRY,
-  type PublisherOctokit,
-  type ReviewCommentParams,
+  isRetryableGitHubError,
   type PublishOutcome,
   type PublishReviewResult,
   type PublishReviewInput,
   type RetryOptions,
 } from "./publisher.js";
-export { createReviewPipelineHook, type ReviewPipelineDeps, type ReviewPipelineHook } from "./pipeline.js";
+export type {
+  PublishedFingerprintRecord,
+  PublishingRepositories,
+  RecordInlinePublication,
+  RecordPublicationInput,
+  RecordReviewUsageInput,
+  RecordSummaryPublication,
+  ReviewCommentRepository,
+  ReviewCommentStatus,
+  ReviewCommentType,
+  ReviewPublicationContext,
+  ReviewPublicationRepository,
+} from "./publishing.repository.js";
+export {
+  createPublishingRepositories,
+  createReviewCommentRepository,
+  createReviewPublicationRepository,
+} from "./prisma-publishing.repository.js";
+export {
+  createReviewPipelineHook,
+  type ReviewKnowledgeDependencies,
+  type ReviewPipelineDeps,
+  type ReviewPipelineHook,
+} from "./pipeline.js";

@@ -1,11 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { StoredFinding } from "../../src/findings/index.js";
+import { createPublishingRepositories } from "../../src/publishing/prisma-publishing.repository.js";
 import {
   StaleHeadError,
   publishReview,
   type PublisherOctokit,
   type ReviewCommentParams,
 } from "../../src/publishing/publisher.js";
+import type { ReviewCommentRepository } from "../../src/publishing/publishing.repository.js";
 import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, silentLogger } from "./support.js";
 
 /**
@@ -47,6 +49,8 @@ interface FakeState {
 
 let commentIdSeq = 20_000;
 let findingSeq = 0;
+
+const publishing = createPublishingRepositories(prisma);
 
 function makeFakeState(currentSha: string | null): FakeState {
   return {
@@ -136,7 +140,7 @@ function makeInput(
   headSha = state.currentSha ?? chain.headSha,
 ) {
   return {
-    prisma,
+    comments: publishing.comments,
     octokit: makeFakeOctokit(state),
     reviewId: chain.reviewId,
     repositoryFullName: chain.repositoryFullName,
@@ -225,6 +229,45 @@ describe("publication guards (§4.4, §7.4)", () => {
     const third = await publishReview(makeInput(chain, state, [anchored]));
     expect(third.outcome).toBe("already_published");
     expect(state.createReviewCalls).toHaveLength(1);
+  });
+
+  test("a worker death after createReview is reconciled on retry without duplicates", async () => {
+    const chain = await seedReviewChain({ prefix: "publish-partial" });
+    const anchored = await insertStoredFinding(chain, { title: "Partially published issue" });
+    const state = makeFakeState(chain.headSha);
+
+    // Simulate the worker dying after GitHub accepted the review but before
+    // the durable publication rows committed.
+    const crashing: ReviewCommentRepository = {
+      ...publishing.comments,
+      recordPublication: async () => {
+        throw new Error("worker died after createReview");
+      },
+    };
+
+    await expect(
+      publishReview({
+        ...makeInput(chain, state, [anchored]),
+        comments: crashing,
+      }),
+    ).rejects.toThrow(/worker died after createReview/);
+
+    expect(state.createReviewCalls).toHaveLength(1);
+    expect(state.existingComments).toHaveLength(1);
+    expect(state.existingReviews).toHaveLength(1);
+    expect(await prisma.reviewComment.count({ where: { reviewId: chain.reviewId } })).toBe(0);
+
+    // The retry sees the summary marker and inline fingerprint already on the
+    // PR, so it publishes nothing new and creates no duplicate review.
+    const retry = await publishReview(makeInput(chain, state, [anchored]));
+    expect(retry.outcome).toBe("already_published");
+    expect(retry.reviewId).toBe(7001);
+    expect(retry.inlineCreated).toBe(0);
+    expect(retry.inlineDeduped).toBe(1);
+    expect(retry.reconciled).toBe(1);
+    expect(state.createReviewCalls).toHaveLength(1);
+    expect(state.existingComments).toHaveLength(1);
+    expect(state.existingReviews).toHaveLength(1);
   });
 });
 

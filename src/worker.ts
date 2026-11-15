@@ -3,12 +3,19 @@ import path from "node:path";
 import type { Worker } from "bullmq";
 import { createAgentRuntime } from "./agent/index.js";
 import { loadEnv } from "./config/env.js";
+import { createFindingsDependencies } from "./findings/index.js";
 import { loadIngestionConfig, recoverOutbox } from "./ingestion/index.js";
 import { createIngestionRepositories } from "./ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "./ingestion/prisma-ingestion.unit-of-work.js";
 import { closeReviewQueue } from "./ingestion/queue.js";
 import { getReviewQueue } from "./ingestion/queue.js";
-import { ensureKnowledgeSources, setKnowledgeSnapshot } from "./knowledge/index.js";
+import {
+  ensureKnowledgeSources,
+  getKnowledgeSnapshot,
+  materializeReviewKnowledge,
+  persistKnowledgeMetrics,
+  setKnowledgeSnapshot,
+} from "./knowledge/index.js";
 import { createLogger } from "./lib/logger.js";
 import { checkPrisma, disconnectPrisma, getPrisma } from "./lib/prisma.js";
 import { checkRedis, disconnectRedis, getRedis, waitRedisReady } from "./lib/redis.js";
@@ -17,7 +24,7 @@ import { AlertManager } from "./observability/alerts.js";
 import { startMetricsServer, metricsServerPort } from "./observability/metrics-endpoint.js";
 import { getMetricsRegistry } from "./observability/metrics.js";
 import { retryPolicyConfigFromReviewConfig } from "./observability/retry.js";
-import { createReviewPipelineHook } from "./publishing/index.js";
+import { createPublishingRepositories, createReviewPipelineHook } from "./publishing/index.js";
 import { reconcileIncompleteReviews } from "./recovery/reconciliation.js";
 import { workspaceDirectorySizeBytes } from "./workspace/disk.js";
 import { createDefaultTokenProvider, startReviewWorker, stopReviewWorker } from "./workspace/processor.js";
@@ -136,7 +143,18 @@ async function main(): Promise<void> {
       }),
       config,
       logger,
-      prisma: getPrisma(env),
+      publishing: createPublishingRepositories(prismaClient),
+      findings: createFindingsDependencies(prismaClient),
+      knowledge: {
+        materialize: (input) =>
+          materializeReviewKnowledge({
+            ...input,
+            snapshot: getKnowledgeSnapshot(),
+            prisma: prismaClient,
+            logger,
+          }),
+        persistMetrics: (input) => persistKnowledgeMetrics(prismaClient, input.reviewId, input.profile, input.metrics),
+      },
       tokenProvider: createDefaultTokenProvider(),
     }),
   });

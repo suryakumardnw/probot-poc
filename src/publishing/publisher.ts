@@ -24,9 +24,10 @@
 import { Octokit } from "@octokit/core";
 import { restEndpointMethods } from "@octokit/plugin-rest-endpoint-methods";
 import { retry } from "@octokit/plugin-retry";
-import type { PrismaClient } from "@prisma/client";
 import type { StoredFinding } from "../findings/index.js";
+import type { CreatedReviewResponse, PublisherOctokit } from "../ports/github-publisher.js";
 import { resolveInlinePosition, parseUnifiedDiff, type InlinePosition } from "./diff-positions.js";
+import type { ReviewCommentRepository } from "./publishing.repository.js";
 import {
   buildInlineCommentBody,
   buildReviewBody,
@@ -35,50 +36,19 @@ import {
   type ReviewBodyMeta,
 } from "./summary.js";
 
-// ---------------------------------------------------------------------------
-// Octokit surface (minimal, injectable — tests supply a fake)
-// ---------------------------------------------------------------------------
+export type {
+  CreatedReview,
+  CreatedReviewResponse,
+  PublisherOctokit,
+  ReviewCommentParams,
+} from "../ports/github-publisher.js";
 
-export interface ReviewCommentParams {
-  path: string;
-  line: number;
-  side?: "RIGHT" | "LEFT";
-  body: string;
-}
-
-export interface PublisherOctokit {
-  rest: {
-    pulls: {
-      get(params: { owner: string; repo: string; pull_number: number }): Promise<{
-        data: { head: { sha?: string | null } };
-      }>;
-      listReviewComments(params: {
-        owner: string;
-        repo: string;
-        pull_number: number;
-        per_page?: number;
-        page?: number;
-      }): Promise<{ data: Array<{ id: number; body: string | null }> }>;
-      listReviews(params: {
-        owner: string;
-        repo: string;
-        pull_number: number;
-        per_page?: number;
-        page?: number;
-      }): Promise<{ data: Array<{ id: number; body: string | null; state: string }> }>;
-      createReview(params: {
-        owner: string;
-        repo: string;
-        pull_number: number;
-        event: "COMMENT";
-        body: string;
-        comments?: ReviewCommentParams[];
-      }): Promise<{ data: { id: number; comments?: Array<{ id: number; body?: string | null }> } }>;
-    };
-  };
-}
-
-/** Real octokit built from an installation token (rest methods + retry plugin). */
+/**
+ * Concrete GitHub transport (rest methods + retry plugin).
+ *
+ * The service only depends on the `PublisherOctokit` port. This factory stays
+ * at the module edge; PR 3.5 moves it to `platform/github`.
+ */
 const RestOctokit = Octokit.plugin(restEndpointMethods, retry);
 
 export function createGitHubOctokit(token: string, baseUrl?: string): PublisherOctokit {
@@ -222,7 +192,8 @@ export interface PublishReviewResult {
 }
 
 export interface PublishReviewInput {
-  prisma: PrismaClient;
+  /** Review-comment persistence and reconciliation. */
+  comments: ReviewCommentRepository;
   octokit: PublisherOctokit;
   reviewId: string;
   /** Full repository name ("owner/repo"). */
@@ -282,7 +253,8 @@ async function listAll<T>(fetchPage: (page: number) => Promise<T[]>): Promise<T[
  *  5. Persist ReviewComment rows with the GitHub comment IDs.
  */
 export async function publishReview(input: PublishReviewInput): Promise<PublishReviewResult> {
-  const { prisma, octokit, reviewId, repositoryFullName, pullNumber, headSha, diff, summary, findings, logger } = input;
+  const { comments, octokit, reviewId, repositoryFullName, pullNumber, headSha, diff, summary, findings, logger } =
+    input;
   const publishSummary = input.config.publishSummary ?? true;
   const { owner, repo } = splitFullName(repositoryFullName);
   const retryOptions: RetryOptions = {
@@ -328,13 +300,10 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
       knownFingerprints.set(fp, comment.id);
     }
   }
-  const publishedRows = await prisma.reviewComment.findMany({
-    where: { reviewId, status: "published", fingerprint: { not: null } },
-    select: { fingerprint: true, githubCommentId: true },
-  });
+  const publishedRows = await comments.listPublishedFingerprints(reviewId);
   for (const row of publishedRows) {
     if (row.fingerprint && !knownFingerprints.has(row.fingerprint)) {
-      knownFingerprints.set(row.fingerprint, Number(row.githubCommentId ?? 0));
+      knownFingerprints.set(row.fingerprint, row.githubCommentId ?? 0);
     }
   }
 
@@ -374,11 +343,7 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
   //    disabled, skip this entirely: only inline comments are reconciled.
   let existingSummaryId: number | null = null;
   if (publishSummary) {
-    const summaryRow = await prisma.reviewComment.findFirst({
-      where: { reviewId, commentType: "summary", status: "published", githubCommentId: { not: null } },
-      select: { githubCommentId: true },
-    });
-    existingSummaryId = summaryRow?.githubCommentId != null ? Number(summaryRow.githubCommentId) : null;
+    existingSummaryId = await comments.findPublishedSummaryCommentId(reviewId);
     if (existingSummaryId === null) {
       const reviews = await listAll((page) =>
         withRetry(
@@ -454,7 +419,7 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
   // the PR diff ("Path could not be resolved"). Retrying the same request is
   // useless; degrade once to a summary-only review so the already-computed
   // findings are not lost.
-  let created: Awaited<ReturnType<PublisherOctokit["rest"]["pulls"]["createReview"]>>;
+  let created: CreatedReviewResponse;
   let publishedInlineCandidates = inlineCandidates;
   try {
     created = await withRetry(
@@ -528,25 +493,14 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
     }
   }
 
-  await prisma.$transaction(async (tx) => {
-    if (publishSummary && existingSummaryId === null) {
-      await tx.reviewComment.create({
-        data: { reviewId, commentType: "summary", status: "published", githubCommentId: BigInt(githubReviewId) },
-      });
-    }
-    for (const candidate of publishedInlineCandidates) {
-      const commentId = fingerprintToCommentId.get(candidate.finding.fingerprint) ?? null;
-      await tx.reviewComment.create({
-        data: {
-          reviewId,
-          findingId: candidate.finding.id,
-          fingerprint: candidate.finding.fingerprint,
-          commentType: "inline",
-          status: "published",
-          ...(commentId !== null ? { githubCommentId: BigInt(commentId) } : {}),
-        },
-      });
-    }
+  await comments.recordPublication({
+    reviewId,
+    summary: publishSummary && existingSummaryId === null ? { githubCommentId: githubReviewId } : null,
+    inlineComments: publishedInlineCandidates.map((candidate) => ({
+      findingId: candidate.finding.id,
+      fingerprint: candidate.finding.fingerprint,
+      githubCommentId: fingerprintToCommentId.get(candidate.finding.fingerprint) ?? null,
+    })),
   });
 
   logger?.info(
@@ -568,17 +522,6 @@ export async function publishReview(input: PublishReviewInput): Promise<PublishR
  * Record a publication failure for the summary comment (status `failed`),
  * best-effort — called when createReview exhausted its retries.
  */
-export async function recordPublicationFailure(prisma: PrismaClient, reviewId: string): Promise<void> {
-  await prisma.reviewComment
-    .create({
-      data: {
-        reviewId,
-        commentType: "summary",
-        status: "failed",
-        // No githubCommentId: nothing was published.
-      },
-    })
-    .catch(() => {
-      /* best-effort */
-    });
+export async function recordPublicationFailure(comments: ReviewCommentRepository, reviewId: string): Promise<void> {
+  await comments.recordFailure(reviewId);
 }
