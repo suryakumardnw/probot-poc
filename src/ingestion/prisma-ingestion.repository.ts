@@ -553,11 +553,6 @@ export function createReviewRepository(client: PrismaDatabaseClient): ReviewRepo
       return row?.state ?? null;
     },
 
-    async updateState(reviewId: string, patch: ReviewStatePatch): Promise<ReviewRecord> {
-      const row = await client.review.update({ where: { id: reviewId }, data: reviewPatchData(patch) });
-      return mapReview(row);
-    },
-
     async transitionState(input: TransitionReviewStateInput): Promise<TransitionReviewStateResult> {
       return runInTransaction(client, (tx) => applyReviewTransition(tx, input));
     },

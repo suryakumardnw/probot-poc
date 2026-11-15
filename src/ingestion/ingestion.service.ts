@@ -4,12 +4,15 @@ import type { LoadedReviewConfig, ReviewConfigStore } from "../ports/review-conf
 import type { IngestReviewRequestInput, IngestReviewRequestResult } from "./ingestion.types.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "./ingestion.unit-of-work.js";
 import type { PublishResult } from "./outbox.service.js";
-import { TERMINAL_REVIEW_STATES } from "./review-state.service.js";
+import { REVIEW_STATES, TERMINAL_REVIEW_STATES, canTransition } from "./review-state.service.js";
 
 /**
  * Durable review intake (ARCHITECTURE.md §4, §12, §13.1). The full idempotency
  * contract is documented on the module entry point (`index.ts`).
  */
+
+/** Non-terminal states the state machine permits a move into `superseded`. */
+const SUPERSEDE_ALLOWED_FROM_STATES = REVIEW_STATES.filter((state) => canTransition(state, "superseded"));
 
 export function buildJobKey(parts: {
   installationId: string;
@@ -206,16 +209,41 @@ export function createIngestionService(deps: IngestionServiceDependencies): Inge
       });
 
       for (const outdated of inFlight) {
-        await repos.reviews.updateState(outdated.review.id, {
-          state: "superseded",
-          supersededByReviewId: review.id,
-          supersededAt: new Date(),
-        });
-        await repos.stateTransitions.create({
+        const superseded = await repos.reviews.transitionState({
           reviewId: outdated.review.id,
-          fromState: outdated.review.state,
           toState: "superseded",
+          allowedFromStates: SUPERSEDE_ALLOWED_FROM_STATES,
+          patch: {
+            supersededByReviewId: review.id,
+            supersededAt: new Date(),
+          },
         });
+
+        // The in-flight snapshot can go stale while this transaction runs. A
+        // review that completed first must never be overwritten, and a lost
+        // race must never write a second audit row.
+        if (superseded.outcome === "conflict") {
+          deps.logger.info(
+            { reviewId: outdated.review.id, currentState: superseded.currentState, replacementReviewId: review.id },
+            "Skipped supersede: review already left an in-flight state",
+          );
+          continue;
+        }
+        if (superseded.outcome === "not_found") {
+          deps.logger.info(
+            { reviewId: outdated.review.id, replacementReviewId: review.id },
+            "Skipped supersede: review no longer exists",
+          );
+          continue;
+        }
+        if (superseded.outcome === "unchanged") {
+          deps.logger.debug(
+            { reviewId: outdated.review.id, replacementReviewId: review.id },
+            "Supersede already applied by a concurrent writer",
+          );
+          continue;
+        }
+
         if (outdated.job) {
           await repos.reviewJobs.update(outdated.job.id, {
             status: "superseded",

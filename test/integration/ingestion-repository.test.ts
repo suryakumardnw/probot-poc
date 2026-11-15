@@ -196,14 +196,22 @@ describe("review repository", () => {
     await seedReview(pullRequestId, { attempt: 1 });
     expect(await repositories.reviews.maxAttempt(reviewIdentity(pullRequestId))).toBe(1);
 
-    const superseded = await repositories.reviews.updateState(secondInFlight.id, {
-      state: "superseded",
-      supersededByReviewId: review.id,
-      supersededAt: new Date("2026-01-02T03:04:05.000Z"),
+    const superseded = await repositories.reviews.transitionState({
+      reviewId: secondInFlight.id,
+      toState: "superseded",
+      allowedFromStates: ["queued"],
+      patch: {
+        supersededByReviewId: review.id,
+        supersededAt: new Date("2026-01-02T03:04:05.000Z"),
+      },
     });
-    expect(superseded.state).toBe("superseded");
-    expect(superseded.supersededByReviewId).toBe(review.id);
-    expect(superseded.supersededAt?.toISOString()).toBe("2026-01-02T03:04:05.000Z");
+    expect(superseded.outcome).toBe("transitioned");
+    if (superseded.outcome !== "transitioned") {
+      throw new Error("expected the guard to accept the queued review");
+    }
+    expect(superseded.review.state).toBe("superseded");
+    expect(superseded.review.supersededByReviewId).toBe(review.id);
+    expect(superseded.review.supersededAt?.toISOString()).toBe("2026-01-02T03:04:05.000Z");
 
     await repositories.stateTransitions.create({
       reviewId: review.id,
@@ -242,23 +250,41 @@ describe("review repository", () => {
     expect(failed?.errorMessage).toBe("attempts exhausted");
   });
 
-  test("updates complete transitions and terminal timestamps", async () => {
+  test("guarded transitions persist terminal timestamps and failure metadata", async () => {
     const { repositoryId } = await seedRepository();
     const pullRequestId = await seedPullRequest(repositoryId);
-    const review = await seedReview(pullRequestId);
+    const completedReview = await seedReview(pullRequestId, { state: "publishing" });
+    const failedReview = await seedReview(pullRequestId, {
+      state: "publishing",
+      headSha: "9999aaaa9999aaaa9999aaaa9999aaaa9999aaaa",
+    });
 
     const completedAt = new Date("2026-02-03T04:05:06.000Z");
-    const completed = await repositories.reviews.updateState(review.id, { state: "completed", completedAt });
-    expect(completed.state).toBe("completed");
-    expect(completed.completedAt?.toISOString()).toBe(completedAt.toISOString());
-
-    const failed = await repositories.reviews.updateState(review.id, {
-      state: "failed",
-      errorCode: "REVIEW_FAILED",
-      errorMessage: "boom",
+    const completed = await repositories.reviews.transitionState({
+      reviewId: completedReview.id,
+      toState: "completed",
+      allowedFromStates: ["publishing"],
+      patch: { completedAt },
     });
-    expect(failed.errorCode).toBe("REVIEW_FAILED");
-    expect(failed.errorMessage).toBe("boom");
+    expect(completed.outcome).toBe("transitioned");
+    if (completed.outcome !== "transitioned") {
+      throw new Error("expected the guard to accept the publishing review");
+    }
+    expect(completed.review.state).toBe("completed");
+    expect(completed.review.completedAt?.toISOString()).toBe(completedAt.toISOString());
+
+    const failed = await repositories.reviews.transitionState({
+      reviewId: failedReview.id,
+      toState: "failed",
+      allowedFromStates: ["publishing"],
+      patch: { errorCode: "REVIEW_FAILED", errorMessage: "boom" },
+    });
+    expect(failed.outcome).toBe("transitioned");
+    if (failed.outcome !== "transitioned") {
+      throw new Error("expected the guard to accept the publishing review");
+    }
+    expect(failed.review.errorCode).toBe("REVIEW_FAILED");
+    expect(failed.review.errorMessage).toBe("boom");
   });
 });
 

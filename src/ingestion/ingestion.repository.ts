@@ -382,7 +382,6 @@ export interface ReviewRepository {
   create(input: CreateReviewInput): Promise<ReviewRecord>;
   findById(reviewId: string): Promise<ReviewRecord | null>;
   findStateById(reviewId: string): Promise<ReviewState | null>;
-  updateState(reviewId: string, patch: ReviewStatePatch): Promise<ReviewRecord>;
   /**
    * Atomically move a review from one of `allowedFromStates` to `toState` and
    * append exactly one audit transition row in the same transaction.
@@ -393,7 +392,9 @@ export interface ReviewRepository {
    * already has is an `unchanged` no-op and writes no audit row.
    */
   transitionState(input: TransitionReviewStateInput): Promise<TransitionReviewStateResult>;
+  /** Sanctioned backward move: recovery requeues a stuck review explicitly. */
   resetForRecovery(reviewId: string): Promise<void>;
+  /** Recovery-only terminal write: fail a review after requeue exhaustion. */
   markFailed(reviewId: string, errorCode: string, errorMessage: string | null): Promise<void>;
   findStatusById(reviewId: string): Promise<ReviewStatusRecord | null>;
   /** Newest-first administrative review list with repository names. */
