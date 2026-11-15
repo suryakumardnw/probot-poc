@@ -174,10 +174,11 @@ boundary and must be revisited when the relevant module is moved.
    draining a real active job. The concrete worker step list is still assembled
    by `createWorkerRuntime`; `orderShutdownSteps` guarantees the drain-before-
    connections contract it relies on.
-2. **Real Redis outage for the outbox.** `outbox.test.ts` simulates an
-   unavailable Redis by injecting a failing `ReviewQueue` port through
-   `createTestIngestion`. The existing `test/integration/review-ingestion.test.ts` performs
-   the real container stop/start.
+2. **Real Redis outage for the outbox.** Both `outbox.test.ts` and
+   `test/integration/review-ingestion.test.ts` simulate an unavailable Redis by
+   injecting a failing `ReviewQueue` port through `createTestIngestion`. No test
+   stops a shared Redis instance, so connection loss mid-command and client
+   reconnection behaviour remain uncovered by design.
 3. **Admin auth stores are process-local.** OAuth states, sessions and rate-limit
    buckets are in-memory maps. The tests use the exports intended for lifecycle
    management (`clearOauthStates`, `clearSessions`, `clearRateLimitBuckets`)

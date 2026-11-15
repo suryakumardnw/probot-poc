@@ -25,7 +25,7 @@ import {
  *
  * Assertions read the durable Finding / FindingStatusTransition rows produced
  * by the exported persistence boundary. The verification pipeline itself is
- * covered by test/findings.test.ts; this suite pins the observable row contract
+ * covered by test/integration/findings.test.ts; this suite pins the observable row contract
  * the refactor must preserve.
  */
 

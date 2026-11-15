@@ -8,7 +8,6 @@ import type { ReviewJobPayload } from "../../src/contracts/queue.js";
 import { createApp } from "../../src/index.js";
 import { InvalidStateTransitionError } from "../../src/modules/ingestion/index.js";
 import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
-import { createRedis, checkRedis, disconnectRedis } from "../../src/platform/redis.js";
 import { at, first } from "../helpers/assert.js";
 import { disconnectDatabase, prisma } from "../helpers/db.js";
 import { testEnv } from "../helpers/env.js";
@@ -20,8 +19,9 @@ import { createTestTriage } from "../helpers/triage.js";
  * Ticket 03 integration tests: durable review ingestion.
  *
  * Everything runs against the local docker-compose dependencies
- * (ticket01-pg on :5432, ticket01-redis on :6379). Webhook payloads are
- * delivered through probot.receive with the shared mock private key.
+ * (Postgres on :5432, Redis on :6379). Webhook payloads are delivered through
+ * probot.receive with the shared mock private key. No test stops or renames a
+ * shared container.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -185,18 +185,23 @@ async function receiveDelivery(
  * while disconnected (enableOfflineQueue: false), so a delivery arriving
  * before the TCP handshake completes would leave its outbox event pending.
  */
-const healthRedis = createRedis(testEnv);
 let reviewQueue = createReviewQueue(testEnv.REDIS_URL);
 let ingestion = createTestIngestion({ queue: reviewQueue });
 
-function makeTestApp() {
+type TestIngestion = ReturnType<typeof createTestIngestion>;
+
+function makeApp(testIngestion: TestIngestion) {
   return createApp({
-    ingestion: ingestion.services,
-    ingestionRepositories: ingestion.repositories,
-    ingestionUnitOfWork: ingestion.unitOfWork,
+    ingestion: testIngestion.services,
+    ingestionRepositories: testIngestion.repositories,
+    ingestionUnitOfWork: testIngestion.unitOfWork,
     triage: createTestTriage(),
-    config: ingestion.config,
+    config: testIngestion.config,
   });
+}
+
+function makeTestApp() {
+  return makeApp(ingestion);
 }
 let testApp = makeTestApp();
 
@@ -233,7 +238,6 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await reviewQueue.close();
-  await disconnectRedis(healthRedis);
   await cleanDatabase();
   await disconnectDatabase();
 });
@@ -741,59 +745,57 @@ describe("review state machine", () => {
 });
 
 describe("transactional outbox recovery (§12.2)", () => {
-  test("ingestion with Redis down leaves pending outbox events; recovery publishes them", async () => {
-    // Stop Redis so the enqueue fails and the event stays pending.
-    await shell("docker stop ticket01-redis");
-    try {
-      const prisma1 = prisma;
-      // Webhook path with Redis unavailable: probot app instance.
-      const offlineProbot = new Probot({
-        appId: 123,
-        privateKey,
-        Octokit: ProbotOctokit.defaults((instanceOptions: any) => ({
-          ...instanceOptions,
-          retry: { enabled: false },
-          throttle: { enabled: false },
-        })),
-      });
-      offlineProbot.load(testApp);
-      await receiveDelivery(
-        offlineProbot,
-        "pull_request",
-        "opened",
-        pullRequestPayload("opened", { headSha: "abab7777abab7777abab7777abab7777abab7777" }),
-        "delivery-outbox-1",
-      );
-      const review = await prisma1.review.findFirstOrThrow();
-      expect(review.state).toBe("queued");
-      const job = await prisma1.reviewJob.findFirstOrThrow({ where: { reviewId: review.id } });
-      expect(job.status).toBe("pending_outbox");
-      const event = await prisma1.outboxEvent.findFirstOrThrow({ where: { reviewJobId: job.id } });
-      expect(event.status).toBe("pending");
+  test("ingestion with the queue unavailable leaves pending outbox events; recovery publishes them", async () => {
+    // Deterministic Redis-outage seam: the webhook graph is bound to a queue
+    // port whose enqueue always fails. No shared Redis or named container is
+    // stopped, so this runs anywhere Postgres/Redis are reachable.
+    const unavailableQueue = {
+      enqueue: async (): Promise<{ id?: string }> => {
+        throw new Error("connect ECONNREFUSED 127.0.0.1:6379");
+      },
+      close: async () => {},
+    };
+    const offlineIngestion = createTestIngestion({ queue: unavailableQueue });
+    const offlineProbot = new Probot({
+      appId: 123,
+      privateKey,
+      Octokit: ProbotOctokit.defaults((instanceOptions: any) => ({
+        ...instanceOptions,
+        retry: { enabled: false },
+        throttle: { enabled: false },
+      })),
+    });
+    offlineProbot.load(makeApp(offlineIngestion));
 
-      // Restart Redis, then recover.
-      await shell("docker start ticket01-redis");
-      await waitRedisUp();
-      // The queue connection gave up during the outage; recreate it.
-      await ensureQueueReady();
+    await receiveDelivery(
+      offlineProbot,
+      "pull_request",
+      "opened",
+      pullRequestPayload("opened", { headSha: "abab7777abab7777abab7777abab7777abab7777" }),
+      "delivery-outbox-1",
+    );
 
-      const summary = await ingestion.services.recoverOutbox();
-      expect(summary.scanned).toBeGreaterThanOrEqual(1);
-      expect(summary.published).toBeGreaterThanOrEqual(1);
+    const review = await prisma.review.findFirstOrThrow();
+    expect(review.state).toBe("queued");
+    const job = await prisma.reviewJob.findFirstOrThrow({ where: { reviewId: review.id } });
+    expect(job.status).toBe("pending_outbox");
+    const event = await prisma.outboxEvent.findFirstOrThrow({ where: { reviewJobId: job.id } });
+    expect(event.status).toBe("pending");
+    expect(event.attempts).toBe(1);
+    expect(event.lastError).toContain("ECONNREFUSED");
 
-      const jobAfter = await prisma1.reviewJob.findUniqueOrThrow({ where: { id: job.id } });
-      expect(jobAfter.status).toBe("enqueued");
-      const eventAfter = await prisma1.outboxEvent.findUniqueOrThrow({ where: { id: event.id } });
-      expect(eventAfter.status).toBe("published");
-    } finally {
-      // Ensure Redis is back up even on failure.
-      const redisUp = await checkRedis(healthRedis);
-      if (redisUp.status !== "ok") {
-        await shell("docker start ticket01-redis");
-        await waitRedisUp();
-      }
-    }
-  }, 60_000);
+    // The real queue port is healthy; recovery drains the pending event.
+    const summary = await ingestion.services.recoverOutbox();
+    expect(summary.scanned).toBeGreaterThanOrEqual(1);
+    expect(summary.published).toBeGreaterThanOrEqual(1);
+
+    const jobAfter = await prisma.reviewJob.findUniqueOrThrow({ where: { id: job.id } });
+    expect(jobAfter.status).toBe("enqueued");
+    expect(jobAfter.queueJobId).toBe(job.id);
+    const eventAfter = await prisma.outboxEvent.findUniqueOrThrow({ where: { id: event.id } });
+    expect(eventAfter.status).toBe("published");
+    expect(eventAfter.publishedAt).not.toBeNull();
+  });
 });
 
 describe("outbox publish ordering", () => {
@@ -895,30 +897,3 @@ describe("outbox publish ordering", () => {
     expect(event.attempts).toBe(1);
   });
 });
-
-// Helpers ---------------------------------------------------------------------
-
-async function shell(command: string): Promise<string> {
-  const { execFile } = await import("node:child_process");
-  return new Promise((resolve, reject) => {
-    execFile("sh", ["-c", command], { timeout: 30_000 }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(`${command}: ${(stderr || stdout || error.message).trim()}`));
-      } else {
-        resolve(stdout);
-      }
-    });
-  });
-}
-
-async function waitRedisUp(timeoutMs = 30_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const check = await checkRedis(healthRedis);
-    if (check.status === "ok") {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error("Redis did not come back up in time");
-}

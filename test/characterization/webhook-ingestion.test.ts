@@ -199,8 +199,6 @@ describe("pull_request ingestion", () => {
     probot = makeProbot();
   });
 
-  afterEach(async () => {});
-
   test("opened persists the installation/repository/PR/review and enqueues one job", async () => {
     await receive(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-opened-1");
 
@@ -321,8 +319,6 @@ describe("duplicate delivery and review identity (§12.1, §12.3)", () => {
     probot = makeProbot();
   });
 
-  afterEach(async () => {});
-
   test("the same deliveryId twice creates one review and one delivery row", async () => {
     const deliveryId = "delivery-duplicate-1";
     await receive(probot, "pull_request", "opened", pullRequestPayload("opened"), deliveryId);
@@ -351,8 +347,6 @@ describe("manual /review trigger", () => {
   beforeEach(() => {
     probot = makeProbot();
   });
-
-  afterEach(async () => {});
 
   test("a /review comment creates a manual review and posts an acknowledgment", async () => {
     await receive(probot, "pull_request", "opened", pullRequestPayload("opened"), "delivery-manual-open-1");

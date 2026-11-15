@@ -28,7 +28,7 @@ one definition, not ad-hoc greps. This PR changes no product behaviour.
 | Vitest | 3.2.7 |
 | PostgreSQL | `localhost:5432`, database `reviewer`, 12 migrations, schema up to date |
 | Redis | `localhost:6379` |
-| Docker | 29.6.1 (sandbox tests in `test/execution-security.test.ts`) |
+| Docker | 29.6.1 (sandbox tests in `test/integration/execution-security.test.ts`) |
 
 The worktree had no `node_modules`; `npm ci` was run first. It installed
 existing locked dependencies only; no dependency was added or changed.
@@ -175,7 +175,7 @@ npm run metrics:quality -- --json                  # machine-readable JSON only
 ```
 
 Postgres and Redis must be running at `localhost:5432` and `localhost:6379`.
-`test/execution-security.test.ts` also needs a running Docker daemon for the
+`test/integration/execution-security.test.ts` also needs a running Docker daemon for the
 sandbox tests. Two consecutive `metrics:quality` runs must be byte-identical;
 the script has no timestamps, network access, or third-party dependencies.
 The recorded baseline used Node 24.22.3; Node 26.12.0 produced identical

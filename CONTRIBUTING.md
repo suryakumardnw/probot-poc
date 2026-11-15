@@ -62,7 +62,7 @@ Run the same commands locally that CI runs. Everything must pass before review.
 The full local gate is:
 
 ```bash
-npm run format:check && npm run lint && npm run typecheck && npm run metrics:quality && npm test && npm run build && npm run security:audit
+npm run format:check && npm run lint && npm run typecheck && npm run typecheck:tests && npm run metrics:quality && npm test && npm run build && npm run security:audit
 ```
 
 `metrics:quality` is informational for this phase: it records the refactor
