@@ -6,7 +6,8 @@ OpenCode SDK adapter instead of the default OpenCode CLI.
 
 Related documents:
 
-- [`docs/architecture.md`](architecture.md) §8 — runtime architecture.
+- [`docs/architecture.md`](architecture.md) §9 — agent runtime and model
+  provider.
 - [`docs/deployment.md`](deployment.md) — production Node version, image and
   memory limits.
 - [`docs/how-pr-review-works.md`](how-pr-review-works.md) Step 7 — how a review

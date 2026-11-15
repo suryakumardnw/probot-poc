@@ -97,11 +97,13 @@ overrides must be marked `override`, and type-only imports must use
 
 ## Known gaps (current)
 
-These are tracked in full in the [gap analysis](./typescript-gap-analysis.md).
+Baseline gaps are tracked in the [gap analysis](./typescript-gap-analysis.md).
 Final verification on 2026-11-15: 67 test files / 1,059 tests pass
 (500 unit, 194 contract, 280 integration, 85 characterization); Docker Compose
-smoke passes. Details in the
-[final verification report](./typescript-refactor-report.md).
+smoke passes. The [final verification report](./typescript-refactor-report.md)
+§8 lists every remaining deviation, including the queue follow-ups (preflight
+classifier bypass, fixed reconciliation backoff, orphaned terminal-review job
+rows), the macOS Docker `TMPDIR` requirement, and the security-audit allowlist.
 
 At the end of the refactor:
 
@@ -117,7 +119,7 @@ At the end of the refactor:
   a narrow lint allowance for `any`/`!`; unit, contract, integration, and
   helper code are fully checked.
 - **11 `as unknown as` casts remain in `src`** in six localized adapter/
-  defensive sites: `modules/workspace/git.ts` (Node error `code`), the SDK
+  defensive sites: `src/modules/workspace/git.ts` (Node error `code`), the SDK
   dynamic import and config redaction/clone helpers, the Octokit publisher
   adapter, metric internals, and a logger `child` capability probe. Each is
   confined to a platform/module edge and listed in the
@@ -129,6 +131,19 @@ At the end of the refactor:
 - **`src/modules/review/result-schema.ts` is a compatibility re-export** of
   `src/contracts/review.ts`. New code imports the contract; removing the shim
   needs one import update in a contract test.
+- **`AppError` covers edge failures, not every internal error yet.**
+  `ProviderConfigError` (with a `TODO(error-family)`) and domain errors such as
+  `ReviewEngineError`, `ReviewRetrievalError`, `FindingValidationError`,
+  `GitCommandError`, and `KnowledgeSnapshotError` still extend plain `Error`;
+  they are translated/classified at the HTTP and queue edges. See the report
+  §8.2 for the full list.
+- **`manualReviewBodySchema`** is the one Zod schema still defined in a
+  composition root (`src/bootstrap/http.ts`). Follow-up: move it to
+  `src/contracts/admin.ts` (ADR 0004).
+- **Stale comments:** 75 source files contain 76 `ARCHITECTURE.md §...` /
+  `architecture §...` references to the old numbering, plus two staging
+  comments (`issue-comment.ts`, `errors/classify.ts`). Comment-only cleanup is
+  a documented follow-up.
 - **`effect` stays pinned at `4.1.0`.** It has no direct imports, but
   `@opencode/sdk@2.3.0` depends on it and the root pin keeps Prisma's
   `effect@3.21.0` from winning peer resolution. Guarded by
@@ -154,14 +169,15 @@ Resolved during the refactor:
   [ADR 0004](./adr/0004-contracts-in-src.md).
 - **Multi-repository atomic writes:** module-owned units of work —
   [ADR 0005](./adr/0005-unit-of-work.md).
-- **Error and retry policy:** one `AppError` family and one queue classifier —
-  [ADR 0006](./adr/0006-failure-classification.md).
+- **Error and retry policy:** one `AppError` family and one queue classifier
+  for failures crossing HTTP/queue/outbox — [ADR 0006](./adr/0006-failure-classification.md).
+  Internal domain errors are still being migrated (see Known gaps).
 
 Still open (owner: refactor maintainer):
 
 - **`exactOptionalPropertyTypes`** remains deferred (see
   [Compiler strictness](#compiler-strictness)).
-- **`agent/opencode-runtime.ts` (1,224 lines)** and
+- **`src/platform/agents/opencode-runtime.ts` (1,224 lines)** and
   **`opencode-sdk-runtime.ts` (886 lines)** remain large. They are isolated
   adapters behind the runtime port; splitting them requires a dedicated
   behavior-preserving PR.

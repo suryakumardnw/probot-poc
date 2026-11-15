@@ -15,9 +15,10 @@ Companions: [TypeScript profile](./typescript-profile.md) ·
 
 The refactor is complete. The repository now has one enforced architecture,
 boundary contracts at every external seam, repositories behind ports, injected
-dependencies, a single error family, four test tiers, and CI gates that run the
-same commands locally and remotely. All six P0 findings from the
-[gap analysis](./typescript-gap-analysis.md) are closed.
+dependencies, a single edge error family, four test tiers, and CI gates that
+run the same commands locally and remotely. All six P0 findings from the
+[gap analysis](./typescript-gap-analysis.md) are closed at the HTTP/queue/outbox
+edge scope; the internal error-family migration remains a documented follow-up.
 
 The refactor added no `any`, no non-null assertions, no boundary
 `JSON.parse(...) as` casts, and no `@ts-ignore`/`@ts-expect-error` to `src`.
@@ -179,7 +180,24 @@ The refactor removed the 13 boundary `JSON.parse(...) as` casts and reduced
 `as unknown as` from 26 to 11. The remaining casts are localized to
 platform/module edges and are listed in §8.
 
-### 8.2 Test-tier allowances
+### 8.2 Remaining plain `Error` classes
+
+The `AppError` family covers failures at the HTTP and queue/outbox edges. Several
+module/adapter errors still extend plain `Error` and are translated or
+classified at the edge. A complete single-family migration remains a follow-up.
+
+| Group | Classes | Current handling |
+|---|---|---|
+| Provider construction | `ProviderConfigError` (`TODO(error-family)`) | Adapter construction only; never crosses the provider port; mapped to startup/log failure. |
+| Review engine | `ReviewEngineError` | Worker failure path; terminal unless a known code maps through `classifyFailure`. |
+| Workspace retrieval | `ReviewRetrievalError` + `StaleCommitError`, `CloneFailedError`, `DiffFailedError` | Queue classifier maps retrieval/clone failures; stale is terminal. |
+| Workspace files/git | `GitCommandError`, `PathEscapeError`, `FileTooLargeError`, `FileNotFoundError`, `CredentialUnavailableError` | Tool/workspace rejection paths; converted to invalid tool output or review failure. |
+| Findings/knowledge/execution | `FindingValidationError`, `KnowledgeSnapshotError`, `ExecutionPolicyError`, `ExecutionError` | Domain failure paths; surfaced through the review result or audit. |
+| Ingestion/publishing | `ManualIngestionError`, `StaleHeadError`, `ApiError` | Edge handlers map them to HTTP/404 or a stale/publish failure. |
+| Config/OAuth/HTTP helpers | `EnvValidationError`, `ConfigValidationError` (`MissingEnvVarError`, `EmbeddedSecretError`), `GithubOauthError`, `BodyTooLargeError`, `InvalidBodyError` | Startup/config and HTTP edges translate them to envelopes/statuses. |
+| Queue control flow | `ReviewJobRetryError` | Intentional control signal, not an application error. |
+
+### 8.3 Test-tier allowances
 
 - `test/characterization/**` turns off
   `@typescript-eslint/no-explicit-any` and
@@ -194,24 +212,29 @@ platform/module edges and are listed in §8.
 - Test-scope `as unknown as` (36) and `JSON.parse(...) as` (24) counts are
   fixture-construction and vendor-row assertions, not application boundaries.
 
-### 8.3 Code and dependency follow-ups
+### 8.4 Code and dependency follow-ups
 
 | Item | Reason | Owner / next step |
 |---|---|---|
 | `src/modules/review/result-schema.ts` compatibility re-export | Keeps the contract move behavior-preserving; one contract test imports the shim. | Replace that import with `src/contracts/review.ts`, then delete the shim in a small `refactor(review)` PR. |
-| `platform/agents/opencode-runtime.ts` (1,224 lines) and `opencode-sdk-runtime.ts` (886 lines) | Isolated adapters behind `AgentRuntime`; splitting them needs its own behavior-preserving PR and runtime tests. | Dedicated runtime split PR. |
+| `src/platform/agents/opencode-runtime.ts` (1,224 lines) and `opencode-sdk-runtime.ts` (886 lines) | Isolated adapters behind `AgentRuntime`; splitting them needs its own behavior-preserving PR and runtime tests. | Dedicated runtime split PR. |
 | `exactOptionalPropertyTypes` deferred | Hundreds of optional properties intentionally accept `undefined`; enabling it is a data-shape decision, not a mechanical fix. | Compiler-hardening PR; see `docs/typescript-profile.md`. |
 | `effect` pinned at `4.1.0` | `@opencode/sdk@2.3.0` depends on it; the root pin prevents Prisma's `effect@3.21.0` from winning peer resolution. | Keep; guarded by `test/deployment-node.test.ts`. |
 | Preflight queue failures bypass `classifyQueueFailure` | The durable lookup/claim happens before the processing `try`; routing it through the classifier needs job context. | Documented in `docs/queue-reliability.md`; deferred. |
 | Reconciliation backoff is fixed (`exponential`, 5000 ms) | Attempt budgets are configuration-aware; backoff alignment is a follow-up. | Documented in `docs/queue-reliability.md`; deferred. |
 | Orphaned job rows for terminal reviews | A crash between the review and job failure writes leaves an operator-cleanable row. | Documented in `docs/queue-reliability.md`; deferred. |
-| Two source comments describe the old `/review` default as `standard` | `src/modules/webhooks/issue-comment.ts` and `src/shared/errors/classify.ts` carry stale comments; behavior and docs use `handbook` and the composed classifier. | Comment-only cleanup in a later PR. |
+| Docker sandbox tests need a shared `TMPDIR` on macOS | Docker volume mounts must be visible to the daemon; the integration suite passes with `TMPDIR=/Users/surya/tmp`. | Environmental, not a code regression; documented in `CONTRIBUTING.md` and this report. |
+| Security-audit allowlist (4 high/critical advisory IDs) | Prisma 7 / Vitest 5 / upstream `@opencode/sdk` upgrades are major or upstream-blocked. | Tracked in `docs/security-audit-follow-ups.md`; `scripts/npm-audit-allowlist.json` fails on any new ID. |
+| `manualReviewBodySchema` in `src/bootstrap/http.ts` | The only Zod schema still defined outside `src/contracts`; validated at the `/api/reviews` HTTP edge. | Move to `src/contracts/admin.ts` and import it from the composition root in a small `refactor(http)` PR. See ADR 0004. |
+| 75 source files contain 76 stale `ARCHITECTURE.md §...` / `architecture §...` comment references | The architecture doc was renumbered/shortened; comments still cite old section numbers. Comments only, no behavior. | Comment-only sweep in a later PR; update each reference to the current `docs/architecture.md` section or remove it. |
+| `src/modules/webhooks/issue-comment.ts` comment says the `/review` default is `standard` | Shipped bare `/review` uses `config.github.defaultReviewType` (`handbook`). | Comment-only cleanup in a later PR. |
+| `src/shared/errors/classify.ts` comment says the queue policy integration is still pending and that `src/shared/retry.ts` remains live “until that staged migration lands” | `classifyQueueFailure` now composes `classifyAppFailure`; the comment describes an earlier staging state, not a `/review` default. | Comment-only cleanup in a later PR. |
 
 ## 9. Acceptance criteria
 
 | Criterion | Result |
 |---|---|
-| Every P0 gap closed | Yes — see the gap-analysis closure table. |
+| Every P0 gap closed | Edge scope met (P0 #5 internal error-family migration remains a follow-up); see the gap-analysis closure table. |
 | Remaining deviations documented with reason and owner | Yes — §8 and the profile. |
 | Service still deploys with the same commands | Yes — `npm run start:probot`, `npm run start:worker`, and the Compose smoke passed unchanged. |
 | All docs links resolve | Yes — relative-link check across `README.md`, `CONTRIBUTING.md`, `docs/`, `docs/adr/`, `docs/specs/`, and `docs/plans/`. |

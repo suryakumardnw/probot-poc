@@ -12,11 +12,19 @@ could be retried in one path and dropped in another.
 
 The service has two different failure surfaces: HTTP requests (never retried
 server-side) and queue/outbox attempts (retried under a configured policy).
+The refactor standardized those **edges**. It did not finish converting every
+internal domain/adapter error: several still extend plain `Error` (for example
+`ReviewEngineError`, `ReviewRetrievalError`, `FindingValidationError`,
+`GitCommandError`, `KnowledgeSnapshotError`, `ExecutionError`,
+`ManualIngestionError`, and `StaleHeadError`), and
+`ProviderConfigError` carries an explicit `TODO(error-family)`. Those errors
+are translated to `AppError` or classified by the queue policy at the edge;
+the full family migration is a tracked follow-up, not a completed claim.
 
 ## Decision
 
-Use the **`AppError` family** for every application failure and a **single
-classifier** for retry decisions.
+Use the **`AppError` family for every failure that crosses the HTTP, queue, or
+outbox boundary**, and a **single classifier** for retry decisions.
 
 - `AppError` carries a stable `code`, an HTTP `statusCode`, a `retryable`
   default, an optional `retryableReason`, safe `details`, and a `cause` kept
@@ -24,8 +32,14 @@ classifier** for retry decisions.
 - Shared subclasses supply sensible defaults: `ValidationError` (400),
   `AuthError` (401), `ForbiddenError` (403), `NotFoundError` (404),
   `ConflictError` (409), `InvalidStateTransitionError` (409), `RateLimitError`
-  (429), `ProviderError` (502/503), `InternalError` (500). Domain errors extend
-  the closest subclass and pass a domain code; there is no parallel hierarchy.
+  (429), `ProviderError` (502/503), `InternalError` (500). Errors at the edge
+  extend the closest subclass and pass a domain code; there is no parallel
+  edge hierarchy.
+- Domain and adapter errors that stay inside a module may still extend plain
+  `Error`. If they can escape to HTTP/queue/outbox they must be translated to
+  an `AppError` or handled by the queue classifier's known patterns. The
+  remaining classes are listed in
+  [../typescript-refactor-report.md](../typescript-refactor-report.md) §8.
 - `statusCode` and `retryable` are independent axes. `ProviderError` and
   `InternalError` may override retryability only with an explicit reason.
 - `classifyAppFailure(error, context)` is the family-level mapping for
@@ -53,6 +67,9 @@ classifier** for retry decisions.
   fail-immediately policy for the agent runtime; strict parity with the old
   message-matching behavior is intentionally not preserved.
 - HTTP and queue semantics stay separate even though they share the family.
+- A complete single-family migration is not done. `ProviderConfigError` and
+  the domain errors listed above keep their local types until their taxonomy
+  is defined; the edge contract is stable in the meantime.
 
 ## Alternatives considered
 

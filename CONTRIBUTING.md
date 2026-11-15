@@ -91,7 +91,10 @@ infrastructure tiers.
 
 `npm test` runs every tier in one Vitest process. The sandbox integration
 suite in `test/integration/execution-security.test.ts` also needs Docker; the
-remaining integration tests only need Postgres and Redis.
+remaining integration tests only need Postgres and Redis. On macOS, Docker
+volume mounts must share a `TMPDIR` with the daemon; run the sandbox tier as
+`TMPDIR=/Users/surya/tmp npm run test:integration` (or use any shared temp
+directory).
 
 ## Docker Compose smoke test
 

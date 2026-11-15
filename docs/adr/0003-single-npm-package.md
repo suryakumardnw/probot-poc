@@ -24,7 +24,7 @@ Stay a **single npm package** with one `package.json`, one
   boundaries.
 - `src/contracts` is a source directory until a second real consumer exists
   (see [ADR 0004](0004-contracts-in-src.md)).
-- `prisma/skills` and deploy assets stay at the repository root.
+- `prisma/` and deploy assets stay at the repository root.
 
 ## Consequences
 

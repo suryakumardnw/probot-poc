@@ -22,7 +22,7 @@ A modular monolith in **one npm package**, deployed as **two processes**:
 
 | Process | Entry point | Responsibility |
 |---|---|---|
-| `probot` | `src/server.ts` → `src/index.ts` | Receive and verify GitHub webhooks, persist a review request, enqueue it, serve health/readiness/metrics, the admin API/panel, and the manual review API. Never calls the model. |
+| `probot` | `src/server.ts` → `src/index.ts` | Receive and verify GitHub webhooks, persist a review request, enqueue it, serve health/readiness/metrics, the admin API/panel, and the manual review API. Never runs review inference; `issues.opened` triage is a best-effort model call (see §5). |
 | `worker` | `src/worker.ts` | Consume BullMQ jobs, clone the PR, inject knowledge, run the staged agent review, validate and persist findings, publish the GitHub review, and run recovery loops. |
 
 Both processes share the same code and the same PostgreSQL/Redis services.
@@ -180,9 +180,12 @@ only that entry point.
   `ModelProvider`, `ReviewQueue`, `ReviewConfigStore`, `Logger`, `Clock`,
   `GithubPublisher`, `GithubOAuthClient`, `KnowledgeFetcher`, `Observability`,
   `ReviewLogging`.
-- **Contracts** (`src/contracts`) are the only Zod schemas: queue/outbox
-  payloads, admin HTTP bodies/queries/responses, model response shapes, agent
-  protocol messages, error codes/envelope, environment and review config.
+- **Contracts** (`src/contracts`) own the process/network boundary Zod
+  schemas: queue/outbox payloads, admin HTTP bodies/queries/responses, model
+  response shapes, agent protocol messages, error codes/envelope, environment
+  and review config. One composition-root exception remains:
+  `src/bootstrap/http.ts` defines `manualReviewBodySchema` for the
+  `POST /api/reviews` body. Follow-up: move it to `src/contracts/admin.ts`.
 - **Shared** (`src/shared`) is dependency-free: typed `AppError` family,
   `classifyFailure`/`classifyQueueFailure`, queue payload helper, redaction,
   object-path helpers, model-id parsing.
@@ -197,7 +200,7 @@ only that entry point.
    (`bootstrap/clients.ts`).
 3. Build the config store (boot-time environment snapshot + per-call
    `config/review.json` read), ingestion services/repositories/unit of work,
-   and webhook services.
+   webhook services, and triage dependencies.
 4. Build the admin API/panel, the manual review handlers, and readiness
    probes; create Probot middleware **only** when `APP_ID` and a private key
    are present (otherwise the HTTP surface still starts degraded).
@@ -210,6 +213,12 @@ policy through the ingestion service, then return. The ingestion transaction
 writes `Installation`, `Repository`, `PullRequest`, `Review`, `ReviewJob`,
 `WebhookDelivery`, and `OutboxEvent` atomically. Outbox publication to Redis is
 best-effort on the request path; recovery owns retries.
+
+The one exception is **issue triage**: `issues.opened` (for non-PR, non-bot
+issues) calls the injected `ModelProvider` from `modules/triage` and posts the
+rendered analysis as a GitHub comment. It is a short, best-effort inference
+inside the server process; a provider or GitHub failure is logged and does not
+fail the delivery. Review inference never runs in the server process.
 
 ### HTTP surface
 
@@ -305,9 +314,15 @@ Three review methodologies run through the same adaptive engine:
 | `skill` | Injects a code-review playbook from the review's own knowledge snapshot (`knowledge.skill`). Missing playbook → `SKILL_PLAYBOOK_UNAVAILABLE`. |
 | `handbook` | Application-side retrieval ranks cached handbook files against detected technologies and changed paths, then selects whole files under a token budget. Unconfigured → `HANDBOOK_UNCONFIGURED`; unavailable → `HANDBOOK_UNAVAILABLE`. |
 
-Only types with `review.types.<type>.publish = true` post to GitHub (default:
-`standard`). Other types persist findings and metrics for comparison
-(`GET /api/admin/reviews/compare`) and record `publishSkipped`.
+Only types with `review.types.<type>.publish = true` post to GitHub. The
+shipped config enables and publishes `standard` and `handbook`, and disables
+`skill`. Types with `publish = false` persist findings and metrics for
+comparison (`GET /api/admin/reviews/compare`) and record `publishSkipped`.
+
+Automatic PR events pass no review type, so ingestion defaults them to
+`standard`. The manual paths resolve differently: bare `/review` and
+admin-triggered reviews use `github.defaultReviewType` (currently `handbook`),
+while `POST /api/reviews` defaults an omitted type to `standard`.
 
 Knowledge is fetched once per worker boot into
 `<KNOWLEDGE_CACHE_DIR>/<source>/<sha>/` with a manifest and per-file hashes.
@@ -416,7 +431,7 @@ Each deviation has an ADR with context, decision, and consequences:
 | One npm package instead of pnpm/Turborepo | [0003](adr/0003-single-npm-package.md) |
 | Contracts in `src/contracts` instead of a package | [0004](adr/0004-contracts-in-src.md) |
 | Module-owned units of work for multi-repository writes | [0005](adr/0005-unit-of-work.md) |
-| One `AppError` family + single failure classifier | [0006](adr/0006-failure-classification.md) |
+| One `AppError` family + single failure classifier for HTTP/queue/outbox edges | [0006](adr/0006-failure-classification.md) |
 
 ## 15. Non-goals
 

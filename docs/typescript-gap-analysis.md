@@ -79,12 +79,12 @@ tiers, and CI.
 |---|---|---|
 | 01 Architecture | Green | One architecture: `webhooks → ingestion → worker → review → findings → publishing`; dead path deleted; persistence behind repositories. |
 | 02 Monorepo & structure | Green (adapted) | Single npm package (ADR 0003); vertical modules with public `index.ts`; platform/ports/contracts/shared layers; tests tiered by directory. |
-| 03 Contracts & schemas | Green | Zod at every process/network/queue/vendor boundary; `z.infer` types; zero boundary `JSON.parse(...) as` in `src`. |
+| 03 Contracts & schemas | Green (adapted) | Zod at every process/network/queue/vendor boundary; `z.infer` types; zero boundary `JSON.parse(...) as` in `src`. One composition-root schema (`manualReviewBodySchema`) still needs moving to `src/contracts`. |
 | 04 Backend modules | Green | HTTP/adapter, application, and persistence separated; zero Prisma imports outside `*.repository.ts` and `platform/db`; boundary lint enforces module APIs. |
 | 05 Services & DI | Green | Composition roots construct clients and inject ports; zero `process.env` reads outside `platform/config`; no import-time singletons. |
 | 06 State management | Gray/Amber | UI rules N/A; process state is explicit and injected. No change needed. |
 | 07 Data fetching | Green | `ModelProvider`, `AgentRuntime`, `GithubPublisher`, `KnowledgeFetcher`, and `GithubOAuthClient` ports; all network I/O in `platform`; responses parsed by contracts. |
-| 08 Error handling | Green | One `AppError` family with stable codes; `{ code, message, statusCode, details? }` envelope; one queue retry classifier (ADR 0006). |
+| 08 Error handling | Green (adapted) | `AppError` family, `{ code, message, statusCode, details? }` envelope, and one queue retry classifier at HTTP/queue/outbox edges; internal domain/adapter errors still extend plain `Error` (report §8.2). |
 | 09 Components & UI | Gray | No frontend. |
 | 10 Design tokens | Gray | No frontend. |
 | 11 Forms | Gray | No frontend. |
@@ -102,7 +102,7 @@ tiers, and CI.
 | 2. Dead and parallel architecture | Resolved | Controller/service/view/models deleted in PR 0.5; single live module path. |
 | 3. Persistence is not behind a seam | Resolved | Module repositories + units of work; metric `Prisma imports outside repositories` is 0 for `src`. |
 | 4. Boundary shapes are cast, not parsed | Resolved | `src/contracts` Zod schemas; metric `Boundary JSON.parse(...) as` is 0 for `src`. |
-| 5. Error handling is fragmented | Resolved | Shared `AppError` family, HTTP envelope, single retry classifier. |
+| 5. Error handling is fragmented | Resolved at the edges; internal migration pending | Shared `AppError` family, HTTP envelope, single retry classifier. `ProviderConfigError` and several domain errors still extend plain `Error`; see report §8.2. |
 | 6. Import-time environment and hidden singletons | Resolved | Composition roots + injected clients; metric `process.env outside platform/config` is 0 for `src`. |
 
 ## P0 findings — fix before the structural refactor

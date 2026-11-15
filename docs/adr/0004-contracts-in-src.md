@@ -13,12 +13,16 @@ process for code that changes in lockstep with the application.
 
 ## Decision
 
-Keep every Zod schema and inferred type in **`src/contracts`**, exported through
-`src/contracts/index.ts`.
+Keep the boundary Zod schemas and inferred types in **`src/contracts`**,
+exported through `src/contracts/index.ts`.
 
-- Contracts are the only place hand-written boundary shapes live: queue/outbox
+- Contracts are the place hand-written boundary shapes live: queue/outbox
   payloads, admin HTTP request/response/query shapes, model responses, agent
   protocol messages, error codes/envelope, environment and review config.
+- One composition-root exception remains: `src/bootstrap/http.ts` defines
+  `manualReviewBodySchema` for the `POST /api/reviews` body. It is validated at
+  the HTTP edge but has not moved yet. Follow-up: move it to
+  `src/contracts/admin.ts` and import it from the composition root.
 - Types are derived with `z.infer`; there is no duplicated hand-written shape.
 - `contracts` may import **only `zod`** (plus its own internals). ESLint
   enforces this and test-category files are exempt.
@@ -32,6 +36,9 @@ Keep every Zod schema and inferred type in **`src/contracts`**, exported through
 - No package version skew, publish step, or workspace resolution to debug.
 - `src/contracts` is a dependency leaf: modules, platform, ports, shared,
   bootstrap, and tests can import it without cycles.
+- The `POST /api/reviews` body schema is the one schema still defined in a
+  composition root. It is a small, tracked follow-up rather than an untracked
+  exception.
 - If a second real consumer appears (another deployable or an external client),
   extract the directory into a package then; the import path changes, not the
   schemas.

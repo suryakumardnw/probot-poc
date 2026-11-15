@@ -194,8 +194,12 @@ This is where the system becomes durable and idempotent.
    config returns `configuration_unavailable` instead of running a review.
 3. **Draft policy.** Draft PRs are skipped unless
    `github.draftPullRequests.enabled` is true.
-4. **Choose review type.** `input.reviewType ?? github.defaultReviewType`.
-   The current config default is `handbook`.
+4. **Choose review type.** Automatic PR events pass no type, so ingestion
+   defaults to `standard`. Manual `/review` and the admin trigger resolve
+   `github.defaultReviewType` (currently `handbook`) before calling ingestion;
+   `POST /api/reviews` also defaults an omitted type to `standard`.
+   Characterization pins automatic `opened` to `standard` and manual `/review`
+   to `handbook`.
 5. **One PostgreSQL transaction:**
    - Upsert `Installation`, `Repository`, `PullRequest`.
    - Check the review identity
@@ -1098,7 +1102,7 @@ for secrets/endpoints). The most important sections:
 
 | Section | What it controls |
 |---|---|
-| `github.defaultReviewType` | Type used by automatic PR reviews and bare `/review` (currently `handbook`) |
+| `github.defaultReviewType` | Type used by bare `/review` and admin-triggered reviews (currently `handbook`); automatic PR reviews default to `standard` in ingestion |
 | `github.draftPullRequests.enabled` | Whether draft PRs are reviewed |
 | `github.manualCommand` | Manual command string (default `/review`) |
 | `review.enabled` | Global on/off |
@@ -1135,10 +1139,10 @@ Environment variables you will hear about:
 - `WORKSPACE_ROOT_DIR`, `KNOWLEDGE_CACHE_DIR`
 - `OPENCODE_BINARY_PATH` (defaults to `/opt/homebrew/bin/opencode` in code)
 
-> **Config note:** the bare `/review` command uses
+> **Config note:** automatic PR reviews default to `standard`; the bare
+> `/review` command and admin-triggered reviews use
 > `github.defaultReviewType`, which is `handbook` in the shipped
-> `config/review.json`. The config is the source of truth; verify the deployed
-> file if this matters.
+> `config/review.json`. Verify the deployed file if either path matters.
 
 ---
 
@@ -1296,8 +1300,10 @@ also have the provider timeout. Timeout escalation is SIGTERM then SIGKILL.
    (`standard` / `skill` / `handbook`). They are independent.
 8. **"The handbook is fetched on every review."** No — it is fetched once per
    worker boot and copied into each review's own workspace for reproducibility.
-9. **"The README default is the code default."** Check `config/review.json`;
-   the current default review type is `handbook`.
+9. **"Automatic PR reviews and `/review` use the same default."** No.
+   Automatic PR events default to `standard` in ingestion; bare `/review` uses
+   `github.defaultReviewType` (currently `handbook`). Check `config/review.json`
+   for both `review.types.<type>.publish` and `github.defaultReviewType`.
 10. **"The old controller is the entry point."** No — the active entry point
     is `src/modules/webhooks/pull-request.ts`.
 

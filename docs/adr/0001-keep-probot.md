@@ -31,8 +31,11 @@ Keep **Probot 14** as the GitHub App framework and webhook middleware.
 
 - Webhook verification, App authentication, and GitHub API integration stay on
   a maintained library instead of custom code.
-- Handlers remain thin: they validate, translate, and call ingestion; they
-  never run inference inline.
+- Review handlers remain thin: they validate, translate, and call ingestion;
+  they never run review inference inline. The separate `issues.opened` triage
+  handler is the one deliberate exception: it makes a short, best-effort
+  `ModelProvider` call and posts a comment, and a failure never fails the
+  webhook.
 - There is no NestJS module/DI system. Modules expose a public `index.ts` and
   receive ports from the composition roots; ESLint enforces the boundaries.
 - The admin/health HTTP surface is deliberately small and framework-free, so

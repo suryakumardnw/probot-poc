@@ -4,7 +4,7 @@ This document describes the production deployment of the AI PR Reviewer via
 Docker Compose, and how to run the same stack on [Dokploy](https://dokploy.com).
 It covers architecture, prerequisites, secrets, first deployment, upgrades,
 backup/restore (tested — evidence below), restart recovery, an optional
-Dozzle log-viewer stack, and the validation runbook in §10.4 of this document.
+Dozzle log-viewer stack, and the validation runbook in §11 of this document.
 
 Related: `docs/architecture.md` §13 (deployment), §12 (observability, health,
 and shutdown), and §14 (approved deviations).
@@ -527,8 +527,8 @@ every container on the host. It is **deliberately a separate Compose project**
 (`deploy/docker-compose.dozzle.yml`, project name `ai-pr-reviewer-logs`) — an
 operations tool, not an application dependency:
 
-- The app stack's §10.4 invariant "never mount the Docker socket in the app
-  stack" and its no-published-ports rule stay untouched; the socket mount
+- The app stack's deployment invariant "never mount the Docker socket in the
+  app stack" and its no-published-ports rule stay untouched; the socket mount
   lives only in the Dozzle project. `test/deployment-compose.test.ts` enforces
   the app-stack invariants; `test/deployment-dozzle.test.ts` pins this file's
   structure (base path, auth, profiles and networks).
@@ -731,7 +731,8 @@ redeploys and are never committed to git.
 
 ## 11. Validation runbook
 
-Scenarios from architecture §10.4, with local verification status:
+Scenarios from the deployment design (`docs/architecture.md` §13) and this
+runbook, with local verification status:
 
 1. **Clean deploy** — verified: `up -d` from scratch; migrate Exited(0);
    all services healthy; no host ports published (local override adds

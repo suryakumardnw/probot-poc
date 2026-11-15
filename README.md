@@ -160,16 +160,18 @@ from the environment.
 2. Make sure the App's **Webhook URL** is `https://<your-domain>/` and the
    webhook secret matches `WEBHOOK_SECRET`.
 3. Open a pull request (or push a new commit to one). A review job is queued and
-   results appear as a PR summary plus inline comments.
+   results appear as a PR summary plus inline comments. Automatic PR reviews use
+   the `standard` review type.
 4. Comment `/review` on a PR to trigger a manual review. Draft PRs are skipped
    by default. The command accepts a review type:
    `/review` (default `handbook`), `/review type:standard`,
    `/review type:skill` (playbook-injected methodology) and
    `/review type:handbook` (standards pulled from the configured handbook
-   repo). All types review the same commit independently;
-   by default only `standard` posts findings back to GitHub
-   (`review.types.<type>.publish`), the others persist results for
-   comparison (`GET /api/admin/reviews/compare`).
+   repo). All enabled types review the same commit independently. The shipped
+   config enables and publishes both `standard` and `handbook`
+   (`review.types.<type>.publish`); `skill` is disabled. A type with
+   `publish = false` persists results for comparison
+   (`GET /api/admin/reviews/compare`) without posting findings.
 
 ### Knowledge sources (skill playbook / handbook)
 
