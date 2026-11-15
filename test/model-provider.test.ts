@@ -2,9 +2,13 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { logRedactPaths } from "../src/lib/logger.js";
-import { createModelProviderFromConfig, createOpenAICompatibleProvider } from "../src/models/openai-compatible.js";
-import type { ModelCapabilities, ProviderHealth } from "../src/models/provider.js";
-import { ModelProviderError, ProviderConfigError } from "../src/models/provider.js";
+import {
+  createModelProviderFromConfig,
+  createOpenAICompatibleProvider,
+} from "../src/platform/models/openai-compatible.js";
+import { ProviderConfigError } from "../src/platform/models/provider-config-error.js";
+import type { ModelCapabilities, ProviderHealth } from "../src/ports/model-provider.js";
+import { ModelProviderError } from "../src/shared/errors/index.js";
 
 // ---------------------------------------------------------------------------
 // Mock HTTP server (no external network — all failure/success modes are

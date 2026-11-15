@@ -51,4 +51,4 @@ export {
   type SdkSessionRefPayload,
   type SdkSessionRowPayload,
   type SdkUsagePayload,
-} from "../../contracts/agent.js";
+} from "../../../contracts/agent.js";

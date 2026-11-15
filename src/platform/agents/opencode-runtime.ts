@@ -26,7 +26,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-import { parseAgentEventLine } from "../contracts/agent.js";
+import { parseAgentEventLine } from "../../contracts/agent.js";
+import type {
+  AgentResult,
+  AgentRuntime,
+  AgentSession,
+  AgentSessionOptions,
+  AgentTask,
+  RuntimeHealth,
+} from "../../ports/agent-runtime.js";
+import { AgentRuntimeError } from "../../shared/errors/index.js";
 import {
   buildChildEnv,
   buildSessionConfig,
@@ -34,15 +43,6 @@ import {
   resolveModelId,
   type AgentRuntimeConfigSource,
 } from "./opencode-config.js";
-import {
-  AgentRuntimeError,
-  type AgentResult,
-  type AgentRuntime,
-  type AgentSession,
-  type AgentSessionOptions,
-  type AgentTask,
-  type RuntimeHealth,
-} from "./types.js";
 
 /** Minimal logger surface the adapter needs (compatible with the pino logger). */
 export interface AgentRuntimeLogger {

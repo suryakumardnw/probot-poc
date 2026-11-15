@@ -3,7 +3,11 @@ import { EventEmitter } from "node:events";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createStdioSdkHostClient, probeSdkHost, type SdkHostClientOptions } from "../src/agent/sdk/client.js";
+import {
+  createStdioSdkHostClient,
+  probeSdkHost,
+  type SdkHostClientOptions,
+} from "../src/platform/agents/sdk/client.js";
 
 // ---------------------------------------------------------------------------
 // Fake child process

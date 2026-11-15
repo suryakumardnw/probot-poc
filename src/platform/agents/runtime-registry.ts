@@ -13,10 +13,11 @@
  * - Registering a runtime type that is already registered throws.
  */
 
+import type { AgentRuntime } from "../../ports/agent-runtime.js";
+import { AgentRuntimeError } from "../../shared/errors/index.js";
 import type { AgentRuntimeConfigSource } from "./opencode-config.js";
 import { OpenCodeAgentRuntime, type OpenCodeRuntimeOptions } from "./opencode-runtime.js";
 import { OpenCodeSdkAgentRuntime, type SdkRuntimeOptions } from "./opencode-sdk-runtime.js";
-import { AgentRuntimeError, type AgentRuntime } from "./types.js";
 
 export type AgentRuntimeFactoryOptions = OpenCodeRuntimeOptions & SdkRuntimeOptions;
 

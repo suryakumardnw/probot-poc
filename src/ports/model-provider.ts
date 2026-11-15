@@ -1,16 +1,16 @@
 /**
- * Model provider abstraction (ARCHITECTURE.md §9.2).
+ * Model provider port (ARCHITECTURE.md §9.2).
  *
  * The application never depends on a specific model SDK: tickets 06/07 talk
  * to the model exclusively through the `ModelProvider` interface defined
- * here. The only concrete adapter is the OpenAI-compatible REST adapter in
- * `openai-compatible.ts` (Cloudflare GLM-4.7-Flash style endpoints).
+ * here. The concrete adapter is the OpenAI-compatible REST adapter in
+ * `src/platform/models/openai-compatible.ts`.
  *
  * Failure semantics (§8.4, §12.4): when the provider is unavailable, the
- * adapter throws a normalized `ModelProviderError`. There is no automatic
- * model switching and no unbounded retrying — reviews fail immediately
- * (`provider.failurePolicy: "fail-immediately"`) unless the configuration
- * explicitly opts into a single retry (`"retry-once"`).
+ * adapter throws a normalized `ModelProviderError` from `src/shared/errors/`.
+ * There is no automatic model switching and no unbounded retrying — reviews
+ * fail immediately (`provider.failurePolicy: "fail-immediately"`) unless the
+ * configuration explicitly opts into a single retry (`"retry-once"`).
  */
 
 // ---------------------------------------------------------------------------
@@ -97,53 +97,6 @@ export interface ModelCapabilities {
   streaming: boolean;
   /** Usage metadata: always reported / best-effort / never reported. */
   usageReporting: "always" | "optional" | "absent";
-}
-
-// ---------------------------------------------------------------------------
-// Normalized errors
-// ---------------------------------------------------------------------------
-
-export type ModelErrorCode =
-  | "auth_failure"
-  | "rate_limit"
-  | "timeout"
-  | "network"
-  | "provider_unavailable"
-  | "invalid_request"
-  | "invalid_json"
-  | "unexpected_format"
-  | "missing_usage"
-  | "unknown";
-
-export class ModelProviderError extends Error {
-  readonly code: ModelErrorCode;
-  readonly statusCode?: number;
-  /** False for errors that a retry cannot plausibly fix. */
-  readonly retryable: boolean;
-  /** Provider-supplied message, truncated and secret-free. */
-  readonly providerDetail?: string;
-
-  constructor(
-    code: ModelErrorCode,
-    message: string,
-    options: { statusCode?: number; retryable?: boolean; providerDetail?: string; cause?: unknown } = {},
-  ) {
-    super(message, { cause: options.cause });
-    this.name = "ModelProviderError";
-    this.code = code;
-    this.statusCode = options.statusCode;
-    this.retryable =
-      options.retryable ?? (code === "rate_limit" || code === "network" || code === "provider_unavailable");
-    this.providerDetail = options.providerDetail;
-  }
-}
-
-/** Thrown when the provider configuration itself is invalid (e.g. missing env key). */
-export class ProviderConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ProviderConfigError";
-  }
 }
 
 // ---------------------------------------------------------------------------

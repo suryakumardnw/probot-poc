@@ -41,6 +41,7 @@ one Postgres/Redis instance and truncates fixture tables between tests.
 | `admin-auth.test.ts`        | `createAdminApi` HTTP handler (+ `setGithubFetch`) + AuditLog rows                                                                         | OAuth state/CSRF, session cookie, org membership, allowlist vs role policy, rate limit, audit row, unauthenticated/forbidden responses (§14.2, §15)                                                                                                                    | `test/admin-api.test.ts`                                                                                                              |
 | `worker-shutdown.test.ts`   | `registerGracefulShutdown` child process + real BullMQ worker with `stopReviewWorker` + `orderShutdownSteps`                               | SIGTERM helper waits for an active step within the deadline; forced timeout does not acknowledge unfinished work; worker drains before connection teardown; an active attempt that fails transiently while the worker is closing is retried, never lost (§12.4, §17.3) | `test/logger.test.ts` (`registerGracefulShutdown` registration smoke test)                                                            |
 | `triage.test.ts`            | Probot `issues.opened` handler + global fetch transport                                                                                    | `issues.opened` posts a comment, bot/PR issues are skipped, provider/config failures are logged without crashing the webhook (§1.2, §6.7)                                                                                                                              | `test/index.test.ts`                                                                                                                  |
+| `runtime-errors.test.ts`    | `createAgentRuntime` registry factory + `classifyQueueFailure` + normalized error classes                                                  | Runtime selection by configured type, fail-closed config error, agent/model error codes and queue retry dispositions (§8.2–§8.4, §9.2, §12.4)                                                                                                                          | `test/agent-runtime-registry.test.ts`, `test/model-provider.test.ts`, `test/observability.test.ts`                                    |
 
 ## Per-test / per-describe map
 
@@ -132,6 +133,17 @@ one Postgres/Redis instance and truncates fixture tables between tests.
 - `issues.opened triage > pull request issues …` — PR-delivered `issues.opened` events are skipped.
 - `issues.opened triage > a provider failure is logged …` — webhook survives provider error.
 - `issues.opened triage > a missing GROQ_API_KEY is logged …` — missing configuration does not crash the webhook.
+
+### `runtime-errors.test.ts`
+
+- `agent runtime selection and error contract > selects the adapter …` — configured runtime type selects the CLI/SDK adapter.
+- `agent runtime selection and error contract > fails closed …` — unregistered type throws `AgentRuntimeError("config")` as an `AppError`.
+- `agent runtime selection and error contract > preserves the normalized agent fields …` — code/detail/session/cause survive.
+- `agent runtime selection and error contract > keeps crash and spawn retryable …` — transient agent failures keep their retry disposition.
+- `agent runtime selection and error contract > keeps provider_unavailable gated …` — provider retry setting still decides.
+- `agent runtime selection and error contract > keeps timeout/invalid output/security failures terminal` — no new retries.
+- `model provider error contract > marks … retryable/non-retryable by default` — provider taxonomy and override preserved.
+- `model provider error contract > preserves status code, provider detail, and cause` — diagnostic fields survive.
 
 ## Shared fixtures
 

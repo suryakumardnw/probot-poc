@@ -130,8 +130,9 @@ export class InternalError extends AppError {
 }
 
 /**
- * Normalized provider failure codes. Mirrors `ModelErrorCode` so the model
- * adapter can migrate onto this class without remapping its taxonomy.
+ * Normalized provider failure codes for the HTTP-facing `ProviderError`.
+ * Mirrors `ModelErrorCode` (in `model-provider.ts`) so the model adapter keeps
+ * one taxonomy.
  */
 export type ProviderFailureCode =
   | "auth_failure"

@@ -6,7 +6,7 @@
  * composition root supplies the configured provider (Groq in production).
  */
 
-import type { ModelProvider } from "../../models/provider.js";
+import type { ModelProvider } from "../../ports/model-provider.js";
 import { buildTriageMessages, type TriageIssue } from "./triage.prompt.js";
 
 /** Request parameters preserved from the pre-module Groq client. */

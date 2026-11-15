@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import { UnrecoverableError, Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { AgentRuntimeError } from "../../agent/types.js";
 import {
   createReviewLogger,
   startStage,
@@ -13,7 +12,7 @@ import { classifyQueueFailure, type FailureClass, type RetryPolicyConfig } from 
 import { DEFAULT_RETRY_POLICY_CONFIG } from "../../observability/retry.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../../observability/tracing.js";
 import type { Logger } from "../../ports/logger.js";
-import { AppError } from "../../shared/errors/index.js";
+import { AppError, AgentRuntimeError } from "../../shared/errors/index.js";
 import {
   isTerminalReviewState,
   parseReviewJobPayload,

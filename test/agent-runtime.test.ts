@@ -10,9 +10,14 @@ import {
   buildSessionConfig,
   resolveModelId,
   type AgentRuntimeConfigSource,
-} from "../src/agent/opencode-config.js";
-import { extractJson, OpenCodeAgentRuntime, type OpenCodeRuntimeOptions } from "../src/agent/opencode-runtime.js";
-import { AgentRuntimeError, type AgentSession } from "../src/agent/types.js";
+} from "../src/platform/agents/opencode-config.js";
+import {
+  extractJson,
+  OpenCodeAgentRuntime,
+  type OpenCodeRuntimeOptions,
+} from "../src/platform/agents/opencode-runtime.js";
+import type { AgentSession } from "../src/ports/agent-runtime.js";
+import { AgentRuntimeError } from "../src/shared/errors/index.js";
 
 // ---------------------------------------------------------------------------
 // Test configuration fixture (mirrors the parsed review config shape)
@@ -1174,7 +1179,7 @@ describe("workspace integrity guard", () => {
   }
 
   it("factory createAgentRuntime returns the AgentRuntime abstraction", async () => {
-    const { createAgentRuntime } = await import("../src/agent/index.js");
+    const { createAgentRuntime } = await import("../src/platform/agents/index.js");
     const runtime = createAgentRuntime(baseConfig);
     expect(typeof runtime.startSession).toBe("function");
     expect(typeof runtime.execute).toBe("function");

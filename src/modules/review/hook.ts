@@ -12,10 +12,10 @@
  * Failure semantics: any AgentRuntimeError / ReviewEngineError propagates so
  * the processor fails the review immediately (fail-immediately; §8.4).
  */
-import type { AgentRuntime } from "../../agent/types.js";
 import type { ReviewConfig } from "../../config/review-schema.js";
 import { recordProviderCall, recordReviewFindings } from "../../observability/metrics.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../../observability/tracing.js";
+import type { AgentRuntime } from "../../ports/agent-runtime.js";
 import type { Logger } from "../../ports/logger.js";
 import type { ReviewJobPayload, ReviewStateService } from "../ingestion/index.js";
 import { redactCredentials, type WorkspaceResult } from "../workspace/index.js";

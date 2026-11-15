@@ -16,12 +16,12 @@
  *  - GitHub API failure after bounded retries → `completed_with_warnings`
  *    (the review data is retained; publication can be retried later).
  */
-import { resolveModelId } from "../../agent/index.js";
-import type { AgentRuntime } from "../../agent/types.js";
 import type { ReviewConfig } from "../../config/review-schema.js";
 import { endSpan, reviewSpanAttributes, startSpan } from "../../observability/tracing.js";
+import type { AgentRuntime } from "../../ports/agent-runtime.js";
 import type { PublisherOctokit } from "../../ports/github-publisher.js";
 import type { Logger } from "../../ports/logger.js";
+import { resolveModelId } from "../../shared/model-id.js";
 import {
   getFindingsForReview,
   isActiveFindingStatus,

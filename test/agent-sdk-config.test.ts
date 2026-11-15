@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { AgentRuntimeConfigSource } from "../src/agent/opencode-config.js";
+import type { AgentRuntimeConfigSource } from "../src/platform/agents/opencode-config.js";
 import {
   buildSdkInlineConfig,
   buildSdkPermissions,
   evaluateSdkPermission,
   validateSdkPermissions,
-} from "../src/agent/sdk/config.js";
+} from "../src/platform/agents/sdk/config.js";
 
 // ---------------------------------------------------------------------------
 // Test configuration fixture (mirrors the parsed review config shape)

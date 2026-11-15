@@ -1,19 +1,22 @@
 /**
- * Agent runtime module barrel (ARCHITECTURE.md §8).
- * Application code imports the abstraction from here, never the CLI adapter
- * directly, so the runtime implementation stays swappable.
+ * Agent runtime adapters (ARCHITECTURE.md §8).
+ *
+ * Composition roots and tooling construct the concrete OpenCode adapters from
+ * here. Application modules depend only on the `AgentRuntime` port
+ * (`src/ports/agent-runtime.ts`) and the shared `AgentRuntimeError`
+ * (`src/shared/errors/`), so the runtime implementation stays swappable.
  */
 
-export {
-  AgentRuntimeError,
-  type AgentErrorCode,
-  type AgentResult,
-  type AgentRuntime,
-  type AgentSession,
-  type AgentSessionOptions,
-  type AgentTask,
-  type RuntimeHealth,
-} from "./types.js";
+export { AgentRuntimeError } from "../../shared/errors/index.js";
+export type { AgentErrorCode } from "../../shared/errors/index.js";
+export type {
+  AgentResult,
+  AgentRuntime,
+  AgentSession,
+  AgentSessionOptions,
+  AgentTask,
+  RuntimeHealth,
+} from "../../ports/agent-runtime.js";
 
 export {
   buildAgentTracingPlugin,

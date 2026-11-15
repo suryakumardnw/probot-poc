@@ -7,7 +7,7 @@
  * `MAX_BODY_TOKENS` tokens (chars / 4) with a visible notice.
  */
 
-import type { ModelMessage } from "../../models/provider.js";
+import type { ModelMessage } from "../../ports/model-provider.js";
 
 export const TRIAGE_SYSTEM_PROMPT = `You are an experienced maintainer triaging GitHub issues.
 Given an issue title and body, respond with:

@@ -2,8 +2,8 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { runHostProcess } from "../src/agent/sdk/host-process.js";
-import { createSdkHostDispatcher, type SdkHostDispatcher } from "../src/agent/sdk/host.js";
+import { runHostProcess } from "../src/platform/agents/sdk/host-process.js";
+import { createSdkHostDispatcher, type SdkHostDispatcher } from "../src/platform/agents/sdk/host.js";
 import type {
   SdkCreateSessionInput,
   SdkHost,
@@ -11,7 +11,7 @@ import type {
   SdkMessage,
   SdkModule,
   SdkSessionRef,
-} from "../src/agent/sdk/types.js";
+} from "../src/platform/agents/sdk/types.js";
 
 // ---------------------------------------------------------------------------
 // Fake SDK module (same shape as the reference adapter test's fake)

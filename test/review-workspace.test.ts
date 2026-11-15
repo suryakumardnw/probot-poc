@@ -6,7 +6,6 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { UnrecoverableError } from "bullmq";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { AgentRuntimeError } from "../src/agent/types.js";
 import { createIngestionRepositories } from "../src/modules/ingestion/prisma-ingestion.repository.js";
 import type { InstallationTokenProvider } from "../src/modules/workspace/credentials.js";
 import {
@@ -30,6 +29,7 @@ import {
   CloneFailedError,
   DiffFailedError,
 } from "../src/modules/workspace/workspace.js";
+import { AgentRuntimeError } from "../src/shared/errors/index.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { createTestReviewState } from "./helpers/ingestion.js";
 

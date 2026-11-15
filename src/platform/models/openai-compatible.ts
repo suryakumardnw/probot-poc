@@ -23,18 +23,16 @@ import {
   chatCompletionPayloadSchema,
   providerErrorPayloadSchema,
   type ChatCompletionUsage,
-} from "../contracts/model.js";
+} from "../../contracts/model.js";
 import type {
   ModelCapabilities,
-  ModelErrorCode,
   ModelProvider,
   ModelRequest,
   ModelResponse,
   ProviderHealth,
-} from "./provider.js";
-import { ModelProviderError, ProviderConfigError } from "./provider.js";
-
-export { ModelProviderError, ProviderConfigError };
+} from "../../ports/model-provider.js";
+import { ModelProviderError, type ModelErrorCode } from "../../shared/errors/index.js";
+import { ProviderConfigError } from "./provider-config-error.js";
 
 export interface OpenAICompatibleProviderConfig {
   type: "openai-compatible";

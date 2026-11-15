@@ -13,7 +13,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
-import { AgentRuntimeError } from "../types.js";
+import { AgentRuntimeError } from "../../../shared/errors/index.js";
 import {
   parseSdkHostResponseLine,
   parseSdkHostValue,

@@ -23,22 +23,22 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { sdkUsageSchema } from "../contracts/agent.js";
+import { sdkUsageSchema } from "../../contracts/agent.js";
+import type {
+  AgentResult,
+  AgentRuntime,
+  AgentSession,
+  AgentSessionOptions,
+  AgentTask,
+  RuntimeHealth,
+} from "../../ports/agent-runtime.js";
+import { AgentRuntimeError } from "../../shared/errors/index.js";
 import type { AgentRuntimeConfigSource } from "./opencode-config.js";
 import { buildChildEnv } from "./opencode-config.js";
 import { buildPrompt, extractJson, type AgentRuntimeLogger } from "./opencode-runtime.js";
 import { createStdioSdkHostClient, probeSdkHost, type SdkHostClient, type SdkHostClientOptions } from "./sdk/client.js";
 import { buildSdkInlineConfig, SDK_MODEL_KEY, SDK_PROVIDER_ID } from "./sdk/config.js";
 import type { SdkMessage, SdkSessionRow } from "./sdk/types.js";
-import {
-  AgentRuntimeError,
-  type AgentResult,
-  type AgentRuntime,
-  type AgentSession,
-  type AgentSessionOptions,
-  type AgentTask,
-  type RuntimeHealth,
-} from "./types.js";
 
 const MAX_DETAIL_LENGTH = 4_000;
 const MAX_LOG_LINE_CHARS = 500;

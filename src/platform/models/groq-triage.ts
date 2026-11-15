@@ -8,12 +8,12 @@
  * webhook handlers) from starting; the triage handler logs the failure.
  *
  * The concrete HTTP adapter is the reusable OpenAI-compatible provider in
- * `src/models`. PR 3.9 moves that adapter to `src/platform/models`; this
- * factory only owns the Groq endpoint/limits wiring until then.
+ * `src/platform/models`; this factory only owns the Groq endpoint/limits
+ * wiring.
  */
 
-import { createOpenAICompatibleProvider } from "../../models/index.js";
-import type { ModelProvider } from "../../models/provider.js";
+import type { ModelProvider } from "../../ports/model-provider.js";
+import { createOpenAICompatibleProvider } from "./openai-compatible.js";
 
 /** Groq exposes an OpenAI-compatible API under this base path. */
 export const GROQ_TRIAGE_BASE_URL = "https://api.groq.com/openai/v1";

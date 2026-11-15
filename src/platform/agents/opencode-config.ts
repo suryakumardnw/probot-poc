@@ -373,15 +373,8 @@ export function buildSessionConfig(input: OpenCodeSessionConfigInput): Record<st
 }
 
 /**
- * Resolve the model identifier actually sent to the endpoint. Per ticket 05:
- * the configured endpoint requires the "provider/model" MODEL_NAME form
- * (e.g. `workers-ai/@cf/zai-org/glm-4.7-flash`); the central
- * `provider.model` value is used as a fallback only.
+ * Resolve the model identifier actually sent to the endpoint (kept as a
+ * re-export for the agent adapters; the implementation is shared with the
+ * publishing module in `src/shared/model-id.ts`).
  */
-export function resolveModelId(config: AgentRuntimeConfigSource, env: NodeJS.ProcessEnv): string {
-  const fromEnv = env.MODEL_NAME?.trim();
-  if (fromEnv) {
-    return fromEnv;
-  }
-  return config.provider.model;
-}
+export { resolveModelId } from "../../shared/model-id.js";

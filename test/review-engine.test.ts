@@ -2,13 +2,6 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import {
-  AgentRuntimeError,
-  type AgentRuntime,
-  type AgentSession,
-  type AgentSessionOptions,
-  type AgentTask,
-} from "../src/agent/types.js";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
 import { reviewResultSchema, analysisOutputSchema } from "../src/contracts/review.js";
 import { scoreComplexity, parseDiffStats } from "../src/modules/review/complexity.js";
@@ -23,6 +16,8 @@ import {
 import { ReviewEngineError } from "../src/modules/review/types.js";
 import type { ChangedFile } from "../src/modules/workspace/files.js";
 import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
+import type { AgentRuntime, AgentSession, AgentSessionOptions, AgentTask } from "../src/ports/agent-runtime.js";
+import { AgentRuntimeError } from "../src/shared/errors/index.js";
 
 /**
  * Ticket 07 unit tests: adaptive repository-aware review engine.
@@ -131,7 +126,7 @@ class FakeRuntime implements AgentRuntime {
     };
   }
 
-  async execute(session: AgentSession, task: AgentTask): Promise<import("../src/agent/types.js").AgentResult> {
+  async execute(session: AgentSession, task: AgentTask): Promise<import("../src/ports/agent-runtime.js").AgentResult> {
     const callIndex = this.tasks.length;
     this.tasks.push(task);
     const respond = this.responders[callIndex];

@@ -1,6 +1,5 @@
 import path from "node:path";
 import type { Worker } from "bullmq";
-import { createAgentRuntime } from "../agent/index.js";
 import { loadEnv, type Env } from "../config/env.js";
 import { createLogger, type PlatformLogger } from "../lib/logger.js";
 import { checkPrisma, disconnectPrisma } from "../lib/prisma.js";
@@ -28,6 +27,7 @@ import { AlertManager } from "../observability/alerts.js";
 import { startMetricsServer, metricsServerPort } from "../observability/metrics-endpoint.js";
 import { getMetricsRegistry } from "../observability/metrics.js";
 import { retryPolicyConfigFromReviewConfig } from "../observability/retry.js";
+import { createAgentRuntime } from "../platform/agents/index.js";
 import { createGitHubOctokit } from "../platform/github/octokit.js";
 import { createConfigStore, createIngestionModule, createPlatformClients, createReviewModule } from "./clients.js";
 

@@ -251,10 +251,13 @@ export interface QueueFailureDecision {
  * must not be re-implemented here:
  *
  *  - `classifyAppFailure` owns every `AppError` (the shared HTTP/queue/outbox
- *    family): its `retryable` flag decides whether the failure may be retried.
+ *    family), including the normalized agent and model runtime errors: its
+ *    `retryable` flag decides whether the failure may be retried.
  *  - `classifyFailure`/`retryPolicyFor` own operational errors outside that
- *    family (`ReviewRetrievalError`, `AgentRuntimeError`, unknown throws) and
- *    supply the §12.4 failure class plus the configuration-driven budget.
+ *    family (`ReviewRetrievalError`, unknown throws) and supply the §12.4
+ *    failure class plus the configuration-driven budget. Agent runtime errors
+ *    contribute both: their normalized code selects the §12.4 class and their
+ *    `AppError.retryable` flag preserves the same transient disposition.
  *
  * An `AppError` is retried only when both layers agree: the error is explicitly
  * transient *and* the checked-in configuration permits an infrastructure retry.

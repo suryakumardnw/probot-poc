@@ -3,22 +3,23 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import type { AgentRuntimeConfigSource } from "../src/agent/opencode-config.js";
-import { buildPrompt } from "../src/agent/opencode-runtime.js";
+import type { AgentRuntimeConfigSource } from "../src/platform/agents/opencode-config.js";
+import { buildPrompt } from "../src/platform/agents/opencode-runtime.js";
 import {
   createSdkAgentRuntime,
   OpenCodeSdkAgentRuntime,
   type SdkRuntimeOptions,
-} from "../src/agent/opencode-sdk-runtime.js";
-import type { SdkHostClient, SdkHostClientOptions } from "../src/agent/sdk/client.js";
+} from "../src/platform/agents/opencode-sdk-runtime.js";
+import type { SdkHostClient, SdkHostClientOptions } from "../src/platform/agents/sdk/client.js";
 import type {
   SdkCreateSessionInput,
   SdkMessage,
   SdkPromptInput,
   SdkSessionRef,
   SdkSessionRow,
-} from "../src/agent/sdk/types.js";
-import { AgentRuntimeError, type AgentSession } from "../src/agent/types.js";
+} from "../src/platform/agents/sdk/types.js";
+import type { AgentSession } from "../src/ports/agent-runtime.js";
+import { AgentRuntimeError } from "../src/shared/errors/index.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures

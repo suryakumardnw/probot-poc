@@ -1,7 +1,6 @@
 import { once } from "node:events";
 import { UnrecoverableError, type Queue } from "bullmq";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { AgentRuntimeError } from "../../src/agent/types.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/config/review-loader.js";
 import { disconnectRedis } from "../../src/lib/redis.js";
 import { reconcileIncompleteReviews } from "../../src/modules/ingestion/index.js";
@@ -20,6 +19,7 @@ import {
   type WorkspaceResult,
 } from "../../src/modules/workspace/workspace.js";
 import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/observability/retry.js";
+import { AgentRuntimeError } from "../../src/shared/errors/index.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion, createTestReviewState, silentLogger } from "../helpers/ingestion.js";
 import {

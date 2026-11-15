@@ -70,7 +70,7 @@ review only; other values do not change their behavior.
 
 ## 3. Plugin API
 
-The registry is implemented in `src/agent/runtime-registry.ts`. A plugin
+The registry is implemented in `src/platform/agents/runtime-registry.ts`. A plugin
 declares one or more runtime types and creates an adapter for each:
 
 ```typescript
@@ -125,8 +125,8 @@ runtime type also needs a schema change before it can be selected.
 | Isolation | Sanitized env, deny-by-default permissions, workspace guard | Sanitized env, deny-by-default permissions, workspace guard, per-session host |
 
 Both adapters use the same prompt builder, JSON extraction, output validation,
-timeout normalization and secret scrubbing helpers (`src/agent`), so review
-logic is unchanged by the selection.
+timeout normalization and secret scrubbing helpers (`src/platform/agents`), so
+review logic is unchanged by the selection.
 
 The CLI adapter remains the recommended initial implementation. The SDK
 adapter is an opt-in alternative behind the same contract; it exists so the

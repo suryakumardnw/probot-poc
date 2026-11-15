@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import type pino from "pino";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import type { AgentRuntime } from "../src/agent/types.js";
 import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
 import type { StoredFinding } from "../src/modules/findings/index.js";
 import {
@@ -36,6 +35,7 @@ import {
 import type { Finding, FindingEvidence, ReviewResult } from "../src/modules/review/index.js";
 import type { ReviewRunMetadata } from "../src/modules/review/types.js";
 import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
+import type { AgentRuntime } from "../src/ports/agent-runtime.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { createTestReviewState } from "./helpers/ingestion.js";
 

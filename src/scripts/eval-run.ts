@@ -13,7 +13,6 @@
 
 import "dotenv/config";
 import path from "node:path";
-import { createAgentRuntime } from "../agent/index.js";
 import { loadEnv } from "../config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
 import { configurationHashFrom, persistEvaluationRun } from "../eval/persistence.js";
@@ -22,6 +21,7 @@ import { loadBenchmarkSuites } from "../eval/suite-loader.js";
 import type { BenchmarkSuite } from "../eval/types.js";
 import { createLogger } from "../lib/logger.js";
 import { createPrisma, disconnectPrisma } from "../lib/prisma.js";
+import { createAgentRuntime } from "../platform/agents/index.js";
 
 const BENCHMARKS_DIR = path.join(process.cwd(), "benchmarks");
 

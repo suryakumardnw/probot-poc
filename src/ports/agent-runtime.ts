@@ -1,50 +1,16 @@
 /**
- * Agent runtime abstraction (ARCHITECTURE.md §8.2–§8.4).
+ * Agent runtime port (ARCHITECTURE.md §8.2–§8.4).
  *
  * The application must not depend on OpenCode-specific concepts outside the
  * runtime adapter: review logic (ticket 07) talks to agents exclusively
- * through the `AgentRuntime` interface defined here. The concrete adapter is
- * the OpenCode CLI runtime in `opencode-runtime.ts`.
+ * through the `AgentRuntime` interface defined here. The concrete adapters
+ * (OpenCode CLI/SDK) live in `src/platform/agents/`.
  *
  * Failure semantics (§8.4): when the agent runtime or model provider is
- * unavailable the adapter throws a normalized `AgentRuntimeError` and the
- * review fails immediately. There is no automatic model switching and no
- * unbounded retrying.
+ * unavailable the adapter throws a normalized `AgentRuntimeError` from
+ * `src/shared/errors/` and the review fails immediately. There is no automatic
+ * model switching and no unbounded retrying.
  */
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-export type AgentErrorCode =
-  | "config" // Invalid runtime configuration.
-  | "spawn" // The runtime binary could not be launched.
-  | "crash" // The runtime process exited abnormally.
-  | "timeout" // Execution exceeded the configured timeout.
-  | "provider_unavailable" // The model provider rejected or could not serve the request.
-  | "invalid_output" // Missing, malformed or failed-validation structured output.
-  | "permission_denied" // A mandatory tool permission blocked the task.
-  | "workspace_modified" // The agent modified the review workspace (integrity guard).
-  | "unknown";
-
-export class AgentRuntimeError extends Error {
-  readonly code: AgentErrorCode;
-  /** Secret-free detail from the runtime, truncated. */
-  readonly detail?: string;
-  readonly sessionId?: string;
-
-  constructor(
-    code: AgentErrorCode,
-    message: string,
-    options: { detail?: string; sessionId?: string; cause?: unknown } = {},
-  ) {
-    super(message, { cause: options.cause });
-    this.name = "AgentRuntimeError";
-    this.code = code;
-    this.detail = options.detail;
-    this.sessionId = options.sessionId;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Health

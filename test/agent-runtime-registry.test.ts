@@ -5,8 +5,8 @@ import {
   OpenCodeSdkAgentRuntime,
   registerAgentRuntimePlugin,
   type AgentRuntimeConfigSource,
-} from "../src/agent/index.js";
-import { AgentRuntimeError } from "../src/agent/types.js";
+} from "../src/platform/agents/index.js";
+import { AgentRuntimeError } from "../src/shared/errors/index.js";
 
 // ---------------------------------------------------------------------------
 // Test configuration fixture (mirrors the parsed review config shape)
@@ -110,7 +110,7 @@ describe("agent runtime plugin registry", () => {
   });
 
   it("re-exports the factory and plugin API from the agent barrel", async () => {
-    const barrel = await import("../src/agent/index.js");
+    const barrel = await import("../src/platform/agents/index.js");
     expect(typeof barrel.createAgentRuntime).toBe("function");
     expect(typeof barrel.registerAgentRuntimePlugin).toBe("function");
     expect(barrel.listAgentRuntimePlugins()).toContainEqual({
