@@ -100,7 +100,7 @@ removal.
 | Allowance | Why it exists | Removed by |
 |---|---|---|
 | `module` -> `src/agent` | Workspace processors and the review engine use the agent runtime types before agent becomes a platform adapter. | PR 3.9 |
-| `module` -> `src/models` | Triage imports the `ModelProvider` contract from `src/models` before it becomes `src/ports/model-provider.ts`. | PR 3.9 |
+| `module` -> `src/models/provider.ts` | Triage imports the `ModelProvider` contract from `src/models` before it becomes `src/ports/model-provider.ts`. The allowance is limited to triage and that one file. | PR 3.9 |
 | `platform/models` -> `src/models` | The Groq triage provider reuses the OpenAI-compatible adapter until models move under `src/platform/models`. | PR 3.9 |
 | `module` -> `src/config` | Modules use the review schema/loader before config becomes `platform/config`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `module` -> `src/observability` | Modules emit metrics before observability becomes `platform/observability`; module -> platform is forbidden, so this must become a port. | PR 3.10 |

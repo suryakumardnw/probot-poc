@@ -79,7 +79,7 @@ const PRISMA_ALLOWED_FILES = [
 
 /**
  * Temporary `fetch` allowances. Only the platform layer may perform network
- * I/O; knowledge and triage still own their HTTP clients until their move PRs.
+ * I/O; the knowledge module still owns its HTTP client until PR 3.12.
  */
 const FETCH_ALLOWED_FILES = [
   "src/platform/**/*.ts",
@@ -255,9 +255,19 @@ export default tseslint.config(
                 to: {
                   element: {
                     type: "legacy",
-                    path: ["src/agent", "src/config", "src/models", "src/observability"],
+                    path: ["src/agent", "src/config", "src/observability"],
                   },
                 },
+              },
+            },
+            {
+              // TODO(PR 3.9): triage imports the `ModelProvider` contract from
+              // `src/models/provider.ts` until it becomes
+              // `src/ports/model-provider.ts`. Scope is limited to that single
+              // file so other modules cannot reach into `src/models`.
+              from: { element: { type: "module", path: "src/modules/triage" } },
+              allow: {
+                to: { element: { type: "legacy", path: "src/models", fileInternalPath: "provider.ts" } },
               },
             },
             {

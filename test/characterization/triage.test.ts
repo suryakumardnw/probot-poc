@@ -21,6 +21,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const privateKey = fs.readFileSync(path.join(__dirname, "../fixtures/mock-cert.pem"), "utf-8");
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_ORIGIN = new URL(GROQ_URL).origin;
+const GROQ_PATH = new URL(GROQ_URL).pathname;
+
+/** A captured request to the exact Groq chat-completions endpoint. */
+function isGroqProviderCall(request: CapturedRequest): boolean {
+  return request.url.origin === GROQ_ORIGIN && request.url.pathname === GROQ_PATH;
+}
 
 const testIngestion = createTestIngestion({
   queue: {
@@ -152,19 +159,27 @@ describe("issues.opened triage", () => {
     await probot.receive({ name: "issues", payload: issuePayload() });
     await probot.teardown?.();
 
-    const providerCall = captured.find((request) => request.url.origin === new URL(GROQ_URL).origin);
+    const providerCall = captured.find(isGroqProviderCall);
     expect(providerCall).toBeDefined();
-    expect(providerCall!.body.model).toBe("llama-3.3-70b-versatile");
-    expect(providerCall!.body.max_tokens).toBe(1024);
-    expect(providerCall!.body.temperature).toBe(0.2);
-    expect(providerCall!.body.messages[1].content).toContain("Issue #5:");
-    expect(providerCall!.body.messages[1].content).toContain("Crash on startup");
+    if (!providerCall) {
+      throw new Error("expected a Groq chat-completions request");
+    }
+    expect(providerCall.body.model).toBe("llama-3.3-70b-versatile");
+    expect(providerCall.body.max_tokens).toBe(1024);
+    expect(providerCall.body.temperature).toBe(0.2);
+    expect(providerCall.body.messages[1].content).toContain("Issue #5:");
+    expect(providerCall.body.messages[1].content).toContain("Crash on startup");
 
     const posts = commentPosts();
     expect(posts).toHaveLength(1);
-    expect(posts[0]!.body.body).toContain("🤖 **AI Triage**");
-    expect(posts[0]!.body.body).toContain("Classification: Bug");
-    expect(posts[0]!.body.body).toContain("human review still required");
+    const post = posts[0];
+    expect(post).toBeDefined();
+    if (!post) {
+      throw new Error("expected a triage comment post");
+    }
+    expect(post.body.body).toContain("🤖 **AI Triage**");
+    expect(post.body.body).toContain("Classification: Bug");
+    expect(post.body.body).toContain("human review still required");
   });
 
   test("uses GROQ_MODEL when configured", async () => {
@@ -173,9 +188,12 @@ describe("issues.opened triage", () => {
     await probot.receive({ name: "issues", payload: issuePayload() });
     await probot.teardown?.();
 
-    const providerCall = captured.find((request) => request.url.origin === new URL(GROQ_URL).origin);
+    const providerCall = captured.find(isGroqProviderCall);
     expect(providerCall).toBeDefined();
-    expect(providerCall!.body.model).toBe("custom-groq-model");
+    if (!providerCall) {
+      throw new Error("expected a Groq chat-completions request");
+    }
+    expect(providerCall.body.model).toBe("custom-groq-model");
   });
 
   test("bot-authored issues are skipped without calling the provider", async () => {
@@ -213,7 +231,7 @@ describe("issues.opened triage", () => {
     await expect(probot.receive({ name: "issues", payload: issuePayload() })).resolves.toBeUndefined();
     await probot.teardown?.();
 
-    expect(captured.some((request) => request.url.origin === new URL(GROQ_URL).origin)).toBe(true);
+    expect(captured.some(isGroqProviderCall)).toBe(true);
     expect(commentPosts()).toHaveLength(0);
     expect(logs.join("")).toContain("AI issue triage failed");
   });
