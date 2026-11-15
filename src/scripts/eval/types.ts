@@ -17,7 +17,7 @@ export type {
   BenchmarkFile,
   BenchmarkSuite,
   ExpectedFinding,
-} from "../contracts/evaluation.js";
+} from "../../contracts/evaluation.js";
 
 /** Per-case score (scoring.ts). */
 export interface CaseScore {

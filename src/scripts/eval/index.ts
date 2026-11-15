@@ -1,5 +1,7 @@
 /**
- * Quality evaluation framework (ticket 12 — §13.1, §19).
+ * Benchmark evaluation tooling (ticket 12 — §13.1, §19).
+ *
+ * Public surface for the `npm run eval:run` CLI and the evaluation tests.
  */
 export type {
   BenchmarkCase,

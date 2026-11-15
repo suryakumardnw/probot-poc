@@ -8,9 +8,10 @@ import tseslint from "typescript-eslint";
 /**
  * Temporary element type for the top-level directories that have not moved into
  * `src/modules` or `src/platform` yet. Every path here is listed with its
- * removal PR in docs/module-boundaries.md; PR 3.12 deletes this list.
+ * removal PR in docs/module-boundaries.md; PR 3.11 moved the last one
+ * (`src/eval`) under `src/scripts`, so the list is empty and PR 3.12 deletes it.
  */
-const LEGACY_ELEMENT_PATHS = ["src/eval"];
+const LEGACY_ELEMENT_PATHS = [];
 
 /**
  * Temporary `process.env` allowances. `platform/config` owns environment
@@ -25,7 +26,7 @@ const PROCESS_ENV_ALLOWED_FILES = [
   "deploy/inspect-key.js",
   // TODO(PR 3.12 final): composition roots read operational overrides.
   "src/bootstrap/**/*.ts",
-  // TODO(PR 3.11; PR 3.12 final): CLI scripts read environment directly.
+  // TODO(PR 3.12 final): CLI scripts read environment directly.
   "src/scripts/**/*.ts",
   // TODO(PR 3.12): the admin panel still reads ADMIN_DEV_LOGIN directly for
   // the development-only login.
@@ -70,8 +71,8 @@ const PRISMA_ALLOWED_FILES = [
   // TODO(PR 3.12): the execution service still takes the Prisma client
   // directly; replace it with a port.
   "src/modules/execution/service.ts",
-  // TODO(PR 3.11): eval moves under scripts; PR 3.12 removes this.
-  "src/eval/persistence.ts",
+  // TODO(PR 3.12): eval runs as tooling under scripts; remove the vendor type.
+  "src/scripts/eval/persistence.ts",
 ];
 
 /**
@@ -186,7 +187,9 @@ export default tseslint.config(
         { type: "shared", pattern: "src/shared", partialMatch: false },
         { type: "script", pattern: ["src/scripts", "scripts"], partialMatch: false },
         { type: "test", pattern: "test", partialMatch: false },
-        { type: "legacy", pattern: LEGACY_ELEMENT_PATHS, partialMatch: false },
+        ...(LEGACY_ELEMENT_PATHS.length > 0
+          ? [{ type: "legacy", pattern: LEGACY_ELEMENT_PATHS, partialMatch: false }]
+          : []),
         // Entry points (`src/index.ts`, `src/server.ts`, `src/worker.ts`) are
         // the only files whose element resolves to the repository `src` folder.
         { type: "bootstrap", pattern: "src", partialMatch: false },
@@ -266,9 +269,9 @@ export default tseslint.config(
               allow: { to: { element: { type: "module", path: "src/modules/review" } } },
             },
             {
-              // TODO(PR 3.12): delete with LEGACY_ELEMENT_PATHS. Only
-              // `src/eval` is legacy now; it keeps its current imports until
-              // PR 3.11 moves it under scripts.
+              // TODO(PR 3.12): delete with LEGACY_ELEMENT_PATHS. PR 3.11 moved
+              // the last legacy path (`src/eval`) under `src/scripts`, so this
+              // policy is now inert.
               from: { element: { type: "legacy" } },
               allow: { to: { element: { type: "*" } } },
             },

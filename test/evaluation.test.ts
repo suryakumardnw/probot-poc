@@ -4,12 +4,20 @@ import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { ReviewConfig } from "../src/contracts/config.js";
 import { reviewConfigSchema } from "../src/contracts/config.js";
-import { configurationHashFrom, persistEvaluationRun } from "../src/eval/persistence.js";
-import { runBenchmarkSuite } from "../src/eval/runner.js";
-import { scoreCase, aggregateScores, percentile, DEFAULT_LINE_TOLERANCE } from "../src/eval/scoring.js";
-import { loadBenchmarkSuites } from "../src/eval/suite-loader.js";
-import type { BenchmarkCase, BenchmarkSuite, CaseScore } from "../src/eval/types.js";
 import type { Finding, RunReviewOutput } from "../src/modules/review/types.js";
+import {
+  aggregateScores,
+  configurationHashFrom,
+  DEFAULT_LINE_TOLERANCE,
+  loadBenchmarkSuites,
+  percentile,
+  persistEvaluationRun,
+  runBenchmarkSuite,
+  scoreCase,
+  type BenchmarkCase,
+  type BenchmarkSuite,
+  type CaseScore,
+} from "../src/scripts/eval/index.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 /**

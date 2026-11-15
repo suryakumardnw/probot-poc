@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { benchmarkSuiteSchema, type BenchmarkSuite } from "../contracts/evaluation.js";
+import { benchmarkSuiteSchema, type BenchmarkSuite } from "../../contracts/evaluation.js";
 
 /**
  * Benchmark suite loader. Every JSON file in the directory is parsed against

@@ -9,7 +9,7 @@
  * precision only, never recall.
  */
 
-import type { Finding } from "../modules/review/index.js";
+import type { Finding } from "../../modules/review/index.js";
 import type { CaseScore, BenchmarkScore, ExpectedFinding } from "./types.js";
 
 export const DEFAULT_LINE_TOLERANCE = 5;

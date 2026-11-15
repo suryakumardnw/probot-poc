@@ -7,7 +7,7 @@ import { findingCategorySchema, findingSeveritySchema } from "./review.js";
  * A suite is authored test data, not runtime input, so the schemas are strict:
  * an unknown key is a typo in a fixture and should fail the evaluation run
  * before any case executes. Scoring types (`CaseScore`, `BenchmarkScore`) stay
- * in `src/eval/types.ts` because they are outputs, not file contracts.
+ * in `src/scripts/eval/types.ts` because they are outputs, not file contracts.
  *
  * This module is a contract only: it imports Zod and the review taxonomy.
  */

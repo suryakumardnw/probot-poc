@@ -25,7 +25,7 @@ descriptor and are therefore `bootstrap`.
 | `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | `src/eval` | **Temporary.** Directory not moved yet. Deleted in PR 3.12. |
+| `legacy` | _(none)_ | **Temporary type with an empty path list.** `src/eval` moved to `src/scripts/eval` in PR 3.11. The descriptor is omitted while the list is empty; PR 3.12 deletes the type and its policy. |
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -48,7 +48,7 @@ cross-element dependency needs a policy.
 | `shared` | `contracts` |
 | `script` | every application element |
 | `test` | every application element |
-| `legacy` (temporary) | every application element; removed with PR 3.12 |
+| `legacy` (temporary, no paths) | Matches nothing; the descriptor and policy are deleted in PR 3.12. |
 
 External and Node core packages are allowed from every element except
 `contracts`. `contracts` may import only `zod`; test-category files are exempt.
@@ -70,6 +70,17 @@ except the explicit temporary admin allowance listed below.
   `process.env` on every delivery. That store is a boot-time snapshot of the
   static deployment environment; the shipped `config/review.json` resolves
   identically, and static deployment env is the intended contract.
+
+## PR 3.11 placement ruling
+
+- `src/eval/` moved to `src/scripts/eval/`. Benchmark evaluation is tooling that
+  exercises the review engine; no production module imports it, and the
+  `script` element policy already allows it to depend on every layer.
+- `src/scripts/eval-run.ts` remains the CLI, so the compiled entry point
+  (`lib/scripts/eval-run.js`) and `npm run eval:run` are unchanged.
+- The evaluation test and the CLI import the package through
+  `src/scripts/eval/index.ts`, matching the public surface to the internal
+  module files.
 
 ## Vendor and environment rules
 
@@ -102,10 +113,14 @@ removal.
 
 ### `legacy` element type
 
+`LEGACY_ELEMENT_PATHS` is empty and the descriptor is omitted from the element
+list, so no file is classified as `legacy`. The unused policy remains until PR
+3.12 deletes it with the type.
+
 | Path | Removed by |
 |---|---|
-| `src/eval` | PR 3.11 |
-| The `legacy` type and this table | PR 3.12 |
+| _(none — `src/eval` moved to `src/scripts/eval` in PR 3.11)_ | PR 3.11 |
+| The `legacy` type, policy, and this table | PR 3.12 |
 
 ### Cross-element import allowances
 
@@ -133,7 +148,7 @@ the allowance.
 | `src/platform/observability/**` | PR 3.12 final (alert thresholds load from environment overrides) |
 | `src/modules/publishing/**` | PR 3.12 final (model id resolution reads environment) |
 | `src/modules/workspace/**` | PR 3.12 final (token provider reads environment) |
-| `src/scripts/**` | PR 3.11; PR 3.12 final |
+| `src/scripts/**` | PR 3.12 final (CLI scripts read environment directly) |
 
 ### Prisma allowances
 
@@ -145,7 +160,7 @@ Permanent: `src/**/*.repository.ts`, `src/platform/db/**`, `test/**`.
 | `src/bootstrap/clients.ts` | PR 3.12 removes any direct vendor type; the composition root already consumes the platform factories |
 | `src/modules/knowledge/materialize.ts` | PR 3.12 replaces the vendor type with a port |
 | `src/modules/execution/service.ts` | PR 3.12 replaces the vendor type with a port |
-| `src/eval/persistence.ts` | PR 3.11 moves eval under scripts; PR 3.12 removes the vendor type |
+| `src/scripts/eval/persistence.ts` | PR 3.12 removes the vendor type |
 
 ### `fetch` allowances
 
