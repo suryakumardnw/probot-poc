@@ -23,8 +23,12 @@ import type { Logger } from "../ports/logger.js";
 import { AppError } from "../shared/errors/index.js";
 import { AppInstallationTokenProvider, NullTokenProvider, type InstallationTokenProvider } from "./credentials.js";
 import { redactCredentials } from "./redact.js";
-import { StaleCommitError, ReviewRetrievalError, type WorkspaceResult } from "./workspace.js";
-import type { ReviewWorkspaceService } from "./workspace.js";
+import {
+  StaleCommitError,
+  ReviewRetrievalError,
+  type ReviewWorkspaceOperations,
+  type WorkspaceResult,
+} from "./workspace.js";
 
 /** Max characters of error detail attached to the structured failure log. */
 const MAX_LOGGED_ERROR_DETAIL_CHARS = 4_000;
@@ -44,7 +48,7 @@ const MAX_LOGGED_ERROR_DETAIL_CHARS = 4_000;
 export interface ProcessReviewJobDeps {
   /** Ingestion repository bundle; the worker never names a Prisma client. */
   repositories: IngestionRepositories;
-  service: ReviewWorkspaceService;
+  service: ReviewWorkspaceOperations;
   logger: Logger;
   /** Review-state transition boundary (durable, injected by bootstrap). */
   transitionReviewState: ReviewStateService["transitionReviewState"];
@@ -125,6 +129,11 @@ export async function processReviewJob(
       { jobId, reviewId: job.reviewId, state: job.review.state },
       "Review already terminal before processing; skipping",
     );
+    // Mirror the terminal review onto the durable job instead of leaving a
+    // stale `enqueued`/`processing` row that no recovery scan can finish.
+    await repositories.reviewJobs.update(job.id, { status: terminalJobStatus(job.review.state) }).catch(() => {
+      /* row already gone or concurrently updated */
+    });
     return "skipped_status";
   }
   // Claim the durable row atomically instead of trusting the snapshot read
@@ -215,7 +224,8 @@ export async function processReviewJob(
     activeStage = undefined;
 
     await deps.service.cleanupAfterReview(job.reviewId);
-    await repositories.reviewJobs.update(job.id, { status: "completed" });
+    // A successful retry must not retain the previous attempt's failure text.
+    await repositories.reviewJobs.update(job.id, { status: "completed", lastError: null });
     endSpan(span);
     const metricsRegistry = getMetricsRegistry();
     metricsRegistry.reviewsCompleted.inc(1, { outcome: "processed" });

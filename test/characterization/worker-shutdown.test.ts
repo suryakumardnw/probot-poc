@@ -12,10 +12,15 @@ import { disconnectRedis } from "../../src/lib/redis.js";
 import { orderShutdownSteps } from "../../src/lib/shutdown.js";
 import { NullTokenProvider } from "../../src/workspace/credentials.js";
 import { startReviewWorker, stopReviewWorker } from "../../src/workspace/processor.js";
-import { ReviewRetrievalError, ReviewWorkspaceService, type WorkspaceResult } from "../../src/workspace/workspace.js";
+import {
+  ReviewRetrievalError,
+  ReviewWorkspaceService,
+  type ReviewWorkspaceOperations,
+  type WorkspaceResult,
+} from "../../src/workspace/workspace.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestReviewState, silentLogger } from "../helpers/ingestion.js";
-import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain } from "./support.js";
+import { cleanDatabase, disconnectDatabase, jobIdentity, prisma, seedReviewChain } from "./support.js";
 
 /**
  * Characterization: graceful worker shutdown (ARCHITECTURE.md §12.4 / §17.3).
@@ -46,6 +51,23 @@ interface ShutdownRun {
 }
 
 type PipedChild = ChildProcessByStdio<null, Readable, Readable>;
+
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+/** A promise plus its resolver without a definite-assignment assertion. */
+function deferred(): Deferred {
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  if (!resolvePromise) {
+    throw new Error("deferred promise executor did not run synchronously");
+  }
+  return { promise, resolve: resolvePromise };
+}
 
 function waitForMarker(child: PipedChild, marker: string, timeoutMs = 5_000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -190,19 +212,14 @@ describe("real BullMQ worker drain", () => {
       job: { status: "enqueued" },
     });
 
-    let prepareStarted!: () => void;
-    const prepareStartedPromise = new Promise<void>((resolve) => {
-      prepareStarted = resolve;
-    });
-    let releasePrepare!: () => void;
-    const releasePreparePromise = new Promise<void>((resolve) => {
-      releasePrepare = resolve;
-    });
+    const prepareStarted = deferred();
+    const releasePrepare = deferred();
+    const { jobId, jobKey } = jobIdentity(chain);
 
-    const service = {
+    const service: ReviewWorkspaceOperations = {
       prepare: async (): Promise<WorkspaceResult> => {
-        prepareStarted();
-        await releasePreparePromise;
+        prepareStarted.resolve();
+        await releasePrepare.promise;
         return {
           workspacePath: "/tmp/characterization-shutdown",
           headSha: chain.headSha,
@@ -212,9 +229,9 @@ describe("real BullMQ worker drain", () => {
           changedFiles: [],
         };
       },
-      cleanupAfterReview: async () => {},
+      cleanupAfterReview: async () => ({ removed: false }),
       cleanupAfterFailure: async () => {},
-    } as unknown as ReviewWorkspaceService;
+    };
 
     const workerConnection = createWorkerConnection(testEnv.REDIS_URL);
     const worker = startReviewWorker(workerConnection, {
@@ -229,7 +246,7 @@ describe("real BullMQ worker drain", () => {
     const active = once(worker, "active");
     const payload: ReviewJobPayload = {
       reviewId: chain.reviewId,
-      jobKey: chain.jobKey!,
+      jobKey,
       githubInstallationId: String(chain.githubInstallationId),
       githubRepositoryId: String(chain.githubRepositoryId),
       repositoryFullName: chain.repositoryFullName,
@@ -240,15 +257,18 @@ describe("real BullMQ worker drain", () => {
       reviewType: "standard",
       trigger: "opened",
     };
-    const queueJob = await queue.add("review", payload, { jobId: chain.jobId! });
+    const queueJob = await queue.add("review", payload, { jobId });
 
     let stopped = false;
     let stopPromise: Promise<void> | undefined;
     try {
       await active;
-      await prepareStartedPromise;
-      const activeJob = await queue.getJob(chain.jobId!);
-      expect(await activeJob!.getState()).toBe("active");
+      await prepareStarted.promise;
+      const activeJob = await queue.getJob(jobId);
+      if (!activeJob) {
+        throw new Error("the active queue job was not found");
+      }
+      expect(await activeJob.getState()).toBe("active");
 
       stopPromise = stopReviewWorker(worker).then(() => {
         stopped = true;
@@ -258,19 +278,19 @@ describe("real BullMQ worker drain", () => {
       // in-flight handle just because the processor is blocked.
       await new Promise((resolve) => setTimeout(resolve, 150));
       expect(stopped).toBe(false);
-      expect(await activeJob!.getState()).toBe("active");
+      expect(await activeJob.getState()).toBe("active");
 
-      releasePrepare();
+      releasePrepare.resolve();
       await stopPromise;
       expect(stopped).toBe(true);
 
       // The active job ran to completion instead of being acknowledged early.
-      const jobRow = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+      const jobRow = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
       expect(jobRow.status).toBe("completed");
       const reviewRow = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
       expect(reviewRow.state).toBe("analyzing");
     } finally {
-      releasePrepare();
+      releasePrepare.resolve();
       await stopPromise?.catch(() => {});
       await stopReviewWorker(worker).catch(() => {});
       await disconnectRedis(workerConnection);
@@ -280,31 +300,23 @@ describe("real BullMQ worker drain", () => {
 });
 
 describe("real BullMQ worker retry during shutdown", () => {
-  test("SIGTERM while an active attempt fails transiently schedules the retry instead of losing it", async () => {
+  test("worker shutdown while an active attempt fails transiently schedules the retry instead of losing it", async () => {
     const chain = await seedReviewChain({
       prefix: "shutdown-retry",
       state: "queued",
       job: { status: "enqueued" },
     });
-    if (!chain.jobId) {
-      throw new Error("seeded review chain is missing its job id");
-    }
+    const { jobId, jobKey } = jobIdentity(chain);
 
     let prepareCalls = 0;
-    let prepareStarted!: () => void;
-    const prepareStartedPromise = new Promise<void>((resolve) => {
-      prepareStarted = resolve;
-    });
-    let releasePrepare!: () => void;
-    const releasePreparePromise = new Promise<void>((resolve) => {
-      releasePrepare = resolve;
-    });
-    const service = {
+    const prepareStarted = deferred();
+    const releasePrepare = deferred();
+    const service: ReviewWorkspaceOperations = {
       prepare: async (): Promise<WorkspaceResult> => {
         prepareCalls += 1;
         if (prepareCalls === 1) {
-          prepareStarted();
-          await releasePreparePromise;
+          prepareStarted.resolve();
+          await releasePrepare.promise;
           throw new ReviewRetrievalError("git clone failed: transient network reset", "clone_failed");
         }
         return {
@@ -316,9 +328,9 @@ describe("real BullMQ worker retry during shutdown", () => {
           changedFiles: [],
         };
       },
-      cleanupAfterReview: async () => {},
+      cleanupAfterReview: async () => ({ removed: false }),
       cleanupAfterFailure: async () => {},
-    } as unknown as ReviewWorkspaceService;
+    };
 
     const workerConnection = createWorkerConnection(testEnv.REDIS_URL);
     const worker = startReviewWorker(workerConnection, {
@@ -332,7 +344,7 @@ describe("real BullMQ worker retry during shutdown", () => {
 
     const payload: ReviewJobPayload = {
       reviewId: chain.reviewId,
-      jobKey: chain.jobKey!,
+      jobKey,
       githubInstallationId: String(chain.githubInstallationId),
       githubRepositoryId: String(chain.githubRepositoryId),
       repositoryFullName: chain.repositoryFullName,
@@ -344,7 +356,7 @@ describe("real BullMQ worker retry during shutdown", () => {
       trigger: "opened",
     };
     const queueJob = await queue.add("review", payload, {
-      jobId: chain.jobId,
+      jobId,
       attempts: 3,
       backoff: { type: "fixed", delay: 60_000 },
     });
@@ -355,7 +367,7 @@ describe("real BullMQ worker retry during shutdown", () => {
     try {
       const active = once(worker, "active");
       await active;
-      await prepareStartedPromise;
+      await prepareStarted.promise;
 
       stopPromise = stopReviewWorker(worker);
       // The worker is draining the blocked attempt; the job is not acknowledged
@@ -363,13 +375,13 @@ describe("real BullMQ worker retry during shutdown", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(await queueJob.getState()).toBe("active");
 
-      releasePrepare();
+      releasePrepare.resolve();
       await stopPromise;
 
       // The transient failure was scheduled for retry, not recorded as success
       // or as a terminal failure.
       expect(await queueJob.getState()).toBe("delayed");
-      const failedJob = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+      const failedJob = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
       expect(failedJob.status).toBe("processing");
       expect(failedJob.attempts).toBe(1);
       expect(failedJob.lastError).toContain("clone failed");
@@ -393,11 +405,11 @@ describe("real BullMQ worker retry during shutdown", () => {
 
       expect(prepareCalls).toBe(2);
       expect(await queueJob.getState()).toBe("completed");
-      const completedJob = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+      const completedJob = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
       expect(completedJob.status).toBe("completed");
       expect(completedJob.attempts).toBe(2);
     } finally {
-      releasePrepare();
+      releasePrepare.resolve();
       await stopPromise?.catch(() => {});
       if (retryWorker) {
         await stopReviewWorker(retryWorker).catch(() => {});

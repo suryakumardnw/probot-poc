@@ -56,6 +56,22 @@ export interface SeededReviewChain {
   outboxEventId?: string;
 }
 
+/** Narrow the optional seeded identity without a non-null assertion. */
+export function jobIdentity(chain: SeededReviewChain): { jobId: string; jobKey: string } {
+  if (!chain.jobId || !chain.jobKey) {
+    throw new Error("seeded review chain is missing its job identity");
+  }
+  return { jobId: chain.jobId, jobKey: chain.jobKey };
+}
+
+/** Narrow the optional seeded outbox event id without a non-null assertion. */
+export function outboxEventId(chain: SeededReviewChain): string {
+  if (!chain.outboxEventId) {
+    throw new Error("seeded review chain is missing its outbox event id");
+  }
+  return chain.outboxEventId;
+}
+
 /**
  * Seed Installation → Repository → PullRequest → Review, optionally with a
  * ReviewJob and OutboxEvent. IDs are deterministic per call within the file;

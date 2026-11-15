@@ -712,6 +712,38 @@ describe("worker processor", () => {
     expect(await prisma.reviewWorkspace.count({ where: { reviewId: chain.reviewId } })).toBe(0);
   });
 
+  test("a terminal review is skipped before claiming and mirrors the job status", async () => {
+    const { service } = makeService();
+    const chain = await createReviewChain();
+    await prisma.review.update({
+      where: { id: chain.reviewId },
+      data: { state: "completed", completedAt: new Date() },
+    });
+
+    const outcome = await processReviewJob(
+      chain.jobId,
+      {
+        reviewId: chain.reviewId,
+        jobKey: "k",
+        githubInstallationId: INSTALLATION_ID.toString(),
+        githubRepositoryId: "12345",
+        repositoryFullName: REPO_FULL_NAME,
+        pullRequestNumber: PR_NUMBER,
+        headSha,
+        reviewMode: "adaptive",
+        trigger: "opened",
+      },
+      makeDeps(service, silentLogger),
+    );
+
+    expect(outcome).toBe("skipped_status");
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+    expect(job.status).toBe("completed");
+    // The decided review was not claimed, so its attempt counter did not move.
+    expect(job.attempts).toBe(0);
+    expect(await prisma.reviewWorkspace.count({ where: { reviewId: chain.reviewId } })).toBe(0);
+  });
+
   test("falls back to the repository default branch when base SHA is unknown", async () => {
     // Manual reviews previously carried no base SHA and failed before cloning.
     // With neither baseSha nor a payload baseRef, the worker must use the

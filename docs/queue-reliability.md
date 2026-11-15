@@ -56,12 +56,12 @@ enqueue time; `enabled: false` means `attempts: 1` (no retries).
 | `postgres_unavailable`   | Prisma P1001, connection lost                              | Retry; never publish on this attempt |
 | `clone_failure`          | git clone/checkout/diff failed                             | Retry when infrastructure is enabled |
 | `agent_crash`            | runtime crash/spawn failure                                | Retry when infrastructure is enabled |
-| `model_unavailable`      | provider unavailable                                       | Retry only if `providerUnavailable.enabled` |
+| `model_unavailable`      | provider unavailable                                       | Retry only if `queue.retry.providerUnavailable.enabled` |
 | `invalid_model_output`   | schema/validation failure                                  | Terminal                             |
 | `resource_limit_exceeded`| timeout, OOM, disk quota                                   | Terminal                             |
 | `stale_commit`           | PR head moved / results rejected                           | Terminal                             |
 | `unknown`                | unclassified internal error                                | Terminal (never retry blindly)       |
-| transient `AppError`     | `RateLimitError`, retryable `ProviderError`, 5xx           | Retry within the configured budget   |
+| transient `AppError`     | `RateLimitError`, retryable `ProviderError`, 5xx           | Retry within the configured budget; a retryable `ProviderError` still maps to `model_unavailable`, so `queue.retry.providerUnavailable.enabled` must also be true |
 | permanent `AppError`     | `ValidationError`, `AuthError`, `ForbiddenError`, conflict | Terminal                             |
 
 ### Worker contract
@@ -89,7 +89,8 @@ both derive from `queue.retry.infrastructure.maxAttempts`.
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
 | Transient failure with attempts remaining        | BullMQ retries with the configured backoff; durable job stays `processing`.                                   |
 | Worker crashes / stalls mid-review               | BullMQ stalled-job recovery re-delivers the job; reconciliation also finds `processing` rows after the stale threshold and re-enqueues the same job id. |
-| Crash between the job-failed and review-failed writes | Reconciliation scans `failed` durable jobs whose review is still non-terminal and re-enqueues them if attempts remain. |
+| Crash after the review is marked failed, before the job row is marked failed | The review is already terminal, so no work is lost; the job row is left `processing`/`enqueued` and is not requeued (reconciliation excludes terminal reviews). This orphaned job row can be cleaned by an operator. |
+| Job marked failed while the review is still non-terminal | Happens when the review-failure write itself fails/conflicts, or after an operator resets a review. Reconciliation scans `failed` durable jobs whose review is non-terminal and re-enqueues them if attempts remain. |
 | Attempt budget exhausted                         | Reconciliation fails the review with `recovery_exhausted`; the processor writes `retry_exhausted` when it observes the last attempt itself. |
 | Permanent failure                                | The review and job are `failed` with a stable code and are never requeued. A new review requires a new ingestion (manual `/review` increments `attempt`). |
 | Redis outage during publish                      | Outbox recovery republishes pending events; the durable identity prevents duplicate jobs.                     |
@@ -99,6 +100,10 @@ Reconciliation runs at startup and every 60 s. It scans
 terminal, honors `queue.retry.infrastructure.maxAttempts`, and only removes a
 retained BullMQ job when it is already terminal (`completed`/`failed`) so
 re-adding with the same id actually runs.
+
+Reconciliation re-enqueue currently uses a fixed `exponential` backoff with a
+5000 ms base delay, not `queue.retry.infrastructure.backoff`. The attempt count
+is configuration-aware; backoff alignment is a documented follow-up.
 
 ## Graceful shutdown
 
@@ -128,3 +133,19 @@ reconciliation provides the Postgres-backed fallback.
   terminal failure, not on each retried attempt.
 - `ai_pr_reviewer_queue_depth` includes waiting, active and delayed jobs;
   `failed` jobs are retained for inspection (`removeOnFail: 5000`).
+
+## Known follow-ups
+
+1. **Preflight failures bypass the retry classifier.** The durable lookup,
+   claim, review-state read and recovery reset run before the processing `try`
+   block. A transient PostgreSQL error there is rethrown directly to BullMQ:
+   the configured attempts/backoff still apply, but no `failure_class` metric or
+   structured retry decision is recorded. Routing preflight failures through
+   `classifyQueueFailure` requires a durable job/review context and is deferred.
+2. **Reconciliation backoff is fixed.** Recovery re-enqueue always uses
+   `exponential` with a 5000 ms delay instead of the configured backoff. Attempt
+   budgets are aligned with `queue.retry.infrastructure.maxAttempts`.
+3. **Orphaned terminal-review job rows.** A crash after the review is marked
+   failed but before the guarded job write leaves a `processing`/`enqueued` job
+   row attached to a terminal review. It is not replayed; an operator may clear
+   it during housekeeping.

@@ -58,6 +58,19 @@ export interface WorkspaceResult {
   changedFiles: ChangedFile[];
 }
 
+/**
+ * The workspace operations the review worker depends on.
+ *
+ * Keeping this as a narrow interface (rather than the concrete service class)
+ * lets callers inject a typed fake without an unsafe cast, and keeps the
+ * processor independent of clone/git internals.
+ */
+export interface ReviewWorkspaceOperations {
+  prepare(input: PrepareInput): Promise<WorkspaceResult>;
+  cleanupAfterReview(reviewId: string): Promise<{ removed: boolean }>;
+  cleanupAfterFailure(reviewId: string, errorMessage?: string): Promise<void>;
+}
+
 export class ReviewRetrievalError extends Error {
   constructor(
     message: string,
@@ -116,7 +129,7 @@ function sanitizeNameComponent(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80);
 }
 
-export class ReviewWorkspaceService {
+export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
   constructor(private readonly opts: ReviewWorkspaceServiceOptions) {
     fs.mkdirSync(opts.rootDir, { recursive: true });
   }

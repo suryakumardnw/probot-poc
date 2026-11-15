@@ -1065,7 +1065,8 @@ Terminal states cannot be left. Every transition is stored in
 | Transient worker failure (clone, Redis/Postgres, GitHub 5xx) | BullMQ re-attempts within the configured budget; see `docs/queue-reliability.md` |
 | PR head moved before checkout | `stale_commit`, nothing published |
 | Empty diff | `empty_diff`, no model call |
-| Agent/provider unavailable | review `failed` immediately; no retry, no model switch |
+| Agent runtime crash/spawn failure | retried per `queue.retry.infrastructure`, then review `failed`; no model switch |
+| Model/provider unavailable | review `failed` immediately by default; retries only when `queue.retry.providerUnavailable.enabled` is true; no model switch |
 | Invalid model JSON | `invalid_output`, review `failed` |
 | Knowledge source unavailable | `skill_playbook_unavailable` / `handbook_unavailable` / `handbook_unconfigured` |
 | Findings persistence fails | review `failed` with `findings_persist_failed` |

@@ -17,12 +17,20 @@ import {
 } from "../../src/workspace/processor.js";
 import {
   ReviewRetrievalError,
-  type ReviewWorkspaceService,
+  type ReviewWorkspaceOperations,
   type WorkspaceResult,
 } from "../../src/workspace/workspace.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion, createTestReviewState, silentLogger } from "../helpers/ingestion.js";
-import { cleanDatabase, disconnectDatabase, prisma, seedReviewChain, type SeededReviewChain } from "./support.js";
+import {
+  cleanDatabase,
+  disconnectDatabase,
+  jobIdentity,
+  outboxEventId,
+  prisma,
+  seedReviewChain,
+  type SeededReviewChain,
+} from "./support.js";
 
 /**
  * Characterization: queue retry policy and execution (ARCHITECTURE.md §12.4,
@@ -58,12 +66,10 @@ async function clearQueuedJobs(): Promise<void> {
 }
 
 function payloadFor(chain: SeededReviewChain): ReviewJobPayload {
-  if (!chain.jobId || !chain.jobKey) {
-    throw new Error("seeded review chain is missing its job identity");
-  }
+  const { jobKey } = jobIdentity(chain);
   return {
     reviewId: chain.reviewId,
-    jobKey: chain.jobKey,
+    jobKey,
     githubInstallationId: String(chain.githubInstallationId),
     githubRepositoryId: String(chain.githubRepositoryId),
     repositoryFullName: chain.repositoryFullName,
@@ -165,12 +171,16 @@ describe("retry policy from configuration (§12.4)", () => {
     };
 
     await expect(
-      createTestIngestion({ queue: capturingQueue }).services.publishOutboxEvent(chain.outboxEventId!),
+      createTestIngestion({ queue: capturingQueue }).services.publishOutboxEvent(outboxEventId(chain)),
     ).resolves.toBe("published");
 
     expect(added).toHaveLength(1);
-    expect(added[0]!.opts.attempts).toBe(3);
-    expect(added[0]!.opts.backoff).toEqual({ type: "exponential", delay: 5000 });
+    const [captured] = added;
+    if (!captured) {
+      throw new Error("the outbox did not enqueue a job");
+    }
+    expect(captured.opts.attempts).toBe(3);
+    expect(captured.opts.backoff).toEqual({ type: "exponential", delay: 5000 });
   });
 });
 
@@ -181,12 +191,10 @@ describe("worker retry execution (§12.4)", () => {
       state: "queued",
       job: { status: "enqueued" },
     });
-    if (!chain.jobId) {
-      throw new Error("seeded review chain is missing its job id");
-    }
+    const { jobId } = jobIdentity(chain);
 
     let prepareCalls = 0;
-    const service = {
+    const service: ReviewWorkspaceOperations = {
       prepare: async (): Promise<WorkspaceResult> => {
         prepareCalls += 1;
         if (prepareCalls === 1) {
@@ -194,9 +202,9 @@ describe("worker retry execution (§12.4)", () => {
         }
         return workspaceResult(chain.headSha);
       },
-      cleanupAfterReview: async () => {},
+      cleanupAfterReview: async () => ({ removed: false }),
       cleanupAfterFailure: async () => {},
-    } as unknown as ReviewWorkspaceService;
+    };
 
     const connection = createWorkerConnection(testEnv.REDIS_URL);
     const worker = startReviewWorker(connection, {
@@ -215,7 +223,7 @@ describe("worker retry execution (§12.4)", () => {
 
     const completed = once(worker, "completed");
     const queueJob = await queue.add("review", payloadFor(chain), {
-      jobId: chain.jobId,
+      jobId,
       attempts: 3,
       backoff: { type: "exponential", delay: 25 },
     });
@@ -227,10 +235,12 @@ describe("worker retry execution (§12.4)", () => {
       expect(prepareCalls).toBe(2);
       expect(await queueJob.getState()).toBe("completed");
 
-      const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+      const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
       expect(job.status).toBe("completed");
       // One increment per processing attempt, including the failed one.
       expect(job.attempts).toBe(2);
+      // Success clears the transient failure text recorded by the first attempt.
+      expect(job.lastError).toBeNull();
       const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
       expect(review.state).toBe("analyzing");
       expect(review.errorCode).toBeNull();
@@ -247,19 +257,17 @@ describe("worker retry execution (§12.4)", () => {
       state: "queued",
       job: { status: "enqueued" },
     });
-    if (!chain.jobId) {
-      throw new Error("seeded review chain is missing its job id");
-    }
+    const { jobId } = jobIdentity(chain);
 
     let prepareCalls = 0;
-    const service = {
+    const service: ReviewWorkspaceOperations = {
       prepare: async (): Promise<WorkspaceResult> => {
         prepareCalls += 1;
         throw new AgentRuntimeError("invalid_output", "model returned invalid JSON");
       },
-      cleanupAfterReview: async () => {},
+      cleanupAfterReview: async () => ({ removed: false }),
       cleanupAfterFailure: async () => {},
-    } as unknown as ReviewWorkspaceService;
+    };
 
     const connection = createWorkerConnection(testEnv.REDIS_URL);
     const worker = startReviewWorker(connection, {
@@ -276,7 +284,7 @@ describe("worker retry execution (§12.4)", () => {
       worker.once("failed", (job) => resolve(job?.attemptsMade));
     });
     const queueJob = await queue.add("review", payloadFor(chain), {
-      jobId: chain.jobId,
+      jobId,
       attempts: 3,
       backoff: { type: "exponential", delay: 25 },
     });
@@ -287,7 +295,7 @@ describe("worker retry execution (§12.4)", () => {
       expect(prepareCalls).toBe(1);
       expect(await queueJob.getState()).toBe("failed");
 
-      const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId } });
+      const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
       expect(job.status).toBe("failed");
       expect(job.attempts).toBe(1);
       const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
@@ -308,17 +316,18 @@ describe("durable retry decisions (§12.4)", () => {
       state: "queued",
       job: { status: "enqueued" },
     });
-    const service = {
+    const { jobId } = jobIdentity(chain);
+    const service: ReviewWorkspaceOperations = {
       prepare: async () => {
         throw new ReviewRetrievalError("git clone failed: transient network reset", "clone_failed");
       },
       cleanupAfterFailure: async () => {},
-      cleanupAfterReview: async () => {},
-    } as unknown as ReviewWorkspaceService;
+      cleanupAfterReview: async () => ({ removed: false }),
+    };
 
     await expect(
       processReviewJob(
-        chain.jobId!,
+        jobId,
         payloadFor(chain),
         {
           repositories,
@@ -332,7 +341,7 @@ describe("durable retry decisions (§12.4)", () => {
       ),
     ).rejects.toBeInstanceOf(ReviewJobRetryError);
 
-    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     // Not failed: the durable row must remain claimable for the retry.
     expect(job.status).toBe("processing");
     expect(job.attempts).toBe(1);
@@ -348,17 +357,18 @@ describe("durable retry decisions (§12.4)", () => {
       state: "queued",
       job: { status: "enqueued", attempts: 2 },
     });
-    const service = {
+    const { jobId } = jobIdentity(chain);
+    const service: ReviewWorkspaceOperations = {
       prepare: async () => {
         throw new ReviewRetrievalError("git clone failed: transient network reset", "clone_failed");
       },
       cleanupAfterFailure: async () => {},
-      cleanupAfterReview: async () => {},
-    } as unknown as ReviewWorkspaceService;
+      cleanupAfterReview: async () => ({ removed: false }),
+    };
 
     await expect(
       processReviewJob(
-        chain.jobId!,
+        jobId,
         payloadFor(chain),
         {
           repositories,
@@ -372,7 +382,7 @@ describe("durable retry decisions (§12.4)", () => {
       ),
     ).rejects.toBeInstanceOf(UnrecoverableError);
 
-    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     expect(job.status).toBe("failed");
     expect(job.attempts).toBe(3);
     const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
@@ -386,17 +396,18 @@ describe("durable retry decisions (§12.4)", () => {
       state: "queued",
       job: { status: "enqueued" },
     });
-    const service = {
+    const { jobId } = jobIdentity(chain);
+    const service: ReviewWorkspaceOperations = {
       prepare: async () => {
         throw new AgentRuntimeError("invalid_output", "model returned invalid JSON");
       },
       cleanupAfterFailure: async () => {},
-      cleanupAfterReview: async () => {},
-    } as unknown as ReviewWorkspaceService;
+      cleanupAfterReview: async () => ({ removed: false }),
+    };
 
     await expect(
       processReviewJob(
-        chain.jobId!,
+        jobId,
         payloadFor(chain),
         {
           repositories,
@@ -410,7 +421,7 @@ describe("durable retry decisions (§12.4)", () => {
       ),
     ).rejects.toBeInstanceOf(UnrecoverableError);
 
-    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     expect(job.status).toBe("failed");
     expect(job.attempts).toBe(1);
     const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
@@ -426,7 +437,8 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
       state: "analyzing",
       job: { status: "failed", attempts: 1 },
     });
-    await ageJobRow(chain.jobId!);
+    const { jobId } = jobIdentity(chain);
+    await ageJobRow(jobId);
     const added: Array<{ jobId?: string; attempts?: number }> = [];
     const fakeQueue = {
       getJob: async () => undefined,
@@ -447,8 +459,8 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
 
     expect(summary).toMatchObject({ requeued: 1, failed: 0 });
     expect(added).toHaveLength(1);
-    expect(added[0]).toMatchObject({ jobId: chain.jobId, attempts: 2 });
-    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    expect(added[0]).toMatchObject({ jobId, attempts: 2 });
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     expect(job.status).toBe("enqueued");
     const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
     expect(review.state).toBe("queued");
@@ -460,7 +472,8 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
       state: "analyzing",
       job: { status: "failed", attempts: 3 },
     });
-    await ageJobRow(chain.jobId!);
+    const { jobId } = jobIdentity(chain);
+    await ageJobRow(jobId);
 
     const summary = await reconcileIncompleteReviews({
       repositories,
@@ -474,7 +487,7 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
     const review = await prisma.review.findUniqueOrThrow({ where: { id: chain.reviewId } });
     expect(review.state).toBe("failed");
     expect(review.errorCode).toBe("recovery_exhausted");
-    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     expect(job.status).toBe("failed");
   });
 
@@ -484,7 +497,8 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
       state: "failed",
       job: { status: "failed", attempts: 3 },
     });
-    await ageJobRow(chain.jobId!);
+    const { jobId } = jobIdentity(chain);
+    await ageJobRow(jobId);
 
     const summary = await reconcileIncompleteReviews({
       repositories,
@@ -495,7 +509,7 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
     });
 
     expect(summary).toMatchObject({ scanned: 0, requeued: 0, failed: 0 });
-    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: chain.jobId! } });
+    const job = await prisma.reviewJob.findUniqueOrThrow({ where: { id: jobId } });
     expect(job.status).toBe("failed");
   });
 });
