@@ -14,7 +14,7 @@ import {
   createFindingsDependencies,
 } from "../../src/modules/findings/index.js";
 import type { Finding, FindingEvidence } from "../../src/modules/review/index.js";
-import { first } from "../helpers/assert.js";
+import { defined, first } from "../helpers/assert.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 const findingsDependencies = createFindingsDependencies(prisma);
@@ -427,7 +427,7 @@ describe("lifecycle across commits (§7.2)", () => {
     expect(r2.resolved).toHaveLength(1);
     const bRow = await prisma.finding.findFirst({ where: { title: "B" } });
     expect(bRow?.status).toBe("resolved");
-    const bTransitions = await prisma.findingStatusTransition.findMany({ where: { findingId: bRow!.id } });
+    const bTransitions = await prisma.findingStatusTransition.findMany({ where: { findingId: defined(bRow).id } });
     expect(bTransitions.some((t) => t.toStatus === "resolved" && t.fromStatus === "new")).toBe(true);
 
     // Commit 3: A moves lines → updated.
@@ -474,7 +474,7 @@ describe("lifecycle across commits (§7.2)", () => {
     expect(first(r5.stored).status).toBe("new");
     expect(first(r5.stored).reopened).toBe(true);
     const newA = await prisma.finding.findFirstOrThrow({ where: { title: "A", reviewId: review5 } });
-    expect(newA.reopenedFromFindingId).toBe(aRow!.id);
+    expect(newA.reopenedFromFindingId).toBe(defined(aRow).id);
     const reopenTransition = await prisma.findingStatusTransition.findFirst({
       where: { findingId: newA.id, toStatus: "new" },
     });

@@ -82,7 +82,7 @@ const ARBITRARY_SCRIPTS = new Set([
 ]);
 
 function classificationFor(command: string, args: readonly string[]): "test" | "build" | "package" | "other" {
-  const base = command.split("/").pop()!.toLowerCase();
+  const base = (command.split("/").pop() ?? "").toLowerCase();
   if (TEST_COMMANDS.has(base)) {
     return "test";
   }

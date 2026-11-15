@@ -553,7 +553,7 @@ describe("metrics endpoint", () => {
 
       const body = await new Promise<string>((resolve, reject) => {
         http
-          .get({ host: "127.0.0.1", port: port!, path: "/metrics" }, (res) => {
+          .get({ host: "127.0.0.1", port: defined(port), path: "/metrics" }, (res) => {
             expect(res.statusCode).toBe(200);
             expect(res.headers["content-type"]).toBe(METRICS_CONTENT_TYPE);
             let data = "";

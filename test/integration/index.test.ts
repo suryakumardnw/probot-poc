@@ -7,6 +7,7 @@ import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApp } from "../../src/index.js";
 import issueOpenedPayload from "../fixtures/issues.opened.json" with { type: "json" };
+import { defined } from "../helpers/assert.js";
 import { disconnectDatabase } from "../helpers/db.js";
 import { webhookReceiver } from "../helpers/events.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
@@ -32,12 +33,19 @@ const json = (data: unknown, status = 200) =>
     headers: { "Content-Type": "application/json" },
   });
 
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`expected ${label} to be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
 /** Captured requests, keyed by `METHOD path`. */
 function createServer() {
-  const captured: Array<{ method: string; url: URL; body: any }> = [];
-  const stub = vi.fn(async (input: any, init?: RequestInit) => {
-    const url = new URL(String(input?.url ?? input));
-    let body: any = null;
+  const captured: Array<{ method: string; url: URL; body: unknown }> = [];
+  const stub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    let body: unknown = null;
     if (init?.body) {
       try {
         body = JSON.parse(String(init.body));
@@ -97,7 +105,7 @@ describe("probot-poc app", () => {
       privateKey,
       log: pino({ level: "silent" }),
       // disable request throttling and retries for testing
-      Octokit: ProbotOctokit.defaults((instanceOptions: any) => ({
+      Octokit: ProbotOctokit.defaults((instanceOptions: Record<string, unknown>) => ({
         ...instanceOptions,
         retry: { enabled: false },
         throttle: { enabled: false },
@@ -122,15 +130,23 @@ describe("probot-poc app", () => {
       payload: issueOpenedPayload,
     });
 
-    const comment = captured.find((r) => r.url.pathname === "/repos/hiimbex/testing-things/issues/1/comments");
-    expect(comment).toBeDefined();
-    expect(comment!.body.body).toContain("🤖 **AI Triage**");
-    expect(comment!.body.body).toContain("Classification: Bug");
+    const comment = defined(
+      captured.find((r) => r.url.pathname === "/repos/hiimbex/testing-things/issues/1/comments"),
+      "triage comment request",
+    );
+    expect(String(asRecord(comment.body, "triage comment").body)).toContain("🤖 **AI Triage**");
+    expect(String(asRecord(comment.body, "triage comment").body)).toContain("Classification: Bug");
 
     // The LLM was called with the issue title in the user message.
-    const llm = captured.find((r) => r.url.origin === new URL(GROQ_URL).origin);
-    expect(llm).toBeDefined();
-    expect(llm!.body.messages[1].content).toContain("Issue #1:");
+    const llm = defined(
+      captured.find((r) => r.url.origin === new URL(GROQ_URL).origin),
+      "llm request",
+    );
+    const messages = asRecord(llm.body, "llm request").messages;
+    if (!Array.isArray(messages)) {
+      throw new Error("expected the llm request to contain messages");
+    }
+    expect(String(asRecord(messages[1], "llm user message").content)).toContain("Issue #1:");
   });
 
   test("skips triage for bot users", async () => {

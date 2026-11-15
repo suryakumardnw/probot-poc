@@ -79,6 +79,18 @@ describe("SDK permission rules", () => {
 });
 
 describe("SDK inline config", () => {
+  function asRecord(value: unknown, label: string): Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`expected ${label} to be an object`);
+    }
+    return value as Record<string, unknown>;
+  }
+
+  function providerFor(config: Record<string, unknown>): Record<string, unknown> {
+    const providers = asRecord(config.providers, "providers");
+    return asRecord(providers.reviewer, "providers.reviewer");
+  }
+
   it("emits the verified provider shape with env-referenced credentials", () => {
     const config = buildSdkInlineConfig(
       baseConfig,
@@ -91,16 +103,19 @@ describe("SDK inline config", () => {
     expect(config.share).toBe("disabled");
     expect(config.snapshots).toBe(false);
     expect(config.permissions).toEqual(expect.any(Array));
-    const provider = (config.providers as Record<string, any>).reviewer;
+    const provider = providerFor(config);
     expect(provider.package).toBe("@opencode/ai/providers/openai-compatible");
-    expect(provider.settings.apiKey).toBe("{env:MODEL_API_KEY}");
+    const settings = asRecord(provider.settings, "provider.settings");
+    expect(settings.apiKey).toBe("{env:MODEL_API_KEY}");
     expect(JSON.stringify(config)).not.toContain("secret-key-value");
   });
 
   it("falls back to provider.model when MODEL_NAME is absent", () => {
     const config = buildSdkInlineConfig(baseConfig, {}, { maxOutputTokens: 8192 });
-    const provider = (config.providers as Record<string, any>).reviewer;
-    expect(provider.models.glm.modelID).toBe(baseConfig.provider.model);
+    const provider = providerFor(config);
+    const models = asRecord(provider.models, "provider.models");
+    const model = asRecord(models.glm, "provider.models.glm");
+    expect(model.modelID).toBe(baseConfig.provider.model);
   });
 
   it("includes the same tracing plugin entry as the CLI config when enabled", () => {

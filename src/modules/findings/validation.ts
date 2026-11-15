@@ -84,13 +84,14 @@ async function evidenceAnchorsInWorkspace(
     if (content.encoding !== "utf-8" || content.text === undefined) {
       return false;
     }
-    const normalizedFile = squeezeWhitespace(content.text);
+    const text = content.text;
+    const normalizedFile = squeezeWhitespace(text);
     if (!normalizedFile.includes(squeezeWhitespace(excerpt))) {
       return false;
     }
     // When the evidence is line-anchored, the line must point into the file.
-    const anchored = finding.evidence.find((e) => typeof e.line === "number");
-    if (anchored && anchored.line! > content.text.split("\n").length) {
+    const anchoredLine = finding.evidence.find((e) => typeof e.line === "number")?.line;
+    if (typeof anchoredLine === "number" && anchoredLine > text.split("\n").length) {
       return false;
     }
     return true;
@@ -156,7 +157,13 @@ export async function validateFindings(
         reject("invalid_file", `finding anchor '${finding.file}' is not readable text content`);
         continue;
       }
-      const lineCount = content.text!.split("\n").length;
+      const text = content.text;
+      if (text === undefined) {
+        // Same outcome as the read failure below: no readable anchor.
+        reject("invalid_file", `finding anchor '${finding.file}' does not exist in the workspace`);
+        continue;
+      }
+      const lineCount = text.split("\n").length;
       if (finding.line < 1 || finding.line > lineCount) {
         reject("invalid_line", `line ${finding.line} is outside file '${finding.file}' (${lineCount} lines)`);
         continue;

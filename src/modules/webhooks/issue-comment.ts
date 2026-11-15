@@ -99,11 +99,11 @@ export function registerIssueCommentHandlers(app: Probot, deps: IssueCommentHand
     const args = argText.split(/\s+/).filter(Boolean);
     let requestedType: string | undefined;
     if (args.length > 0) {
-      const first = args[0]!;
-      if (first.toLowerCase().startsWith("type:")) {
-        requestedType = first.slice("type:".length).trim().toLowerCase() || undefined;
+      const firstArg = args[0] ?? "";
+      if (firstArg.toLowerCase().startsWith("type:")) {
+        requestedType = firstArg.slice("type:".length).trim().toLowerCase() || undefined;
       } else {
-        requestedType = first.toLowerCase();
+        requestedType = firstArg.toLowerCase();
       }
     }
 

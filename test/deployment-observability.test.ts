@@ -5,17 +5,12 @@
  * app compose must still start without it. These invariants keep the stack
  * private-by-default and pinned.
  */
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parse } from "yaml";
+import { network, readComposeFile, service } from "./helpers/compose.js";
 
 const composePath = path.resolve(__dirname, "../deploy/observability/docker-compose.yml");
-const compose = parse(readFileSync(composePath, "utf8"), { merge: true }) as {
-  services: Record<string, any>;
-  volumes: Record<string, unknown>;
-  networks: Record<string, any>;
-};
+const compose = readComposeFile(composePath);
 
 describe("observability compose structure", () => {
   it("contains only the Phoenix service", () => {
@@ -23,41 +18,41 @@ describe("observability compose structure", () => {
   });
 
   it("pins the Phoenix image (no floating tags)", () => {
-    expect(compose.services.phoenix.image).toMatch(/^arizephoenix\/phoenix:\d+\.\d+\.\d+$/);
+    expect(service(compose, "phoenix").image).toMatch(/^arizephoenix\/phoenix:\d+\.\d+\.\d+$/);
   });
 
   it("publishes the UI only on loopback and exposes the OTLP port internally", () => {
-    expect(compose.services.phoenix.ports).toEqual(["127.0.0.1:${PHOENIX_HOST_PORT:-6006}:6006"]);
-    expect(compose.services.phoenix.expose).toEqual(["6006"]);
+    expect(service(compose, "phoenix").ports).toEqual(["127.0.0.1:${PHOENIX_HOST_PORT:-6006}:6006"]);
+    expect(service(compose, "phoenix").expose).toEqual(["6006"]);
   });
 
   it("persists traces on a named volume", () => {
     expect(compose.volumes).toHaveProperty("phoenix-data");
-    expect(compose.services.phoenix.volumes).toContain("phoenix-data:/mnt/data");
-    expect(compose.services.phoenix.environment.PHOENIX_WORKING_DIR).toBe("/mnt/data");
+    expect(service(compose, "phoenix").volumes).toContain("phoenix-data:/mnt/data");
+    expect(service(compose, "phoenix").environment.PHOENIX_WORKING_DIR).toBe("/mnt/data");
   });
 
   it("disables outbound telemetry and defaults auth off for loopback-only use", () => {
-    expect(compose.services.phoenix.environment.PHOENIX_TELEMETRY_ENABLED).toBe("false");
-    expect(compose.services.phoenix.environment.PHOENIX_ENABLE_AUTH).toBe("${PHOENIX_ENABLE_AUTH:-false}");
+    expect(service(compose, "phoenix").environment.PHOENIX_TELEMETRY_ENABLED).toBe("false");
+    expect(service(compose, "phoenix").environment.PHOENIX_ENABLE_AUTH).toBe("${PHOENIX_ENABLE_AUTH:-false}");
   });
 
   it("bounds trace retention to avoid unbounded disk growth", () => {
-    expect(compose.services.phoenix.environment.PHOENIX_DEFAULT_RETENTION_POLICY_DAYS).toBe(
+    expect(service(compose, "phoenix").environment.PHOENIX_DEFAULT_RETENTION_POLICY_DAYS).toBe(
       "${PHOENIX_RETENTION_DAYS:-30}",
     );
   });
 
   it("health-checks the server and applies resource limits", () => {
-    expect(compose.services.phoenix.healthcheck.test).toBeTruthy();
-    const limits = compose.services.phoenix.deploy.resources.limits;
+    expect(service(compose, "phoenix").healthcheck.test).toBeTruthy();
+    const limits = service(compose, "phoenix").deploy.resources.limits;
     expect(String(limits.cpus)).toBeTruthy();
     expect(String(limits.memory)).toMatch(/^\d+[KMG]$/);
   });
 
   it("joins the app-owned observability network as an external network", () => {
-    expect(compose.services.phoenix.networks).toContain("observability");
-    expect(compose.networks.observability.external).toBe(true);
-    expect(compose.networks.observability.name).toBe("${OBSERVABILITY_NETWORK:-ai-pr-reviewer_observability}");
+    expect(service(compose, "phoenix").networks).toContain("observability");
+    expect(network(compose, "observability").external).toBe(true);
+    expect(network(compose, "observability").name).toBe("${OBSERVABILITY_NETWORK:-ai-pr-reviewer_observability}");
   });
 });

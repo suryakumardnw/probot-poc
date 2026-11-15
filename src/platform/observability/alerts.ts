@@ -136,11 +136,13 @@ export class AlertManager {
         raised.push(event);
         this.logger.warn({ alert: event }, "Alert raised");
       } else if (!breach && wasActive) {
-        const previous = this.active.get(name)!;
-        const event: AlertEvent = { ...previous, action: "resolved", at: new Date().toISOString() };
-        this.active.delete(name);
-        raised.push(event);
-        this.logger.info({ alert: event }, "Alert resolved");
+        const previous = this.active.get(name);
+        if (previous !== undefined) {
+          const event: AlertEvent = { ...previous, action: "resolved", at: new Date().toISOString() };
+          this.active.delete(name);
+          raised.push(event);
+          this.logger.info({ alert: event }, "Alert resolved");
+        }
       }
       gauge.set(this.active.has(name) ? 1 : 0, { alert: name });
     };

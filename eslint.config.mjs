@@ -29,8 +29,10 @@ const FETCH_ALLOWED_FILES = ["src/platform/**/*.ts"];
  * ESLint flat config.
  *
  * Boundary rules are mandatory: there is no temporary allowance left from the
- * Phase 3 moves. The test and non-null overrides below are tracked separately
- * by PR 4.2 (typescript-refactor baseline).
+ * Phase 3 moves. The former source and test non-null/`any` overrides were
+ * retired by PR 4.2; only the frozen characterization suite keeps a narrow
+ * allowance because its assertions are the black-box baseline and must not be
+ * edited.
  */
 export default tseslint.config(
   {
@@ -277,38 +279,13 @@ export default tseslint.config(
     },
   },
   {
-    // TODO(PR 4.2): delete this block. These files hold the 28 non-null
-    // assertions recorded in docs/typescript-refactor-baseline.md. Replacing
-    // them changes admin auth, command execution, and worker shutdown control
-    // flow, so it is out of scope for the tooling PR. The rule stays on for
-    // every other source file, and PR 4.2 removes the remaining assertions.
-    files: [
-      "src/modules/admin/admin.auth.http.ts",
-      "src/modules/admin/auth/github-oauth.ts",
-      "src/modules/admin/auth/session.ts",
-      "src/modules/admin/rate-limit.ts",
-      "src/platform/config/review-loader.ts",
-      "src/modules/execution/local-executor.ts",
-      "src/modules/execution/policy.ts",
-      "src/modules/findings/validation.ts",
-      "src/modules/webhooks/issue-comment.ts",
-      "src/platform/observability/alerts.ts",
-      "src/modules/publishing/summary.ts",
-      "src/modules/review/retrieval.ts",
-      "src/modules/review/tools.ts",
-      "src/worker.ts",
-    ],
+    // The characterization suite is the frozen behavioural baseline: its
+    // assertions intentionally read known-good fixture rows with `!` and
+    // construct partial vendor-shaped values. PR 4.2 must not rewrite those
+    // files (acceptance criterion), so the allowance stays scoped to them.
+    // Unit, contract, integration and helper code are fully checked.
+    files: ["test/characterization/**/*.ts"],
     rules: {
-      "@typescript-eslint/no-non-null-assertion": "off",
-    },
-  },
-  {
-    files: ["test/**/*.ts"],
-    rules: {
-      // TODO(PR 4.2): remove both overrides once fakes replace the real
-      // Postgres/Redis fixtures. Test bodies assert known-good fixtures with
-      // `!` and construct partial `any` values; fixing them belongs to the
-      // fakes migration, not the tooling PR.
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-non-null-assertion": "off",
     },

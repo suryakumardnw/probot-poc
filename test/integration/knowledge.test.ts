@@ -16,7 +16,6 @@ import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from "no
 import fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { reviewConfigSchema, type ReviewConfig } from "../../src/contracts/config.js";
 import { fetchFileContent, fetchRepoTree, resolveCommitSha, sha256Hex } from "../../src/modules/knowledge/fetch.js";
@@ -33,7 +32,8 @@ import {
 } from "../../src/modules/knowledge/index.js";
 import type { KnowledgeFetcher } from "../../src/modules/knowledge/types.js";
 import { resolveReviewInjection, selectHandbookSections } from "../../src/modules/review/injection.js";
-import { first } from "../helpers/assert.js";
+import { FakeLogger } from "../fakes/logger.js";
+import { defined, first } from "../helpers/assert.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@localhost:5432/reviewer";
@@ -42,12 +42,7 @@ const SKILL_REF = "cf865e94de7729751c747171785b6ce57e7b178c";
 const SKILL_REF_B = "d".repeat(40);
 const HANDBOOK_SHA = "b".repeat(40);
 
-const fakeLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {},
-} as unknown as pino.Logger;
+const fakeLogger = new FakeLogger();
 
 function makeConfig(
   skillRef: string = SKILL_REF,
@@ -85,7 +80,7 @@ function makeFetcher(
     const parts = parsed.pathname.split("/").filter(Boolean); // repos/:o/:r/...
     if (parts[0] === "repos") {
       if (parts[3] === "commits") {
-        const ref = decodeURIComponent(parts[4]!);
+        const ref = decodeURIComponent(defined(parts[4], "commit ref segment"));
         const sha = refs[ref] ?? (/^[0-9a-f]{40}$/.test(ref) ? ref : null);
         if (!sha) {
           return { status: 404, text: JSON.stringify({ message: "Not Found" }) };
@@ -93,7 +88,7 @@ function makeFetcher(
         return { status: 200, text: JSON.stringify({ sha }) };
       }
       if (parts[3] === "git" && parts[4] === "trees") {
-        const sha = parts[5]!.split("?")[0]!;
+        const sha = first(defined(parts[5], "tree sha segment").split("?"));
         const tree = Object.entries(files)
           .filter(([path]) => path.startsWith(`${sha}/`))
           .map(([path, content]) => ({
@@ -171,11 +166,11 @@ describe("ensureKnowledgeSources", () => {
       sha256Hex(snapshot.skill.files.map((f) => `${f.sha256}  ${f.path}\n`).join("")),
     );
 
-    const manifest = JSON.parse(readFileSync(join(snapshot.skill.dir!, "manifest.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(defined(snapshot.skill.dir, "skill dir"), "manifest.json"), "utf8"));
     expect(manifest.status).toBe("fresh");
     expect(manifest.ref).toBe(SKILL_REF);
     expect(manifest.contentHash).toBe(snapshot.skill.contentHash);
-    expect(existsSync(join(snapshot.skill.dir!, "skills/code-review/SKILL.md"))).toBe(true);
+    expect(existsSync(join(defined(snapshot.skill.dir, "skill dir"), "skills/code-review/SKILL.md"))).toBe(true);
   });
 
   test("cache hit → no network (fetcher not called)", async () => {
@@ -220,13 +215,16 @@ describe("ensureKnowledgeSources", () => {
     const snapshot = await ensureKnowledgeSources(config, fakeLogger, { cacheDir, fetcher, env: process.env });
 
     expect(snapshot.handbookVariants).toHaveLength(1);
-    expect(snapshot.handbookVariants![0]!.technologies).toEqual(["typescript", "nodejs"]);
-    expect(snapshot.handbookVariants![0]!.source.status).toBe("fresh");
-    expect(snapshot.handbookVariants![0]!.source.ref).toBe(tsSha);
+    expect(first(defined(snapshot.handbookVariants, "handbook variants")).technologies).toEqual([
+      "typescript",
+      "nodejs",
+    ]);
+    expect(first(defined(snapshot.handbookVariants, "handbook variants")).source.status).toBe("fresh");
+    expect(first(defined(snapshot.handbookVariants, "handbook variants")).source.ref).toBe(tsSha);
 
     const workspacePath = mkdtempSync(join(tmpdir(), "ws-ts-handbook-"));
     tempDirs.push(workspacePath);
-    let captured: PersistedKnowledgeSnapshot | null = null;
+    const captured: PersistedKnowledgeSnapshot[] = [];
     const materialized = await materializeReviewKnowledge({
       reviewId: "materialize-only-tech-ref",
       reviewType: "handbook",
@@ -235,13 +233,14 @@ describe("ensureKnowledgeSources", () => {
       store: {
         findSnapshot: async () => ({ knowledgeSnapshot: null }),
         saveSnapshot: async (_reviewId, snapshot) => {
-          captured = snapshot;
+          captured.push(snapshot);
         },
       },
       logger: fakeLogger,
     });
-    expect(captured!.handbook!.ref).toBe(HANDBOOK_SHA);
-    expect(captured!.handbookVariants![0]!.source.ref).toBe(tsSha);
+    const capturedSnapshot = first(captured);
+    expect(defined(capturedSnapshot.handbook, "captured handbook").ref).toBe(HANDBOOK_SHA);
+    expect(first(defined(capturedSnapshot.handbookVariants, "captured handbook variants")).source.ref).toBe(tsSha);
     expect(
       existsSync(
         join(workspacePath, "knowledge", "handbook-variants", tsSha, "docs/guidelines/typescript/01_architecture.md"),
@@ -257,9 +256,13 @@ describe("ensureKnowledgeSources", () => {
       snapshot,
       logger: fakeLogger,
     });
-    expect(tsInjection!.files).toEqual(["docs/guidelines/typescript/01_architecture.md"]);
-    expect(tsInjection!.text).toContain("Keep boundaries.");
-    expect(tsInjection!.contentHash).toBe(snapshot.handbookVariants![0]!.source.contentHash);
+    expect(defined(tsInjection, "typescript injection").files).toEqual([
+      "docs/guidelines/typescript/01_architecture.md",
+    ]);
+    expect(defined(tsInjection, "typescript injection").text).toContain("Keep boundaries.");
+    expect(defined(tsInjection, "typescript injection").contentHash).toBe(
+      first(defined(snapshot.handbookVariants, "handbook variants")).source.contentHash,
+    );
 
     // Dart has no matching variant → the default handbook is used.
     const flutterInjection = await resolveReviewInjection({
@@ -270,8 +273,8 @@ describe("ensureKnowledgeSources", () => {
       snapshot,
       logger: fakeLogger,
     });
-    expect(flutterInjection!.files).toEqual(["docs/02-flutter.md"]);
-    expect(flutterInjection!.contentHash).toBe(snapshot.handbook.contentHash);
+    expect(defined(flutterInjection, "flutter injection").files).toEqual(["docs/02-flutter.md"]);
+    expect(defined(flutterInjection, "flutter injection").contentHash).toBe(snapshot.handbook.contentHash);
   });
 
   test("unavailable technology ref fails fast for matching PRs only", async () => {
@@ -285,7 +288,7 @@ describe("ensureKnowledgeSources", () => {
     );
     const config = makeConfig(SKILL_REF, "main", [{ technologies: ["typescript"], ref: "feat/missing" }]);
     const snapshot = await ensureKnowledgeSources(config, fakeLogger, { cacheDir, fetcher, env: process.env });
-    expect(snapshot.handbookVariants![0]!.source.status).toBe("unavailable");
+    expect(first(defined(snapshot.handbookVariants, "handbook variants")).source.status).toBe("unavailable");
 
     const workspacePath = mkdtempSync(join(tmpdir(), "ws-missing-ts-"));
     tempDirs.push(workspacePath);
@@ -320,7 +323,7 @@ describe("ensureKnowledgeSources", () => {
       snapshot,
       logger: fakeLogger,
     });
-    expect(dartInjection!.files).toEqual(["docs/02-flutter.md"]);
+    expect(defined(dartInjection, "dart injection").files).toEqual(["docs/02-flutter.md"]);
   });
 
   test("ref change → refetch under the new ref (and env override feeds the ref)", async () => {
@@ -350,7 +353,7 @@ describe("ensureKnowledgeSources", () => {
       env: process.env,
     });
     expect(snapshot2.skill.ref).toBe(SKILL_REF_B);
-    expect(snapshot2.skill.files[0]!.sha256).toBe(sha256Hex("# v2"));
+    expect(defined(snapshot2.skill.files[0]).sha256).toBe(sha256Hex("# v2"));
     // Old ref entry is untouched (immutable per-ref trees).
     expect(existsSync(join(cacheDir, "skill", SKILL_REF, "skills/code-review/SKILL.md"))).toBe(true);
 
@@ -528,9 +531,11 @@ describe("per-review knowledge snapshot (§4)", () => {
     const persisted = stored.knowledgeSnapshot as {
       skill?: { ref: string; contentHash: string; files: Array<{ path: string; sha256: string }> };
     };
-    expect(persisted.skill!.ref).toBe(SKILL_REF);
-    expect(persisted.skill!.contentHash).toBe(snapshot.skill.contentHash);
-    expect(persisted.skill!.files[0]!.sha256).toBe(sha256Hex("# skill\n\nPlaybook body."));
+    expect(defined(persisted.skill, "persisted skill").ref).toBe(SKILL_REF);
+    expect(defined(persisted.skill, "persisted skill").contentHash).toBe(snapshot.skill.contentHash);
+    expect(first(defined(persisted.skill, "persisted skill").files).sha256).toBe(
+      sha256Hex("# skill\n\nPlaybook body."),
+    );
 
     // Injection reads ONLY the review's own copy (and its identity matches).
     const injection = await resolveReviewInjection({
@@ -541,9 +546,9 @@ describe("per-review knowledge snapshot (§4)", () => {
       snapshot,
       logger: fakeLogger,
     });
-    expect(injection!.text).toContain("Playbook body.");
-    expect(injection!.files).toEqual(["skills/code-review/SKILL.md"]);
-    expect(injection!.contentHash).toBe(snapshot.skill.contentHash);
+    expect(defined(injection, "injection").text).toContain("Playbook body.");
+    expect(defined(injection, "injection").files).toEqual(["skills/code-review/SKILL.md"]);
+    expect(defined(injection, "injection").contentHash).toBe(snapshot.skill.contentHash);
   });
 
   test("unreproducible persisted snapshot fails fast with KNOWLEDGE_SNAPSHOT_UNAVAILABLE", async () => {
@@ -605,7 +610,7 @@ describe("per-review knowledge snapshot (§4)", () => {
     });
     expect(materialized.knowledgeDir).toBe(join(workspacePath, "knowledge"));
     const capturedSnapshot = first(captured);
-    expect(capturedSnapshot.handbook!.ref).toBe(HANDBOOK_SHA);
+    expect(defined(capturedSnapshot.handbook, "captured handbook").ref).toBe(HANDBOOK_SHA);
     const injection = await resolveReviewInjection({
       reviewType: "handbook",
       config: makeConfig(),
@@ -614,9 +619,9 @@ describe("per-review knowledge snapshot (§4)", () => {
       snapshot,
       logger: fakeLogger,
     });
-    expect(injection!.label).toBe("handbook standards");
-    expect(injection!.files).toEqual(["docs/standards.md"]);
-    expect(injection!.text).toContain("Always test your changes.");
+    expect(defined(injection, "injection").label).toBe("handbook standards");
+    expect(defined(injection, "injection").files).toEqual(["docs/standards.md"]);
+    expect(defined(injection, "injection").text).toContain("Always test your changes.");
   });
 
   test("unavailable handbook snapshot fails fast with HANDBOOK_UNAVAILABLE", async () => {
@@ -691,7 +696,7 @@ describe("per-review knowledge snapshot (§4)", () => {
       snapshot,
       logger: fakeLogger,
     });
-    expect(injection!.metrics).toMatchObject({
+    expect(defined(injection, "injection").metrics).toMatchObject({
       injectedTokens: expect.any(Number),
       documentsRetrieved: 1,
       candidates: 1,
@@ -699,13 +704,18 @@ describe("per-review knowledge snapshot (§4)", () => {
       selected: 1,
       truncated: false,
     });
-    expect(injection!.metrics!.injectedTokens).toBeGreaterThan(0);
-    expect(injection!.laterStagesText).toContain("docs/standards.md");
+    expect(defined(defined(injection, "injection").metrics, "injection metrics").injectedTokens).toBeGreaterThan(0);
+    expect(defined(injection, "injection").laterStagesText).toContain("docs/standards.md");
     // Later stages re-provide the authoritative handbook (they do not share
     // context with the analysis stage), so the guideline text is expected.
-    expect(injection!.laterStagesText).toContain("Always test your changes.");
+    expect(defined(injection, "injection").laterStagesText).toContain("Always test your changes.");
 
-    await persistKnowledgeMetrics(createPrismaReviewKnowledgeStore(prisma), review.id, "handbook", injection!.metrics!);
+    await persistKnowledgeMetrics(
+      createPrismaReviewKnowledgeStore(prisma),
+      review.id,
+      "handbook",
+      defined(defined(injection, "injection").metrics, "injection metrics"),
+    );
     const stored = await prisma.review.findUniqueOrThrow({
       where: { id: review.id },
       select: { knowledgeSnapshot: true },
@@ -714,11 +724,13 @@ describe("per-review knowledge snapshot (§4)", () => {
       handbook?: { ref: string };
       metrics?: { source: string; injectedTokens: number; truncated: boolean };
     };
-    expect(persisted.metrics!.source).toBe("handbook");
-    expect(persisted.metrics!.injectedTokens).toBe(injection!.metrics!.injectedTokens);
-    expect(persisted.metrics!.truncated).toBe(false);
+    expect(defined(persisted.metrics, "persisted metrics").source).toBe("handbook");
+    expect(defined(persisted.metrics, "persisted metrics").injectedTokens).toBe(
+      defined(defined(injection, "injection").metrics, "injection metrics").injectedTokens,
+    );
+    expect(defined(persisted.metrics, "persisted metrics").truncated).toBe(false);
     // Additive merge: the snapshot identity is untouched.
-    expect(persisted.handbook!.ref).toBe(HANDBOOK_SHA);
+    expect(defined(persisted.handbook, "persisted handbook").ref).toBe(HANDBOOK_SHA);
   });
 });
 

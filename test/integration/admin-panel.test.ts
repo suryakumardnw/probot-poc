@@ -21,6 +21,7 @@ import { DEFAULT_CONFIG_PATH, LAST_KNOWN_GOOD_SUFFIX } from "../../src/platform/
 import { createGithubOAuthClient, resetGithubFetch, setGithubFetch } from "../../src/platform/github/oauth-client.js";
 import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
 import type { GithubFetch } from "../../src/ports/github-oauth.js";
+import { defined, first } from "../helpers/assert.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
@@ -226,11 +227,11 @@ async function login(
   githubUsers = user;
   const start = await call(handlers.api, "GET", "/api/admin/auth/github/login");
   expect(start.statusCode).toBe(302);
-  const state = new URL(start.headers.location as string).searchParams.get("state")!;
+  const state = defined(new URL(start.headers.location as string).searchParams.get("state"), "oauth state");
   const done = await call(handlers.api, "GET", `/api/admin/auth/github/callback?code=good-code&state=${state}`);
   expect(done.statusCode).toBe(200);
   const body = JSON.parse(done.body) as { csrfToken: string };
-  return { cookie: (done.headers["set-cookie"] as string).split(";")[0]!, csrfToken: body.csrfToken };
+  return { cookie: first((done.headers["set-cookie"] as string).split(";")), csrfToken: body.csrfToken };
 }
 
 function decodeHtmlEntities(value: string): string {
@@ -295,7 +296,7 @@ describe("admin panel (ticket 14)", () => {
     // A session issued under an allowlist policy but whose login is not on the
     // (currently empty) allowlist is no longer an administrator.
     const session = createSession({ login: "octomember", id: 7002 }, "allowlist", { env: ADMIN_ENV });
-    const cookie = `admin_session=${sessionCookieValue(session, ADMIN_ENV.SESSION_SECRET!)}`;
+    const cookie = `admin_session=${sessionCookieValue(session, defined(ADMIN_ENV.SESSION_SECRET, "SESSION_SECRET"))}`;
     const result = await call(handlers.panel, "GET", "/admin", { headers: { cookie } });
     expect(result.statusCode).toBe(403);
     expect(result.body).toMatch(/not an administrator/i);
@@ -401,8 +402,8 @@ describe("admin panel (ticket 14)", () => {
 
     const updates = await prisma.auditLog.findMany({ where: { action: "config.update" } });
     expect(updates).toHaveLength(1);
-    expect(updates[0]!.actor).toBe("octoadmin");
-    expect(updates[0]!.metadata).toMatchObject({ source: "panel", section: "general" });
+    expect(first(updates).actor).toBe("octoadmin");
+    expect(first(updates).metadata).toMatchObject({ source: "panel", section: "general" });
 
     // Unchanged fields outside the submitted section are preserved (the schema
     // normalizes the full document, so spot-check representative keys instead
@@ -438,8 +439,8 @@ describe("admin panel (ticket 14)", () => {
     expect(await prisma.auditLog.findMany({ where: { action: "config.update" } })).toHaveLength(0);
 
     // Extract the round-tripped candidate and confirm.
-    const match = /name="candidate" value="([^"]*)"/.exec(interstitial.body)!;
-    const candidate = decodeHtmlEntities(match[1]!);
+    const match = defined(/name="candidate" value="([^"]*)"/.exec(interstitial.body), "candidate input");
+    const candidate = decodeHtmlEntities(defined(match[1], "candidate value"));
     expect(() => JSON.parse(candidate)).not.toThrow();
     expect((JSON.parse(candidate) as { execution: { mode: string } }).execution.mode).toBe("sandbox");
 
@@ -580,8 +581,8 @@ describe("admin panel (ticket 14)", () => {
   test("dev login in development mints a real admin session and grants panel access", async () => {
     const devEnv: Env = loadEnv({
       NODE_ENV: "development",
-      DATABASE_URL: process.env.DATABASE_URL!,
-      REDIS_URL: process.env.REDIS_URL!,
+      DATABASE_URL: defined(process.env.DATABASE_URL, "DATABASE_URL"),
+      REDIS_URL: defined(process.env.REDIS_URL, "REDIS_URL"),
       SESSION_SECRET: "dev-session-secret-for-local-verification",
       ADMIN_RATE_LIMIT_PER_MINUTE: "600",
     });
@@ -593,7 +594,7 @@ describe("admin panel (ticket 14)", () => {
       const loginResult = await call(devHandlers.panel, "GET", "/admin/dev-login?login=localadmin");
       expect(loginResult.statusCode).toBe(303);
       expect(loginResult.headers.location).toBe("/admin");
-      const cookie = (loginResult.headers["set-cookie"] as string).split(";")[0]!;
+      const cookie = first((loginResult.headers["set-cookie"] as string).split(";"));
       expect(cookie).toMatch(/^admin_session=.+\..+/);
 
       const overview = await call(devHandlers.panel, "GET", "/admin", { headers: { cookie } });

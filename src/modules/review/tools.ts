@@ -254,8 +254,9 @@ async function searchCode(
     }
     const lines = file.text.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i]!.toLowerCase().includes(needle)) {
-        matches.push(`${relative}:${i + 1}: ${lines[i]!.trim().slice(0, 300)}`);
+      const line = lines[i] ?? "";
+      if (line.toLowerCase().includes(needle)) {
+        matches.push(`${relative}:${i + 1}: ${line.trim().slice(0, 300)}`);
         if (matches.length >= MAX_SEARCH_MATCHES) {
           break;
         }
@@ -275,6 +276,18 @@ async function listFiles(workspacePath: string, relativePath: string): Promise<s
     .sort();
   const truncated = entries.length > MAX_LISTED_ENTRIES;
   return names.join("\n") + (truncated ? `\n(${entries.length - MAX_LISTED_ENTRIES} more entries omitted)` : "");
+}
+
+/**
+ * Tool arguments are validated by `parseToolRequests`; this guard keeps the
+ * fulfilment switch total for callers that construct requests directly. The
+ * enclosing try/catch turns a violation into an `unreadable` tool result.
+ */
+function requiredArgument(value: string | undefined, field: string): string {
+  if (value === undefined) {
+    throw new TypeError(`tool request is missing ${field}`);
+  }
+  return value;
 }
 
 /**
@@ -303,11 +316,16 @@ export async function fulfillToolRequests(
       if (request.tool === "get_diff") {
         content = diff;
       } else if (request.tool === "list_files") {
-        content = await listFiles(workspacePath, request.path!);
+        content = await listFiles(workspacePath, requiredArgument(request.path, "path"));
       } else if (request.tool === "search_code") {
-        content = await searchCode(workspacePath, request.path ?? ".", request.query!, maxFileBytes);
+        content = await searchCode(
+          workspacePath,
+          request.path ?? ".",
+          requiredArgument(request.query, "query"),
+          maxFileBytes,
+        );
       } else {
-        const file = await readWorkspaceFile(workspacePath, request.path!, { maxFileBytes });
+        const file = await readWorkspaceFile(workspacePath, requiredArgument(request.path, "path"), { maxFileBytes });
         if (file.encoding === "binary") {
           results.push({ ok: false, tool: request.tool, path: request.path, error: "binary_file" });
           budget.violation(`read_file ${request.path}: binary content withheld`);

@@ -547,7 +547,7 @@ describe("execute: successful tasks", () => {
 
     const resultPromise = runtime.execute(session, { instruction, output: "text" });
     await vi.waitFor(() => expect(calls).toHaveLength(1));
-    const prompt = calls[0]![1].at(-1) as string;
+    const prompt = defined(first(calls)[1].at(-1), "prompt argument");
     expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(120 * 1024);
     // Both ends survive so the output contract (at the end) is never cut.
     expect(prompt).toContain("HEAD_MARKER");

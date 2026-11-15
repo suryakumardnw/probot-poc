@@ -192,8 +192,9 @@ function humanizeModel(model: string): string {
   const acronyms: Record<string, string> = { glm: "GLM", gpt: "GPT", ai: "AI", llm: "LLM" };
   const out: string[] = [];
   for (const token of tokens) {
-    if (/^\d+$/.test(token) && out.length > 0 && /^\d+(\.\d+)?$/.test(out[out.length - 1]!)) {
-      out[out.length - 1] = `${out[out.length - 1]}.${token}`;
+    const previous = out.at(-1) ?? "";
+    if (/^\d+$/.test(token) && out.length > 0 && /^\d+(\.\d+)?$/.test(previous)) {
+      out[out.length - 1] = `${previous}.${token}`;
       continue;
     }
     out.push(acronyms[token.toLowerCase()] ?? token.charAt(0).toUpperCase() + token.slice(1));
@@ -272,7 +273,7 @@ function guidelinePath(guideline: string, files?: string[]): string | undefined 
   if (!match) {
     return undefined;
   }
-  let filePath = match[1]!;
+  let filePath = match[1] ?? "";
   if (!filePath.includes("/")) {
     const resolved = files?.find((file) => file === filePath || file.endsWith(`/${filePath}`));
     if (!resolved) {

@@ -75,6 +75,9 @@ export class LocalSandboxExecutor implements SandboxExecutor {
         stdio: ["ignore", "pipe", "pipe"],
         ...(uidGid ? { uid: uidGid.uid, gid: uidGid.gid } : {}),
       });
+      // `pid` is undefined only when spawning already failed; later exit/error
+      // handling still reports that failure, so guards here change no outcome.
+      const childPid = child.pid;
 
       const pending: PendingExecution = {
         timedOut: false,
@@ -98,17 +101,26 @@ export class LocalSandboxExecutor implements SandboxExecutor {
       // Hard timeout with SIGTERM → SIGKILL escalation.
       const timer = setTimeout(() => {
         pending.timedOut = true;
-        this.killTree(child.pid!, pending);
+        if (childPid !== undefined) {
+          this.killTree(childPid, pending);
+        }
       }, policy.timeoutMs);
       timer.unref?.();
 
-      watcher = createDiskQuotaWatcher([request.workspacePath, homeDir, tmpDir], policy.diskQuotaBytes, 250);
+      const watcherHandle = createDiskQuotaWatcher(
+        [request.workspacePath, homeDir, tmpDir],
+        policy.diskQuotaBytes,
+        250,
+      );
+      watcher = watcherHandle;
       const quotaCheck = setInterval(() => {
-        void watcher!.exceeded().then(({ exceeded }) => {
+        void watcherHandle.exceeded().then(({ exceeded }) => {
           if (exceeded && child.exitCode === null && !pending.killed) {
             pending.diskQuotaExceeded = true;
             pending.killed = true;
-            this.killTree(child.pid!, pending);
+            if (childPid !== undefined) {
+              this.killTree(childPid, pending);
+            }
           }
         });
       }, 250);
@@ -124,8 +136,9 @@ export class LocalSandboxExecutor implements SandboxExecutor {
       clearInterval(quotaCheck);
       watcher.stop();
 
-      // Verify the process tree is really gone (no orphans).
-      const terminated = this.isTerminated(child.pid!);
+      // Verify the process tree is really gone (no orphans). A missing pid
+      // means the spawn failed, so there is no tree left to inspect.
+      const terminated = childPid === undefined ? true : this.isTerminated(childPid);
 
       const spawnError = typeof exit.signal === "string" && exit.signal.startsWith("SPAWN_ERROR:");
       if (spawnError && exit.signal !== null) {

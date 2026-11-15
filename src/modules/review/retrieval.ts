@@ -82,7 +82,7 @@ export function detectTechnologies(changedFiles: string[]): string[] {
   const detected = new Set<string>();
   for (const file of changedFiles) {
     const normalized = file.replace(/\\/g, "/").toLowerCase();
-    const extension = normalized.includes(".") ? normalized.split(".").pop()! : "";
+    const extension = normalized.includes(".") ? (normalized.split(".").pop() ?? "") : "";
     for (const tech of EXTENSION_TECH[extension] ?? []) {
       detected.add(tech);
     }
@@ -113,7 +113,7 @@ function changedPathTokens(changedFiles: string[]): Set<string> {
   for (const file of changedFiles) {
     const normalized = file.replace(/\\/g, "/").toLowerCase();
     const segments = normalized.split("/").filter(Boolean);
-    const extension = normalized.includes(".") ? normalized.split(".").pop()! : "";
+    const extension = normalized.includes(".") ? (normalized.split(".").pop() ?? "") : "";
     const stem = normalized.replace(new RegExp(`\\.${extension}$`), "");
     for (const token of [...segments, ...stem.split(/[^a-z0-9]+/), extension]) {
       if (token.length > 1) {

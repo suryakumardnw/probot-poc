@@ -19,7 +19,6 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type pino from "pino";
 import { describe, expect, test } from "vitest";
 import { reviewConfigSchema } from "../src/contracts/config.js";
 import type { KnowledgeSnapshot } from "../src/modules/knowledge/types.js";
@@ -37,9 +36,10 @@ import {
   selectHandbookUnderBudget,
 } from "../src/modules/review/retrieval.js";
 import type { PromptInjection } from "../src/modules/review/types.js";
+import { FakeLogger } from "./fakes/logger.js";
+import { defined, first } from "./helpers/assert.js";
 
-const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as pino.Logger;
-void fakeLogger;
+const fakeLogger = new FakeLogger();
 
 describe("detectTechnologies", () => {
   test("maps extensions to technology keywords", () => {
@@ -76,13 +76,13 @@ describe("rankHandbookFiles", () => {
 
   test("technology match dominates: flutter first for a Dart PR, nodejs last", () => {
     const ranked = rankHandbookFiles(handbook, ["lib/main.dart", "test/widget_test.dart"]);
-    expect(ranked[0]!.path).toBe("flutter/style.md");
+    expect(first(ranked).path).toBe("flutter/style.md");
     const paths = ranked.map((r) => r.path);
     expect(paths.indexOf("nodejs/api.md")).toBeGreaterThan(paths.indexOf("general/reviewing.md"));
-    expect(ranked.find((r) => r.path === "nodejs/api.md")!.techMatch).toBe(false);
-    expect(ranked.find((r) => r.path === "general/reviewing.md")!.general).toBe(true);
+    expect(defined(ranked.find((r) => r.path === "nodejs/api.md")).techMatch).toBe(false);
+    expect(defined(ranked.find((r) => r.path === "general/reviewing.md")).general).toBe(true);
     // General categories are always eligible (score > 0), just deprioritized.
-    expect(ranked.find((r) => r.path === "general/reviewing.md")!.score).toBeGreaterThan(0);
+    expect(defined(ranked.find((r) => r.path === "general/reviewing.md")).score).toBeGreaterThan(0);
   });
 
   test("keyword overlap with changed paths boosts otherwise-unknown files", () => {
@@ -90,7 +90,7 @@ describe("rankHandbookFiles", () => {
       [{ path: "testing/widgets.md", content: "# Widgets" }],
       ["test/widgets_test.dart"],
     );
-    expect(ranked[0]!.score).toBeGreaterThan(0);
+    expect(first(ranked).score).toBeGreaterThan(0);
   });
 
   test("deterministic ordering (stable tie-breaking by path)", () => {

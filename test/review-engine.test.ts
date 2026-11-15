@@ -16,9 +16,10 @@ import {
 import { ReviewEngineError } from "../src/modules/review/types.js";
 import type { ChangedFile } from "../src/modules/workspace/files.js";
 import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
-import type { AgentRuntime, AgentSession, AgentSessionOptions, AgentTask } from "../src/ports/agent-runtime.js";
+import type { AgentTask } from "../src/ports/agent-runtime.js";
 import { AgentRuntimeError } from "../src/shared/errors/index.js";
-import { first } from "./helpers/assert.js";
+import { FakeAgentRuntime } from "./fakes/agent-runtime.js";
+import { defined, first } from "./helpers/assert.js";
 
 /**
  * Ticket 07 unit tests: adaptive repository-aware review engine.
@@ -109,50 +110,8 @@ function highTierConfig(overrides: Record<string, unknown> = {}): ReviewConfig {
 
 type Responder = (task: AgentTask, callIndex: number) => unknown;
 
-class FakeRuntime implements AgentRuntime {
-  responders: Responder[] = [];
-  usageQueue: Array<{ inputTokens?: number; outputTokens?: number; reasoningTokens?: number }> = [];
-  started: AgentSessionOptions[] = [];
-  tasks: AgentTask[] = [];
-  terminated = 0;
-
-  async startSession(options: AgentSessionOptions): Promise<AgentSession> {
-    this.started.push(options);
-    return {
-      id: "sess-fake-1",
-      reviewId: options.reviewId,
-      workspacePath: options.workspacePath,
-      createdAt: new Date().toISOString(),
-      timeoutMs: options.timeoutMs ?? 0,
-    };
-  }
-
-  async execute(session: AgentSession, task: AgentTask): Promise<import("../src/ports/agent-runtime.js").AgentResult> {
-    const callIndex = this.tasks.length;
-    this.tasks.push(task);
-    const respond = this.responders[callIndex];
-    if (!respond) {
-      throw new AgentRuntimeError("invalid_output", `no scripted response for call ${callIndex}`);
-    }
-    const value = respond(task, callIndex);
-    if (task.validate) {
-      const outcome = task.validate(value);
-      if (!outcome.ok) {
-        // Mirrors the real runtime: invalid structured output fails immediately.
-        throw new AgentRuntimeError("invalid_output", `agent output failed validation: ${outcome.error}`);
-      }
-      return { sessionId: session.id, text: "", value: outcome.value, durationMs: 5, usage: this.usageQueue.shift() };
-    }
-    return { sessionId: session.id, text: "", value, durationMs: 5, usage: this.usageQueue.shift() };
-  }
-
-  async terminate(): Promise<void> {
-    this.terminated += 1;
-  }
-
-  async healthCheck() {
-    return { healthy: true, detail: "fake", checkedAt: new Date().toISOString() };
-  }
+class FakeRuntime extends FakeAgentRuntime {
+  override responders: Responder[] = [];
 }
 
 type AnalysisOverrides = Partial<{
@@ -312,7 +271,7 @@ describe("review plan", () => {
     const skipped = skippedStageIds(plan);
     expect(skipped).toContain("context-investigation");
     expect(skipped).toContain("finding-verification");
-    const investigation = plan.stages.find((s) => s.id === "context-investigation")!;
+    const investigation = defined(plan.stages.find((s) => s.id === "context-investigation"));
     expect(investigation.enabled).toBe(false);
     expect(investigation.justification).toMatch(/^skipped: low-complexity/);
     expect(plan.budgets.maxModelCalls).toBe(2);
@@ -322,7 +281,7 @@ describe("review plan", () => {
   test("low-tier change with risk-sensitive signals still investigates", () => {
     const diff = makeDiff([{ path: "src/auth/session.ts", before: ["old"], after: ["const token = issueSession();"] }]);
     const { plan } = planFor(diff, [{ path: "src/auth/session.ts", status: "modified" }]);
-    const investigation = plan.stages.find((s) => s.id === "context-investigation")!;
+    const investigation = defined(plan.stages.find((s) => s.id === "context-investigation"));
     expect(investigation.enabled).toBe(true);
     expect(investigation.justification).toContain("risk-sensitive");
   });
@@ -334,7 +293,7 @@ describe("review plan", () => {
       cfg,
     );
     const plan = createReviewPlan(complexity, cfg);
-    const verification = plan.stages.find((s) => s.id === "finding-verification")!;
+    const verification = defined(plan.stages.find((s) => s.id === "finding-verification"));
     expect(verification.enabled).toBe(false);
     expect(verification.justification).toContain("verifyFindings is disabled");
   });
@@ -710,8 +669,8 @@ describe("review result schema", () => {
     expect(analysis.success).toBe(true);
     if (analysis.success) {
       expect(analysis.data.conventions).toHaveLength(1);
-      expect(analysis.data.conventions[0]!.length).toBeLessThanOrEqual(500);
-      expect(analysis.data.conventions[0]!.startsWith("xy")).toBe(true);
+      expect(first(analysis.data.conventions).length).toBeLessThanOrEqual(500);
+      expect(first(analysis.data.conventions).startsWith("xy")).toBe(true);
     }
 
     const reporting = reviewResultSchema.safeParse({
@@ -721,8 +680,8 @@ describe("review result schema", () => {
     expect(reporting.success).toBe(true);
     if (reporting.success) {
       expect(reporting.data.conventions).toHaveLength(1);
-      expect(reporting.data.conventions[0]!.length).toBeLessThanOrEqual(500);
-      expect(reporting.data.conventions[0]!.startsWith("xy")).toBe(true);
+      expect(first(reporting.data.conventions).length).toBeLessThanOrEqual(500);
+      expect(first(reporting.data.conventions).startsWith("xy")).toBe(true);
     }
   });
 
@@ -1054,7 +1013,7 @@ describe("runReview (fake runtime)", () => {
     });
     // The final reporting prompt sees the retrieved context once, not three
     // times (per-round 48k slices used to accumulate without a global cap).
-    const reporting = runtime.tasks.at(-1)!;
+    const reporting = defined(runtime.tasks.at(-1), "reporting task");
     expect(reporting.instruction.length).toBeLessThan(60_000);
     await fsp.rm(dir, { recursive: true, force: true });
   });

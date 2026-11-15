@@ -12,6 +12,7 @@ import {
   type CommandRequest,
   type ReviewExecutionConfig,
 } from "../../src/modules/execution/types.js";
+import { defined } from "../helpers/assert.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 
 /**
@@ -269,18 +270,22 @@ test("allowed and denied executions both produce audit records", async () => {
     orderBy: { createdAt: "desc" },
     take: 6,
   });
-  const grep = rows.find((r) => r.command === "grep");
-  const curl = rows.find((r) => r.command === "curl");
-  expect(grep).toBeDefined();
-  expect(grep!.decision).toBe("allowed");
-  expect(grep!.reason).toBe("ok");
-  expect(grep!.mode).toBe("static-analysis");
-  expect(grep!.sandboxed).toBe(false);
-  expect(grep!.stdoutBytes).toBeGreaterThan(0);
-  expect(curl).toBeDefined();
-  expect(curl!.decision).toBe("denied");
-  expect(curl!.reason).toBe("not_allowlisted");
-  expect(curl!.exitCode).toBeNull();
+  const grep = defined(
+    rows.find((r) => r.command === "grep"),
+    "grep audit row",
+  );
+  const curl = defined(
+    rows.find((r) => r.command === "curl"),
+    "curl audit row",
+  );
+  expect(grep.decision).toBe("allowed");
+  expect(grep.reason).toBe("ok");
+  expect(grep.mode).toBe("static-analysis");
+  expect(grep.sandboxed).toBe(false);
+  expect(grep.stdoutBytes).toBeGreaterThan(0);
+  expect(curl.decision).toBe("denied");
+  expect(curl.reason).toBe("not_allowlisted");
+  expect(curl.exitCode).toBeNull();
 });
 
 test("audit rows never contain output content", async () => {

@@ -8,7 +8,7 @@ import type { ReviewJobPayload } from "../../src/contracts/queue.js";
 import { createApp } from "../../src/index.js";
 import { InvalidStateTransitionError } from "../../src/modules/ingestion/index.js";
 import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
-import { at, first } from "../helpers/assert.js";
+import { at, defined, first } from "../helpers/assert.js";
 import { disconnectDatabase, prisma } from "../helpers/db.js";
 import { testEnv } from "../helpers/env.js";
 import { webhookReceiver } from "../helpers/events.js";
@@ -249,7 +249,7 @@ describe("review ingestion", () => {
     probot = new Probot({
       appId: 123,
       privateKey,
-      Octokit: ProbotOctokit.defaults((instanceOptions: any) => ({
+      Octokit: ProbotOctokit.defaults((instanceOptions: Record<string, unknown>) => ({
         ...instanceOptions,
         retry: { enabled: false },
         throttle: { enabled: false },
@@ -270,15 +270,14 @@ describe("review ingestion", () => {
     expect(repository?.fullName).toBe(REPO_FULL_NAME);
     expect(repository?.defaultBranch).toBe("main");
 
-    const review = await prisma.review.findFirst();
-    expect(review).not.toBeNull();
-    expect(review!.state).toBe("queued");
-    expect(review!.trigger).toBe("opened");
-    expect(review!.headSha).toBe("aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111");
-    expect(review!.configurationHash).toMatch(/^sha256:/);
-    expect(review!.schemaVersion).toBe(1);
+    const review = defined(await prisma.review.findFirst(), "ingested review");
+    expect(review.state).toBe("queued");
+    expect(review.trigger).toBe("opened");
+    expect(review.headSha).toBe("aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111");
+    expect(review.configurationHash).toMatch(/^sha256:/);
+    expect(review.schemaVersion).toBe(1);
 
-    const job = await prisma.reviewJob.findFirst({ where: { reviewId: review!.id } });
+    const job = await prisma.reviewJob.findFirst({ where: { reviewId: review.id } });
     expect(job?.jobKey).toBe(
       `${INSTALLATION_ID}:${REPOSITORY_ID}:42:aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111:adaptive:standard`,
     );
@@ -289,7 +288,7 @@ describe("review ingestion", () => {
     expect(outbox?.status).toBe("published");
 
     // Initial state transition persisted.
-    const transitions = await prisma.reviewStateTransition.findMany({ where: { reviewId: review!.id } });
+    const transitions = await prisma.reviewStateTransition.findMany({ where: { reviewId: review.id } });
     expect(transitions).toHaveLength(1);
     expect(first(transitions).fromState).toBeNull();
     expect(first(transitions).toState).toBe("queued");
@@ -468,7 +467,7 @@ describe("review ingestion", () => {
 
     const reviews = await prisma.review.findMany({ orderBy: { createdAt: "asc" } });
     expect(reviews).toHaveLength(2);
-    const handbook = reviews[1]!;
+    const handbook = at(reviews, 1);
     expect(handbook.reviewType).toBe("handbook");
     expect(handbook.trigger).toBe("manual");
     expect(handbook.attempt).toBe(1);
@@ -535,7 +534,7 @@ describe("review ingestion", () => {
 
     const reviews = await prisma.review.findMany();
     expect(reviews).toHaveLength(1); // only the automatic opened review
-    expect(reviews[0]!.reviewType).toBe("standard");
+    expect(first(reviews).reviewType).toBe("standard");
   });
 
   test("disabled review type posts help and does not ingest", async () => {
@@ -547,7 +546,7 @@ describe("review ingestion", () => {
 
     const reviews = await prisma.review.findMany();
     expect(reviews).toHaveLength(1);
-    expect(reviews[0]!.reviewType).toBe("standard");
+    expect(first(reviews).reviewType).toBe("standard");
   });
 
   test("non-command comments, bot comments and closed PRs are ignored", async () => {
@@ -658,7 +657,7 @@ describe("review ingestion", () => {
     expect(result.outcome).toBe("created");
     expect(result.reviewId).toBeDefined();
 
-    const review = await prisma.review.findUniqueOrThrow({ where: { id: result.reviewId! } });
+    const review = await prisma.review.findUniqueOrThrow({ where: { id: defined(result.reviewId, "review id") } });
     expect(review.trigger).toBe("manual");
     expect(review.reviewType).toBe("standard");
     expect(review.pullRequestId).toBe(pullRequest.id);
@@ -671,10 +670,12 @@ describe("review ingestion", () => {
       reviewType: "skill",
     });
     expect(skillResult.outcome).toBe("created");
-    const skillReview = await prisma.review.findUniqueOrThrow({ where: { id: skillResult.reviewId! } });
+    const skillReview = await prisma.review.findUniqueOrThrow({
+      where: { id: defined(skillResult.reviewId, "skill review id") },
+    });
     expect(skillReview.reviewType).toBe("skill");
 
-    const status = await ingestion.services.getReviewStatus(result.reviewId!);
+    const status = await ingestion.services.getReviewStatus(defined(result.reviewId, "review id"));
     expect(status?.review.state).toBe("queued");
     expect(status?.job?.jobKey).toContain(":7:dddd4444dddd4444dddd4444dddd4444dddd4444:adaptive");
     expect(status?.transitions).toHaveLength(1);
@@ -759,7 +760,7 @@ describe("transactional outbox recovery (§12.2)", () => {
     const offlineProbot = new Probot({
       appId: 123,
       privateKey,
-      Octokit: ProbotOctokit.defaults((instanceOptions: any) => ({
+      Octokit: ProbotOctokit.defaults((instanceOptions: Record<string, unknown>) => ({
         ...instanceOptions,
         retry: { enabled: false },
         throttle: { enabled: false },

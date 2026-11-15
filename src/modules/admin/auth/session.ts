@@ -71,12 +71,13 @@ export function sessionCookieValue(session: AdminSession, secret: string): strin
 }
 
 export function buildSetCookieHeader(session: AdminSession, env: Env): string {
-  const parts = [
-    `${SESSION_COOKIE}=${sessionCookieValue(session, env.SESSION_SECRET!)}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-  ];
+  const secret = env.SESSION_SECRET;
+  if (secret === undefined) {
+    // Sessions only exist when admin auth is configured; fail clearly instead
+    // of letting an HMAC call fail with an opaque key error.
+    throw new Error("SESSION_SECRET is required to build a session cookie");
+  }
+  const parts = [`${SESSION_COOKIE}=${sessionCookieValue(session, secret)}`, "Path=/", "HttpOnly", "SameSite=Lax"];
   if (env.NODE_ENV === "production") {
     parts.push("Secure");
   }

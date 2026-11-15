@@ -19,44 +19,43 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parse } from "yaml";
+import { defined } from "./helpers/assert.js";
+import { network, readComposeFile, service } from "./helpers/compose.js";
 
 const composePath = path.resolve(__dirname, "../deploy/docker-compose.dozzle.yml");
-const compose = parse(readFileSync(composePath, "utf8"), { merge: true }) as {
-  services: Record<string, any>;
-  networks: Record<string, any>;
-  volumes: Record<string, any>;
-};
+const compose = readComposeFile(composePath);
 
 const MAIN_COMPOSE_PATH = path.resolve(__dirname, "../deploy/docker-compose.yml");
 
 describe("dozzle compose structure (operations stack)", () => {
   it("contains only the dozzle service, its auth init and the optional tunnel", () => {
     expect(Object.keys(compose.services).sort()).toEqual(["dozzle", "dozzle-init", "dozzle-tunnel"]);
-    expect(compose.services.dozzle.image).toBe("amir20/dozzle:v11.4.1");
-    expect(compose.services["dozzle-init"].image).toBe("amir20/dozzle:v11.4.1-alpine");
+    expect(service(compose, "dozzle").image).toBe("amir20/dozzle:v11.4.1");
+    expect(service(compose, "dozzle-init").image).toBe("amir20/dozzle:v11.4.1-alpine");
   });
 
   it("publishes Dozzle through an outbound-only Cloudflare quick tunnel (CGNAT)", () => {
-    const tunnel = compose.services["dozzle-tunnel"];
+    const tunnel = service(compose, "dozzle-tunnel");
     expect(tunnel.image).toBe("cloudflare/cloudflared:2026.10.7");
     expect(tunnel.command).toEqual(["tunnel", "--no-autoupdate", "--url", "http://dozzle:8080"]);
     expect(tunnel.networks).toEqual(["edge"]);
-    expect(tunnel.depends_on.dozzle.condition).toBe("service_healthy");
+    expect(defined(tunnel.depends_on.dozzle).condition).toBe("service_healthy");
     // A tunnel needs no inbound port and must never bind one on the host.
     expect("ports" in tunnel).toBe(false);
     expect(tunnel.expose).toBeUndefined();
   });
 
   it("keeps the public tunnel opt-in (profile) and host-port-free", () => {
-    const tunnel = compose.services["dozzle-tunnel"];
+    const tunnel = service(compose, "dozzle-tunnel");
     expect(tunnel.profiles).toEqual(["tunnel"]);
     expect("ports" in tunnel).toBe(false);
     expect(tunnel.expose).toBeUndefined();
   });
 
   it("mounts the Docker socket READ-ONLY and shared state as a named volume", () => {
-    const mounts = compose.services.dozzle.volumes as string[];
+    const mounts = service(compose, "dozzle").volumes.map((mount) =>
+      typeof mount === "string" ? mount : (mount.source ?? ""),
+    );
     expect(mounts).toContain("/var/run/docker.sock:/var/run/docker.sock:ro");
     expect(mounts).toContain("dozzle-data:/data");
     // Regression: never bind-mount users.yml (or its host dir) directly.
@@ -67,9 +66,9 @@ describe("dozzle compose structure (operations stack)", () => {
   });
 
   it("generates users.yml from env vars before dozzle starts", () => {
-    const init = compose.services["dozzle-init"];
-    const command = init.command as string[];
-    const script = command[0];
+    const init = service(compose, "dozzle-init");
+    const command = init.command;
+    const script = command[0] ?? "";
     expect(script).toContain("/dozzle generate admin");
     // Password is passed positionally ($1) rather than read inside the shell,
     // so Compose interpolation never has to escape shell `$VAR` references.
@@ -80,7 +79,9 @@ describe("dozzle compose structure (operations stack)", () => {
     expect(command[5]).toContain("DOZZLE_FORCE_USERS");
     expect(init.volumes).toContain("dozzle-data:/data");
     expect(init.environment).toBeUndefined();
-    expect(compose.services.dozzle.depends_on["dozzle-init"].condition).toBe("service_completed_successfully");
+    expect(defined(service(compose, "dozzle").depends_on["dozzle-init"]).condition).toBe(
+      "service_completed_successfully",
+    );
   });
 
   it("deploys auth from Compose env only (no host files, no manual steps)", () => {
@@ -88,16 +89,16 @@ describe("dozzle compose structure (operations stack)", () => {
     // No host bind mount for /data; credentials live in the named volume.
     expect(raw).not.toContain("DOZZLE_DATA_DIR");
     expect(raw).not.toContain("DOZZLE_USERS_FILE");
-    expect(compose.services.dozzle.volumes).toContain("dozzle-data:/data");
+    expect(service(compose, "dozzle").volumes).toContain("dozzle-data:/data");
   });
 
   it("publishes NO host ports (expose 8080 for the Traefik ingress)", () => {
-    expect("ports" in compose.services.dozzle).toBe(false);
-    expect(compose.services.dozzle.expose).toEqual(["8080"]);
+    expect("ports" in service(compose, "dozzle")).toBe(false);
+    expect(service(compose, "dozzle").expose).toEqual(["8080"]);
   });
 
   it("requires simple authentication and disables mutating capabilities", () => {
-    const env = compose.services.dozzle.environment;
+    const env = service(compose, "dozzle").environment;
     expect(env.DOZZLE_AUTH_PROVIDER).toBe("simple");
     expect(env.DOZZLE_ENABLE_ACTIONS).toBe("false");
     expect(env.DOZZLE_ENABLE_SHELL).toBe("false");
@@ -108,18 +109,18 @@ describe("dozzle compose structure (operations stack)", () => {
     // Same ingress pattern as Phoenix (/phoenix), except Traefik must NOT
     // strip this prefix: DOZZLE_BASE rewrites assets to /dozzle/* and expects
     // to receive it.
-    expect(compose.services.dozzle.environment.DOZZLE_BASE).toBe("/dozzle");
-    expect(compose.services.dozzle.networks).toEqual(["edge"]);
+    expect(service(compose, "dozzle").environment.DOZZLE_BASE).toBe("/dozzle");
+    expect(service(compose, "dozzle").networks).toEqual(["edge"]);
   });
 
   it("joins ONLY the external Dokploy edge network (no internal reach into app networks)", () => {
-    expect(compose.services.dozzle.networks).toEqual(["edge"]);
-    expect(compose.networks.edge.external).toBe(true);
-    expect(compose.networks.edge.name).toMatch(/\$\{DOKPLOY_NETWORK:-dokploy-network\}/);
+    expect(service(compose, "dozzle").networks).toEqual(["edge"]);
+    expect(network(compose, "edge").external).toBe(true);
+    expect(network(compose, "edge").name).toMatch(/\$\{DOKPLOY_NETWORK:-dokploy-network\}/);
   });
 
   it("has a healthcheck, restart policy and resource limits", () => {
-    const svc = compose.services.dozzle;
+    const svc = service(compose, "dozzle");
     expect(svc.healthcheck.test).toEqual(["CMD", "/dozzle", "healthcheck"]);
     expect(svc.restart).toBe("unless-stopped");
     expect(svc.stop_grace_period).toBeTruthy();

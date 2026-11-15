@@ -37,7 +37,7 @@ import type { ReviewRunMetadata } from "../../src/modules/review/types.js";
 import type { WorkspaceResult } from "../../src/modules/workspace/workspace.js";
 import { createObservability } from "../../src/platform/observability/index.js";
 import type { AgentRuntime } from "../../src/ports/agent-runtime.js";
-import { at, first } from "../helpers/assert.js";
+import { at, defined, first } from "../helpers/assert.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 import { createTestReviewState } from "../helpers/ingestion.js";
 
@@ -476,7 +476,7 @@ afterEach(async () => {
 
 describe("diff position resolution (§7.4)", () => {
   test("parses hunks with correct old/new line numbers", () => {
-    const app = diffFiles.get("src/app.js")!;
+    const app = defined(diffFiles.get("src/app.js"), "app diff");
     expect(app).toBeDefined();
     expect(app.isNewFile).toBe(false);
     // New side: added + context lines (1, 2, 3, 4, 5).
@@ -498,7 +498,7 @@ describe("diff position resolution (§7.4)", () => {
       "+third",
     ].join("\n");
     const files = parseUnifiedDiff(diff);
-    const file = files.get("src/new.js")!;
+    const file = defined(files.get("src/new.js"), "new file diff");
     expect(file.isNewFile).toBe(true);
     expect(resolveInlinePosition(files, "src/new.js", 2)).toEqual({
       kind: "anchored",
@@ -849,10 +849,13 @@ describe("publishReview (fake octokit + Postgres)", () => {
     // §13.1: publication rows are persisted with the GitHub ids.
     const rows = await prisma.reviewComment.findMany({ where: { reviewId: seed.reviewId } });
     expect(rows).toHaveLength(2); // one summary + one inline
-    const inline = rows.find((r) => r.commentType === "inline");
-    expect(inline?.githubCommentId).toBeTypeOf("bigint");
-    expect(Number(inline!.githubCommentId!)).toBeGreaterThan(0);
-    expect(inline?.fingerprint).toBe(anchored.fingerprint);
+    const inline = defined(
+      rows.find((r) => r.commentType === "inline"),
+      "inline review comment",
+    );
+    expect(inline.githubCommentId).toBeTypeOf("bigint");
+    expect(Number(defined(inline.githubCommentId, "inline comment id"))).toBeGreaterThan(0);
+    expect(inline.fingerprint).toBe(anchored.fingerprint);
     const summaryRow = rows.find((r) => r.commentType === "summary");
     expect(summaryRow?.githubCommentId).not.toBeNull();
   });

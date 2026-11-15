@@ -19,6 +19,7 @@ import { DEFAULT_CONFIG_PATH } from "../../src/platform/config/review-loader.js"
 import { createGithubOAuthClient, resetGithubFetch, setGithubFetch } from "../../src/platform/github/oauth-client.js";
 import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
 import type { GithubFetch } from "../../src/ports/github-oauth.js";
+import { defined, first } from "../helpers/assert.js";
 import { prisma, disconnectDatabase } from "../helpers/db.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
@@ -159,7 +160,7 @@ function cookieOf(result: MockResponse): string {
 
 function csrfCookiePair(result: MockResponse): { cookie: string; csrfToken: string } {
   const body = JSON.parse(result.body) as { csrfToken: string };
-  return { cookie: cookieOf(result).split(";")[0]!, csrfToken: body.csrfToken };
+  return { cookie: first(cookieOf(result).split(";")), csrfToken: body.csrfToken };
 }
 
 // GitHub mock -------------------------------------------------------------------
@@ -252,7 +253,7 @@ async function login(handler: ReturnType<typeof makeHandler>["handler"]): Promis
   const start = await callAdmin(handler, "GET", "/api/admin/auth/github/login");
   expect(start.statusCode).toBe(302);
   const authorizeUrl = new URL(start.headers.location as string);
-  const state = authorizeUrl.searchParams.get("state")!;
+  const state = defined(authorizeUrl.searchParams.get("state"), "oauth state");
   expect(authorizeUrl.searchParams.get("scope")).toBe("read:org");
   expect(authorizeUrl.searchParams.get("client_id")).toBe("test-client-id");
   return callAdmin(handler, "GET", `/api/admin/auth/github/callback?code=good-code&state=${state}`);
@@ -348,7 +349,7 @@ describe("admin api (ticket 10)", () => {
     // AuditLog row for the login.
     const audits = await prisma.auditLog.findMany({ where: { action: "admin.login" } });
     expect(audits).toHaveLength(1);
-    expect(audits[0]!.actor).toBe("octoadmin");
+    expect(first(audits).actor).toBe("octoadmin");
   });
 
   test("allowlist policy: member on allowlist passes, member off allowlist denied, non-member denied", async () => {
@@ -400,7 +401,7 @@ describe("admin api (ticket 10)", () => {
     // Replayed: the same state can only be consumed once.
     githubUsers = { login: "octoadmin", membership: { role: "admin", state: "active" } };
     const start = await callAdmin(handler, "GET", "/api/admin/auth/github/login");
-    const state = new URL(start.headers.location as string).searchParams.get("state")!;
+    const state = defined(new URL(start.headers.location as string).searchParams.get("state"), "replayed state");
     const first = await callAdmin(handler, "GET", `/api/admin/auth/github/callback?code=c&state=${state}`);
     expect(first.statusCode).toBe(200);
     const replay = await callAdmin(handler, "GET", `/api/admin/auth/github/callback?code=c&state=${state}`);
@@ -974,8 +975,14 @@ describe("admin api (ticket 10)", () => {
         }>;
       };
       expect(body.reviews).toHaveLength(2);
-      const standardRow = body.reviews.find((r) => r.reviewType === "standard")!;
-      const skillRow = body.reviews.find((r) => r.reviewType === "skill")!;
+      const standardRow = defined(
+        body.reviews.find((r) => r.reviewType === "standard"),
+        "standard review",
+      );
+      const skillRow = defined(
+        body.reviews.find((r) => r.reviewType === "skill"),
+        "skill review",
+      );
       expect(standardRow.state).toBe("completed");
       expect(standardRow.attempt).toBe(1);
       expect(standardRow.durationMs).toBe(5 * 60 * 1000);

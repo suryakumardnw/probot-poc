@@ -135,9 +135,16 @@ export function buildAuthorizeUrl(
   env: Pick<Env, "ADMIN_OAUTH_CLIENT_ID" | "ADMIN_OAUTH_CALLBACK_URL">,
   state: string,
 ): string {
+  const clientId = env.ADMIN_OAUTH_CLIENT_ID;
+  const callbackUrl = env.ADMIN_OAUTH_CALLBACK_URL;
+  if (clientId === undefined || callbackUrl === undefined) {
+    // Callers gate this on `isAdminConfigured`; a missing value here is a
+    // configuration bug rather than a partially usable authorize URL.
+    throw new Error("GitHub OAuth requires ADMIN_OAUTH_CLIENT_ID and ADMIN_OAUTH_CALLBACK_URL");
+  }
   const url = new URL("/login/oauth/authorize", GITHUB_BASE);
-  url.searchParams.set("client_id", env.ADMIN_OAUTH_CLIENT_ID!);
-  url.searchParams.set("redirect_uri", env.ADMIN_OAUTH_CALLBACK_URL!);
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", callbackUrl);
   url.searchParams.set("scope", "read:org");
   url.searchParams.set("state", state);
   return url.toString();
