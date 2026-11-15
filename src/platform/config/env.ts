@@ -26,3 +26,22 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   }
   return parsed.data;
 }
+
+/**
+ * Read one raw environment variable without validating the whole environment.
+ *
+ * This module is the only production reader of `process.env` (enforced by
+ * `no-restricted-syntax`); adapters and composition roots use this accessor.
+ */
+export function readEnv(name: string): string | undefined {
+  return process.env[name];
+}
+
+/**
+ * Raw process environment for adapters that must pass the whole environment
+ * to a child process or a plugin. The returned object is the live process
+ * environment, matching the pre-refactor behavior.
+ */
+export function readProcessEnv(): NodeJS.ProcessEnv {
+  return process.env;
+}

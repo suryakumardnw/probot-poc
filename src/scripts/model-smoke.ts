@@ -17,7 +17,7 @@
  */
 
 import "dotenv/config";
-import { loadEnv } from "../platform/config/env.js";
+import { loadEnv, readProcessEnv } from "../platform/config/env.js";
 import { createLogger } from "../platform/logger.js";
 import { ProviderConfigError } from "../platform/models/index.js";
 import { createOpenAICompatibleProvider } from "../platform/models/openai-compatible.js";
@@ -30,19 +30,19 @@ interface SmokeTarget {
   model: string;
 }
 
-function resolveTarget(): SmokeTarget {
-  const baseURL = process.env.MODEL_BASE_URL;
-  const apiKeyEnv = process.env.MODEL_API_KEY ? "MODEL_API_KEY" : undefined;
+function resolveTarget(env: NodeJS.ProcessEnv): SmokeTarget {
+  const baseURL = env.MODEL_BASE_URL;
+  const apiKeyEnv = env.MODEL_API_KEY ? "MODEL_API_KEY" : undefined;
   if (baseURL && apiKeyEnv) {
-    const model = process.env.SMOKE_MODEL ?? process.env.MODEL_NAME ?? process.env.MODEL_MODEL ?? "glm-4.7-flash";
+    const model = env.SMOKE_MODEL ?? env.MODEL_NAME ?? env.MODEL_MODEL ?? "glm-4.7-flash";
     return { provider: "configured", baseURL, apiKeyEnv, model };
   }
-  if (process.env.GROQ_API_KEY) {
+  if (env.GROQ_API_KEY) {
     return {
       provider: "groq",
       baseURL: "https://api.groq.com/openai/v1",
       apiKeyEnv: "GROQ_API_KEY",
-      model: process.env.SMOKE_MODEL ?? process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
+      model: env.SMOKE_MODEL ?? env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
     };
   }
   throw new ProviderConfigError(
@@ -53,7 +53,7 @@ function resolveTarget(): SmokeTarget {
 
 async function main(): Promise<void> {
   loadEnv();
-  const target = resolveTarget();
+  const target = resolveTarget(readProcessEnv());
   const provider = createOpenAICompatibleProvider(
     {
       type: "openai-compatible",

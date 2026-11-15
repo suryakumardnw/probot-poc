@@ -24,18 +24,14 @@ export type {
 export { createPrismaAuditRepository, type AuditLogger } from "./prisma-audit.repository.js";
 export { CSRF_HEADER, verifyCsrfToken } from "./auth/csrf.js";
 export {
-  GithubOauthError,
   authorizeAdmin,
   clearOauthStates,
   isAdminConfigured,
   isSessionAdmin,
-  resetGithubFetch,
-  setGithubFetch,
   type AdminAuthorization,
-  type GithubFetch,
-  type GithubUser,
-  type OrgMembership,
 } from "./auth/github-oauth.js";
+export type { GithubFetch, GithubUser, OrgMembership } from "../../ports/github-oauth.js";
+export { GithubOauthError } from "../../shared/errors/index.js";
 export {
   SESSION_COOKIE,
   buildClearCookieHeader,

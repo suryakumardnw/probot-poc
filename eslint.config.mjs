@@ -6,100 +6,31 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 /**
- * Temporary element type for the top-level directories that have not moved into
- * `src/modules` or `src/platform` yet. Every path here is listed with its
- * removal PR in docs/module-boundaries.md; PR 3.11 moved the last one
- * (`src/eval`) under `src/scripts`, so the list is empty and PR 3.12 deletes it.
+ * Approved vendor and environment exceptions. These are architectural
+ * decisions, not migration scaffolding:
+ * - Repository adapters and `platform/db` own Prisma.
+ * - Tests may arrange the process environment and assert against vendor row
+ *   types; tests are never application code.
+ * - `platform/config` is the only production reader of the process
+ *   environment.
+ * - The one-off deploy diagnostic runs outside the application and reads the
+ *   mounted key on purpose.
+ * - Network I/O belongs to `platform`.
+ *
+ * Every exception is documented in docs/module-boundaries.md.
  */
-const LEGACY_ELEMENT_PATHS = [];
+const PRISMA_ALLOWED_FILES = ["src/**/*.repository.ts", "src/platform/db/**/*.ts", "test/**/*.ts"];
 
-/**
- * Temporary `process.env` allowances. `platform/config` owns environment
- * parsing, tests may arrange their own environment, and the one-off deploy
- * diagnostic runs outside the application. Every other entry names the move PR
- * and PR 3.12 as its explicit final removal: the reads survive move-only PRs.
- */
-const PROCESS_ENV_ALLOWED_FILES = [
-  "src/platform/config/**/*.ts",
-  "test/**/*.ts",
-  // One-off container diagnostic; not application code (permanent exception).
-  "deploy/inspect-key.js",
-  // TODO(PR 3.12 final): composition roots read operational overrides.
-  "src/bootstrap/**/*.ts",
-  // TODO(PR 3.12 final): CLI scripts read environment directly.
-  "src/scripts/**/*.ts",
-  // TODO(PR 3.12): the admin panel still reads ADMIN_DEV_LOGIN directly for
-  // the development-only login.
-  "src/modules/admin/**/*.ts",
-  // TODO(PR 3.12 final): agent runtimes read operational overrides directly.
-  "src/platform/agents/**/*.ts",
-  // TODO(PR 3.12): the execution module still reads sandbox and process
-  // environment settings.
-  "src/modules/execution/**/*.ts",
-  // TODO(PR 3.12): the knowledge module still reads GitHub tokens from the
-  // environment in its fetcher.
-  "src/modules/knowledge/**/*.ts",
-  // TODO(PR 3.12 final): the model adapter reads the API key / model id from
-  // the environment.
-  "src/platform/models/**/*.ts",
-  // TODO(PR 3.12 final): alert thresholds load from environment overrides.
-  "src/platform/observability/**/*.ts",
-  // TODO(PR 3.12): the publishing module still resolves the model id from the
-  // environment.
-  "src/modules/publishing/**/*.ts",
-  // TODO(PR 3.12): the workspace module still reads GitHub App credentials
-  // from the environment in its token provider.
-  "src/modules/workspace/**/*.ts",
-];
+const PROCESS_ENV_ALLOWED_FILES = ["src/platform/config/**/*.ts", "test/**/*.ts", "deploy/inspect-key.js"];
 
-/**
- * Temporary Prisma type allowances. Repository adapters and `platform/db` own
- * Prisma; these files still hold vendor types because their move PR is
- * move-only. PR 3.12 removes whatever survives its move PR.
- */
-const PRISMA_ALLOWED_FILES = [
-  "src/**/*.repository.ts",
-  "src/platform/db/**/*.ts",
-  "src/platform/health.ts",
-  "test/**/*.ts",
-  // TODO(PR 3.12): the composition root keeps the vendor client type until
-  // the platform/db factories fully own the connection lifecycle.
-  "src/bootstrap/clients.ts",
-  // TODO(PR 3.12): the knowledge module's materializer still takes the Prisma
-  // client directly; replace it with a port.
-  "src/modules/knowledge/materialize.ts",
-  // TODO(PR 3.12): the execution service still takes the Prisma client
-  // directly; replace it with a port.
-  "src/modules/execution/service.ts",
-  // TODO(PR 3.12): eval runs as tooling under scripts; remove the vendor type.
-  "src/scripts/eval/persistence.ts",
-];
-
-/**
- * Temporary `fetch` allowances. Only the platform layer may perform network
- * I/O; the knowledge module still owns its HTTP client until PR 3.12.
- */
-const FETCH_ALLOWED_FILES = [
-  "src/platform/**/*.ts",
-  // TODO(PR 3.12): the admin OAuth client still calls GitHub directly; replace
-  // it with a platform-owned identity client.
-  "src/modules/admin/**/*.ts",
-  // TODO(PR 3.12): the knowledge module fetches its sources directly; replace
-  // this with a platform-owned knowledge client.
-  "src/modules/knowledge/**/*.ts",
-];
+const FETCH_ALLOWED_FILES = ["src/platform/**/*.ts"];
 
 /**
  * ESLint flat config.
  *
- * Rules are intentionally enabled now, before the structural refactor, so new
- * violations cannot land. The test and source overrides below are temporary and
- * tracked by PR 4.2.
- *
- * Import boundaries are a scaffold: the target policies are active, while
- * `legacy` elements and the path lists above keep the current top-level layout
- * lint-clean. Each allowance and its removal PR is recorded in
- * docs/module-boundaries.md.
+ * Boundary rules are mandatory: there is no temporary allowance left from the
+ * Phase 3 moves. The test and non-null overrides below are tracked separately
+ * by PR 4.2 (typescript-refactor baseline).
  */
 export default tseslint.config(
   {
@@ -167,9 +98,7 @@ export default tseslint.config(
     // Module boundaries. Element patterns are anchored at the repository root;
     // the first matching descriptor wins, so module/platform/etc. are listed
     // before the broad `src` fallback that classifies entry points as
-    // `bootstrap`. Policies below are the target rules; temporary allowances
-    // are separate, commented entries whose removal PRs live in
-    // docs/module-boundaries.md.
+    // `bootstrap`.
     files: ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.mjs"],
     plugins: {
       boundaries,
@@ -187,9 +116,6 @@ export default tseslint.config(
         { type: "shared", pattern: "src/shared", partialMatch: false },
         { type: "script", pattern: ["src/scripts", "scripts"], partialMatch: false },
         { type: "test", pattern: "test", partialMatch: false },
-        ...(LEGACY_ELEMENT_PATHS.length > 0
-          ? [{ type: "legacy", pattern: LEGACY_ELEMENT_PATHS, partialMatch: false }]
-          : []),
         // Entry points (`src/index.ts`, `src/server.ts`, `src/worker.ts`) are
         // the only files whose element resolves to the repository `src` folder.
         { type: "bootstrap", pattern: "src", partialMatch: false },
@@ -239,14 +165,6 @@ export default tseslint.config(
               allow: { to: { element: { type: "module", fileInternalPath: "index.ts" } } },
             },
             {
-              // TODO(PR 3.12): the admin module renders failures through the
-              // platform HTTP projection. Inject it from the composition root
-              // or make the projection a shared helper before removing the
-              // temporary allowances.
-              from: { element: { type: "module", path: "src/modules/admin" } },
-              allow: { to: { element: { type: "platform", fileInternalPath: "http/error-mapper.ts" } } },
-            },
-            {
               // Platform adapters may use contracts, ports, and shared only.
               from: { element: { type: "platform" } },
               allow: { to: { element: { type: ["contracts", "ports", "shared"] } } },
@@ -260,20 +178,6 @@ export default tseslint.config(
               // modules, platform, ports, bootstrap, scripts, or tests.
               from: { element: { type: "shared" } },
               allow: { to: { element: { type: "contracts" } } },
-            },
-            {
-              // TODO(PR 3.12): contracts/review.ts still reads the finding
-              // categories from the review module; the constant moves into
-              // contracts when the temporary allowances are removed.
-              from: { element: { type: "contracts", fileInternalPath: "review.ts" } },
-              allow: { to: { element: { type: "module", path: "src/modules/review" } } },
-            },
-            {
-              // TODO(PR 3.12): delete with LEGACY_ELEMENT_PATHS. PR 3.11 moved
-              // the last legacy path (`src/eval`) under `src/scripts`, so this
-              // policy is now inert.
-              from: { element: { type: "legacy" } },
-              allow: { to: { element: { type: "*" } } },
             },
             {
               // Tests (including co-located `*.test.ts` files) may import any

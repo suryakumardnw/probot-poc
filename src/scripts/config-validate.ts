@@ -1,3 +1,4 @@
+import { readProcessEnv } from "../platform/config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../platform/config/review-loader.js";
 
 /**
@@ -13,7 +14,7 @@ const path = pathArg ?? DEFAULT_CONFIG_PATH;
 
 try {
   const { config, fromLastKnownGood, snapshot } = loadReviewConfig(path, {
-    env: process.env,
+    env: readProcessEnv(),
     updateLastKnownGood: true,
   });
   if (fromLastKnownGood) {

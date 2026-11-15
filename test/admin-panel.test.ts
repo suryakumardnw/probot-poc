@@ -12,15 +12,18 @@ import {
   createSession,
   PANEL_FIELDS,
   PANEL_SECTIONS,
-  resetGithubFetch,
   SECTION_LABELS,
   sessionCookieValue,
-  setGithubFetch,
-  type GithubFetch,
 } from "../src/modules/admin/index.js";
 import { loadEnv, type Env } from "../src/platform/config/env.js";
 import { createReviewConfigStore } from "../src/platform/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH, LAST_KNOWN_GOOD_SUFFIX } from "../src/platform/config/review-loader.js";
+import {
+  createGithubOAuthClient,
+  resetGithubFetch,
+  setGithubFetch,
+  type GithubFetch,
+} from "../src/platform/github/oauth-client.js";
 import { createReviewQueue } from "../src/platform/queue/review-queue.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { testEnv } from "./helpers/env.js";
@@ -184,12 +187,20 @@ function makeHandlers(env: Env, configPath: string): Handlers {
   });
   const audit = createPrismaAuditRepository(prisma, logger);
   return {
-    panel: createAdminPanel({ env, audit, config, logger }),
+    panel: createAdminPanel({
+      env,
+      audit,
+      config,
+      logger,
+      devLoginEnabled:
+        env.NODE_ENV === "development" && process.env.ADMIN_DEV_LOGIN === "1" && Boolean(env.SESSION_SECRET),
+    }),
     api: createAdminApi({
       env,
       audit,
       ingestion: createTestIngestion({ queue: reviewQueue, config }).services,
       config,
+      githubOAuth: createGithubOAuthClient(),
       logger,
     }),
     logs,
@@ -578,8 +589,10 @@ describe("admin panel (ticket 14)", () => {
       SESSION_SECRET: "dev-session-secret-for-local-verification",
       ADMIN_RATE_LIMIT_PER_MINUTE: "600",
     });
-    const devHandlers = makeHandlers(devEnv, configPath());
-    process.env.ADMIN_DEV_LOGIN = "1";
+    const devHandlers = (() => {
+      process.env.ADMIN_DEV_LOGIN = "1";
+      return makeHandlers(devEnv, configPath());
+    })();
     try {
       const loginResult = await call(devHandlers.panel, "GET", "/admin/dev-login?login=localadmin");
       expect(loginResult.statusCode).toBe(303);

@@ -34,14 +34,7 @@ import path from "node:path";
 import type { ReviewConfig } from "../../contracts/config.js";
 import { knowledgeManifestSchema, type GitHubTreeEntry, type KnowledgeManifest } from "../../contracts/knowledge.js";
 import type { Logger } from "../../ports/logger.js";
-import {
-  createDefaultKnowledgeFetcher,
-  fetchFileContent,
-  fetchRepoTree,
-  parseOwnerRepo,
-  resolveCommitSha,
-  sha256Hex,
-} from "./fetch.js";
+import { fetchFileContent, fetchRepoTree, parseOwnerRepo, resolveCommitSha, sha256Hex } from "./fetch.js";
 import {
   knowledgeRefSlug,
   type KnowledgeFetcher,
@@ -82,12 +75,6 @@ export interface KnowledgeSourceSpec {
   maxBytes: number;
   /** Resolved env override for the ref (KNOWLEDGE_SKILL_REF / KNOWLEDGE_HANDBOOK_REF). */
   refOverride?: string;
-}
-
-export interface EnsureKnowledgeOptions {
-  /** Resolved cache directory (worker resolves the workspace-relative default). */
-  cacheDir?: string;
-  fetcher?: KnowledgeFetcher;
 }
 
 /** Manifest contract lives in `src/contracts/knowledge.ts`. */
@@ -426,7 +413,10 @@ function toSnapshot(
 export interface EnsureKnowledgeOptions {
   /** Resolved cache directory (worker resolves the workspace-relative default). */
   cacheDir?: string;
-  fetcher?: KnowledgeFetcher;
+  /** HTTP adapter, injected by the composition root (platform-owned). */
+  fetcher: KnowledgeFetcher;
+  /** Raw environment used for `KNOWLEDGE_*` ref/cache overrides. */
+  env: NodeJS.ProcessEnv;
 }
 
 /** Per-technology handbook ref resolved from config into a fetchable spec. */
@@ -438,7 +428,7 @@ export interface HandbookVariantSpec {
 /** Build the per-source specs from the (validated) review configuration. */
 export function knowledgeSpecsFromConfig(
   config: ReviewConfig,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
 ): {
   cacheDir: string;
   timeoutMs: number;
@@ -488,9 +478,9 @@ let inflightKey = "";
 export async function ensureKnowledgeSources(
   config: ReviewConfig,
   logger: Logger,
-  options: EnsureKnowledgeOptions = {},
+  options: EnsureKnowledgeOptions,
 ): Promise<KnowledgeSnapshot> {
-  const specs = knowledgeSpecsFromConfig(config);
+  const specs = knowledgeSpecsFromConfig(config, options.env);
   const cacheDir = (options.cacheDir ?? specs.cacheDir).trim();
   if (!cacheDir) {
     logger.warn("Knowledge cache directory not configured; knowledge sources unavailable");
@@ -508,7 +498,7 @@ export async function ensureKnowledgeSources(
 
   const run = (async (): Promise<KnowledgeSnapshot> => {
     await fsp.mkdir(cacheDir, { recursive: true });
-    const fetcher = retryingFetcher(options.fetcher ?? createDefaultKnowledgeFetcher());
+    const fetcher = retryingFetcher(options.fetcher);
 
     // One fetch per distinct handbook ref: variants that reuse the default
     // ref (or each other) share the same cache entry and promise.

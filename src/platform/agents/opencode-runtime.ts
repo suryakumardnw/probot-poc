@@ -36,6 +36,7 @@ import type {
   RuntimeHealth,
 } from "../../ports/agent-runtime.js";
 import { AgentRuntimeError } from "../../shared/errors/index.js";
+import { readEnv, readProcessEnv } from "../config/env.js";
 import {
   buildChildEnv,
   buildSessionConfig,
@@ -132,7 +133,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
       throw new AgentRuntimeError("config", `unsupported agent runtime type "${config.agent.runtime.type}"`);
     }
     this.config = config;
-    this.binaryPath = options.binaryPath ?? process.env.OPENCODE_BINARY_PATH ?? "/opt/homebrew/bin/opencode";
+    this.binaryPath = options.binaryPath ?? readEnv("OPENCODE_BINARY_PATH") ?? "/opt/homebrew/bin/opencode";
     this.logger = options.logger;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? config.agent.runtime.timeoutMs;
     this.spawnImpl = options.spawnImpl ?? spawn;
@@ -163,7 +164,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
     await mkdir(dataDir, { recursive: true });
     await mkdir(stateDir, { recursive: true });
 
-    const modelId = resolveModelId(this.config, process.env);
+    const modelId = resolveModelId(this.config, readProcessEnv());
     const maxOutputTokens = options.maxOutputTokens ?? this.config.agent.context.maxOutputTokens;
     const sessionConfig = buildSessionConfig({
       sessionDir,
@@ -206,7 +207,7 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
         ? {
             endpoint: tracingEndpoint ? endpointLabel(tracingEndpoint) : "default",
             protocol: tracingProtocol,
-            otlpHeadersPresent: Boolean(process.env.OPENCODE_OTLP_HEADERS),
+            otlpHeadersPresent: Boolean(readEnv("OPENCODE_OTLP_HEADERS")),
             pluginCachePresent: existsSync(tracingPluginCacheDir(tracingPlugin)),
           }
         : undefined,
@@ -233,8 +234,8 @@ export class OpenCodeAgentRuntime implements AgentRuntime {
     // invisible, which made a silent tracing failure look like a working
     // integration. stdout stays pure NDJSON, so event parsing is unaffected.
     const args = ["run", "--format", "json", "--print-logs", capped.prompt];
-    const env = buildChildEnv(this.config, process.env, { reviewId: session.reviewId });
-    const modelId = resolveModelId(this.config, process.env);
+    const env = buildChildEnv(this.config, readProcessEnv(), { reviewId: session.reviewId });
+    const modelId = resolveModelId(this.config, readProcessEnv());
     // Isolation: fresh per-session config/data/state; binary from PATH; no git
     // credential helpers, no GITHUB_TOKEN, nothing else from the host env.
     // The state dir is per-session too, otherwise `opencode run` can attach to
@@ -1087,17 +1088,17 @@ export function extractJson(text: string): string | undefined {
  */
 function scrub(text: string, config: AgentRuntimeConfigSource): string {
   let out = text;
-  const key = process.env[config.provider.apiKeyEnv];
+  const key = readEnv(config.provider.apiKeyEnv);
   if (key) {
     out = out.split(key).join("[redacted]");
   }
   // Plugin/server diagnostics are now forwarded (--print-logs); never let
   // tracing credentials appear in worker logs or error details.
-  const langfuseSecret = process.env.LANGFUSE_SECRET_KEY;
+  const langfuseSecret = readEnv("LANGFUSE_SECRET_KEY");
   if (langfuseSecret) {
     out = out.split(langfuseSecret).join("[redacted]");
   }
-  const otlpHeaders = process.env.OPENCODE_OTLP_HEADERS;
+  const otlpHeaders = readEnv("OPENCODE_OTLP_HEADERS");
   if (otlpHeaders) {
     out = out.split(otlpHeaders).join("[redacted]");
     for (const pair of otlpHeaders.split(",")) {

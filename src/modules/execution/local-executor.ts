@@ -46,9 +46,9 @@ export class LocalSandboxExecutor implements SandboxExecutor {
   private readonly maxOutputBytes: number;
   private readonly appEnv: NodeJS.ProcessEnv;
 
-  constructor(options: { maxOutputBytes?: number; appEnv?: NodeJS.ProcessEnv } = {}) {
+  constructor(options: { maxOutputBytes?: number; appEnv: NodeJS.ProcessEnv }) {
     this.maxOutputBytes = options.maxOutputBytes ?? LOCAL_MAX_OUTPUT_BYTES;
-    this.appEnv = options.appEnv ?? process.env;
+    this.appEnv = options.appEnv;
     assertNoSecretsInAllowlistEnv(this.appEnv);
   }
 

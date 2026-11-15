@@ -5,6 +5,7 @@ import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { ReviewConfig } from "../src/contracts/config.js";
 import { reviewConfigSchema } from "../src/contracts/config.js";
 import type { Finding, RunReviewOutput } from "../src/modules/review/types.js";
+import { createPrismaEvaluationRunRepository } from "../src/platform/db/evaluation-run.repository.js";
 import {
   aggregateScores,
   configurationHashFrom,
@@ -408,7 +409,7 @@ describe("evaluation persistence", () => {
     );
 
     const persisted = await persistEvaluationRun(
-      prisma,
+      createPrismaEvaluationRunRepository(prisma),
       run,
       {
         model: "glm-4.7-flash",
@@ -445,7 +446,7 @@ describe("evaluation persistence", () => {
     const run = await runBenchmarkSuite(suite, fakeDeps(0.85), async () => outputFor({}));
 
     const persisted = await persistEvaluationRun(
-      prisma,
+      createPrismaEvaluationRunRepository(prisma),
       run,
       { model: "glm-4.7-flash", provider: "openai-compat", runtime: "opencode" },
       0.85,

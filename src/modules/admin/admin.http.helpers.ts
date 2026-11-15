@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { z } from "zod";
 import { adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../../contracts/admin.js";
 import { ERROR_CODES } from "../../contracts/errors.js";
-import { toHttpEnvelope } from "../../platform/http/error-mapper.js";
+import { toHttpEnvelope } from "../../shared/errors/http-mapper.js";
 import { ValidationError, redactDetails, redactSecrets } from "../../shared/errors/index.js";
 
 /**

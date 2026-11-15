@@ -190,6 +190,7 @@ export type {
 
 // Review result and the finding taxonomy.
 export {
+  FINDING_CATEGORIES,
   analysisOutputSchema,
   findingCategorySchema,
   findingSchema,

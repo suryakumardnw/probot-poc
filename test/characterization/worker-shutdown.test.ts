@@ -450,6 +450,7 @@ describe("real BullMQ worker permanent payload failure", () => {
         gitTimeoutMs: 1_000,
       },
       rootDir,
+      appEnv: process.env,
       tokenProvider: new NullTokenProvider(),
     });
     const workerConnection = createWorkerConnection(testEnv.REDIS_URL);

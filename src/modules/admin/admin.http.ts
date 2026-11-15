@@ -1,11 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ERROR_CODES } from "../../contracts/errors.js";
-import { toErrorLogPayload } from "../../platform/http/error-mapper.js";
 import { ConfigValidationError } from "../../ports/review-config.js";
+import { toErrorLogPayload } from "../../shared/errors/http-mapper.js";
 import {
   AppError,
   AuthError,
   ForbiddenError,
+  GithubOauthError,
   NotFoundError,
   RateLimitError,
   ValidationError,
@@ -35,7 +36,7 @@ import {
 import { createAdminService } from "./admin.service.js";
 import type { AdminApiDeps, AdminRequestContext } from "./admin.types.js";
 import { CSRF_HEADER, verifyCsrfToken } from "./auth/csrf.js";
-import { GithubOauthError, isAdminConfigured } from "./auth/github-oauth.js";
+import { isAdminConfigured } from "./auth/github-oauth.js";
 import { getSessionFromCookie, readSessionCookie } from "./auth/session.js";
 import { checkRateLimit, clientIpOf } from "./rate-limit.js";
 

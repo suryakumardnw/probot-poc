@@ -28,7 +28,9 @@ export {
   handbookVariantDir,
   KnowledgeSnapshotError,
   persistKnowledgeMetrics,
+  type ReviewKnowledgeStore,
 } from "./materialize.js";
+export { createPrismaReviewKnowledgeStore } from "./prisma-knowledge.repository.js";
 export type { MaterializeKnowledgeInput, MaterializeKnowledgeResult } from "./materialize.js";
 export { summarizeKnowledgeSnapshot, summarizeKnowledgeMetrics } from "./summarize.js";
 

@@ -183,6 +183,7 @@ function makeService(
       gitTimeoutMs: 60_000,
     },
     rootDir: root,
+    appEnv: process.env,
     tokenProvider: tokens,
     workspaceRepository: createPrismaWorkspaceRepository(prisma),
     cloneUrlBuilder: opts.cloneUrlBuilder ?? (() => originPath),

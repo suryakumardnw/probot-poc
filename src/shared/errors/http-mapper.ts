@@ -1,7 +1,7 @@
 import { ERROR_CODES, errorEnvelopeSchema, type ErrorEnvelope } from "../../contracts/errors.js";
-import { AppError } from "../../shared/errors/app-error.js";
-import { classifyAppFailure, type FailureContext, type FailureDisposition } from "../../shared/errors/classify.js";
-import { redactDetails, redactSecrets } from "../../shared/errors/redact.js";
+import { AppError } from "./app-error.js";
+import { classifyAppFailure, type FailureContext, type FailureDisposition } from "./classify.js";
+import { redactDetails, redactSecrets } from "./redact.js";
 
 /**
  * HTTP and log projections for the shared error family.

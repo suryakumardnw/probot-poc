@@ -2,6 +2,7 @@ import path from "node:path";
 import type { Worker } from "bullmq";
 import { reconcileIncompleteReviews } from "../modules/ingestion/index.js";
 import {
+  createPrismaReviewKnowledgeStore,
   ensureKnowledgeSources,
   getKnowledgeSnapshot,
   materializeReviewKnowledge,
@@ -18,9 +19,10 @@ import {
   workspaceDirectorySizeBytes,
 } from "../modules/workspace/index.js";
 import { createAgentRuntime } from "../platform/agents/index.js";
-import { loadEnv, type Env } from "../platform/config/env.js";
+import { loadEnv, readEnv, readProcessEnv, type Env } from "../platform/config/env.js";
 import { checkPrisma, disconnectPrisma } from "../platform/db/prisma.js";
 import { createGitHubOctokit } from "../platform/github/octokit.js";
+import { createDefaultKnowledgeFetcher } from "../platform/knowledge/fetch.js";
 import { createLogger, type PlatformLogger } from "../platform/logger.js";
 import { AlertManager } from "../platform/observability/alerts.js";
 import { createObservability } from "../platform/observability/index.js";
@@ -51,6 +53,7 @@ export interface WorkerRuntime {
 }
 
 export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerRuntime> {
+  const processEnv = readProcessEnv();
   const logger = createLogger(env);
   logger.info("Review worker starting");
 
@@ -81,7 +84,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
 
   const { config: reviewConfig } = config.load();
 
-  const workspaceRoot = process.env.WORKSPACE_ROOT_DIR ?? path.join(process.cwd(), "workspaces");
+  const workspaceRoot = readEnv("WORKSPACE_ROOT_DIR") ?? path.join(process.cwd(), "workspaces");
   const workspaceService = new ReviewWorkspaceService({
     policy: {
       cloneDepth: reviewConfig.repository.clone.depth,
@@ -91,10 +94,14 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
       gitTimeoutMs: 300_000,
     },
     rootDir: workspaceRoot,
-    tokenProvider: createDefaultTokenProvider(),
+    appEnv: processEnv,
+    tokenProvider: createDefaultTokenProvider(processEnv),
     workspaceRepository: createPrismaWorkspaceRepository(clients.prisma),
     logger,
   });
+
+  const knowledgeStore = createPrismaReviewKnowledgeStore(clients.prisma);
+  const tokenProvider = createDefaultTokenProvider(processEnv);
 
   const reviewPipelineHook = createReviewPipelineHook({
     runtime: createAgentRuntime(reviewConfig, {
@@ -116,13 +123,14 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
         materializeReviewKnowledge({
           ...input,
           snapshot: getKnowledgeSnapshot(),
-          prisma: clients.prisma,
+          store: knowledgeStore,
           logger,
         }),
-      persistMetrics: (input) => persistKnowledgeMetrics(clients.prisma, input.reviewId, input.profile, input.metrics),
+      persistMetrics: (input) => persistKnowledgeMetrics(knowledgeStore, input.reviewId, input.profile, input.metrics),
     },
-    tokenProvider: createDefaultTokenProvider(),
-    octokitFactory: (token) => createGitHubOctokit(token, process.env.GITHUB_BASE_URL),
+    tokenProvider,
+    env: processEnv,
+    octokitFactory: (token) => createGitHubOctokit(token, readEnv("GITHUB_BASE_URL")),
   });
 
   let reviewWorker: Worker | undefined;
@@ -146,10 +154,12 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
     try {
       const knowledgeCacheDir =
         reviewConfig.knowledge.cacheDir.trim() ||
-        process.env.KNOWLEDGE_CACHE_DIR?.trim() ||
+        readEnv("KNOWLEDGE_CACHE_DIR")?.trim() ||
         path.join(workspaceRoot, "knowledge");
       const knowledgeSnapshot = await ensureKnowledgeSources(reviewConfig, logger, {
         cacheDir: knowledgeCacheDir,
+        fetcher: createDefaultKnowledgeFetcher(),
+        env: processEnv,
       });
       setKnowledgeSnapshot(knowledgeSnapshot);
       logger.info(
@@ -208,7 +218,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
           logger,
           observability,
           queue: clients.reviewQueue.queue,
-          staleThresholdMs: Number(process.env.RECOVERY_STALE_THRESHOLD_MS) || undefined,
+          staleThresholdMs: Number(readEnv("RECOVERY_STALE_THRESHOLD_MS")) || undefined,
           // Keep the durable recovery budget aligned with the BullMQ attempt
           // budget configured in review.json.
           maxJobAttempts: reviewConfig.queue.retry.infrastructure.maxAttempts,
@@ -300,12 +310,12 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
 
   /** Ticket 12 §16.2: worker-side metrics endpoint (METRICS_PORT). */
   async function startWorkerMetrics(): Promise<void> {
-    const metricsPort = Number(process.env.METRICS_PORT);
+    const metricsPort = Number(readEnv("METRICS_PORT"));
     if (!Number.isFinite(metricsPort) || metricsPort <= 0) {
       return;
     }
     try {
-      metricsServer = await startMetricsServer(metricsPort, process.env.METRICS_HOST ?? "0.0.0.0");
+      metricsServer = await startMetricsServer(metricsPort, readEnv("METRICS_HOST") ?? "0.0.0.0");
       logger.info({ port: metricsServerPort(metricsServer) }, "Worker metrics server started");
     } catch (error) {
       logger.warn(
@@ -351,7 +361,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
   }
 
   function registerShutdown(): void {
-    const configuredTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS);
+    const configuredTimeoutMs = Number(readEnv("SHUTDOWN_TIMEOUT_MS"));
     registerGracefulShutdown(logger, shutdownSteps(), {
       ...(Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0 ? { timeoutMs: configuredTimeoutMs } : {}),
     });

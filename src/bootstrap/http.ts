@@ -7,9 +7,9 @@ import { isAdminConfigured } from "../modules/admin/index.js";
 import { ManualIngestionError, type IngestionServices } from "../modules/ingestion/index.js";
 import type { Env } from "../platform/config/env.js";
 import type { ReadinessReport } from "../platform/health.js";
-import { toErrorLogPayload, toHttpEnvelope } from "../platform/http/error-mapper.js";
 import { metricsHandler } from "../platform/observability/metrics-endpoint.js";
 import type { Logger } from "../ports/logger.js";
+import { toErrorLogPayload, toHttpEnvelope } from "../shared/errors/http-mapper.js";
 
 /**
  * HTTP surface composition (ARCHITECTURE.md §13, §14.2, §16.2).

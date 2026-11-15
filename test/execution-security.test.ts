@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, test } from "vitest";
 import { DockerSandboxExecutor, DEFAULT_SANDBOX_IMAGE } from "../src/modules/execution/docker-executor.js";
-import { ExecutionService } from "../src/modules/execution/index.js";
+import { ExecutionService, createPrismaExecutionAuditRepository } from "../src/modules/execution/index.js";
 import { evaluateCommand } from "../src/modules/execution/policy.js";
 import {
   ExecutionPolicyError,
@@ -64,7 +64,11 @@ const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "t11-ws-"));
 fs.writeFileSync(path.join(workspace, "file.txt"), "hello world\nsecond line\n");
 fs.writeFileSync(path.join(workspace, ".env"), "DATABASE_URL=postgres://leak-attempt@localhost/db\n");
 
-const service = new ExecutionService({ prisma, execution: execConfig() });
+const service = new ExecutionService({
+  audit: createPrismaExecutionAuditRepository(prisma),
+  execution: execConfig(),
+  appEnv: process.env,
+});
 const dockerAvailable = await (async () => {
   try {
     await execFileAsync("docker", ["info", "-f", "{{.ServerVersion}}"], { timeout: 10_000 });
@@ -113,7 +117,8 @@ test("test execution is denied while allowTests is disabled", async () => {
   // not_allowlisted. For classification coverage, use a config whose
   // allowlist includes the test/build entry points.
   const clsService = new ExecutionService({
-    prisma,
+    audit: createPrismaExecutionAuditRepository(prisma),
+    appEnv: process.env,
     execution: execConfig({
       commands: {
         ...execConfig().commands,
@@ -136,7 +141,8 @@ test("test execution is denied while allowTests is disabled", async () => {
 
 test("build execution is denied while allowBuilds is disabled", async () => {
   const clsService = new ExecutionService({
-    prisma,
+    audit: createPrismaExecutionAuditRepository(prisma),
+    appEnv: process.env,
     execution: execConfig({
       commands: {
         ...execConfig().commands,
@@ -155,7 +161,8 @@ test("build execution is denied while allowBuilds is disabled", async () => {
 
 test("read-only mode denies ALL command execution", async () => {
   const readOnly = new ExecutionService({
-    prisma,
+    audit: createPrismaExecutionAuditRepository(prisma),
+    appEnv: process.env,
     execution: execConfig({ mode: "read-only" }),
   });
   const result = await readOnly.runCommand(request({ command: "grep", args: ["hello", "file.txt"] }));
@@ -167,7 +174,8 @@ test("read-only mode denies ALL command execution", async () => {
 
 test("hard timeout kills the process tree and reports cleanup", async () => {
   const fast = new ExecutionService({
-    prisma,
+    audit: createPrismaExecutionAuditRepository(prisma),
+    appEnv: process.env,
     execution: execConfig({ resources: { ...execConfig().resources, executionTimeoutMs: 300 } }),
   });
   const result = await fast.runCommand(request({ command: "sleep", args: ["30"] }));
@@ -286,7 +294,7 @@ test("audit rows never contain output content", async () => {
 // 6. Docker sandbox (skipped when Docker is unavailable) -------------------------
 
 docker.test("sandboxed static-analysis command runs as non-root with no network", { timeout: 120_000 }, async () => {
-  const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE });
+  const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE, appEnv: process.env });
   await executor.ensureImage();
   const cfg = execConfig({
     mode: "static-analysis",
@@ -301,7 +309,7 @@ docker.test("sandboxed static-analysis command runs as non-root with no network"
 });
 
 docker.test("sandbox blocks all network egress in networkMode none", { timeout: 120_000 }, async () => {
-  const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE });
+  const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE, appEnv: process.env });
   await executor.ensureImage();
   const cfg = execConfig({
     mode: "sandbox",
@@ -320,7 +328,11 @@ docker.test(
   "allowlist networkMode fails closed to none without a configured network",
   { timeout: 120_000 },
   async () => {
-    const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE, networkName: undefined });
+    const executor = new DockerSandboxExecutor({
+      image: DEFAULT_SANDBOX_IMAGE,
+      appEnv: process.env,
+      networkName: undefined,
+    });
     await executor.ensureImage();
     const cfg = execConfig({
       mode: "sandbox",
@@ -336,7 +348,7 @@ docker.test(
 );
 
 docker.test("sandboxed command cannot read host files outside the mount", { timeout: 120_000 }, async () => {
-  const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE });
+  const executor = new DockerSandboxExecutor({ image: DEFAULT_SANDBOX_IMAGE, appEnv: process.env });
   await executor.ensureImage();
   const cfg = execConfig({
     mode: "sandbox",

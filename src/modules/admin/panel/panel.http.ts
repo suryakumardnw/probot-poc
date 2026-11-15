@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { toErrorLogPayload } from "../../../platform/http/error-mapper.js";
+import { toErrorLogPayload } from "../../../shared/errors/http-mapper.js";
 import type { AdminPanelDeps } from "../admin.types.js";
 import { verifyCsrfToken } from "../auth/csrf.js";
 import { isAdminConfigured, isSessionAdmin } from "../auth/github-oauth.js";
@@ -67,9 +67,9 @@ export function createAdminPanel(
     //   - NODE_ENV === "development"
     //   - ADMIN_DEV_LOGIN === "1" (explicit opt-in)
     //   - SESSION_SECRET is configured
-    // It is unreachable in production and absent from test/prod defaults.
-    const devLoginEnabled =
-      env.NODE_ENV === "development" && process.env.ADMIN_DEV_LOGIN === "1" && Boolean(env.SESSION_SECRET);
+    // The composition root evaluates the environment once; the panel receives
+    // the resulting flag and never reads process.env.
+    const devLoginEnabled = deps.devLoginEnabled;
 
     // Rate limit the panel like every other admin surface.
     const limit = checkRateLimit(`panel:${clientIpOf(req)}`, { limitPerMinute: env.ADMIN_RATE_LIMIT_PER_MINUTE });

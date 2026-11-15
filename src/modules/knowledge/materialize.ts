@@ -24,7 +24,6 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "../../ports/logger.js";
 import { sha256Hex } from "./fetch.js";
 import {
@@ -36,6 +35,17 @@ import {
 } from "./types.js";
 
 export type KnowledgeKind = "skill" | "handbook";
+
+/**
+ * Persistence port for the Review.knowledgeSnapshot JSON column.
+ *
+ * The concrete Prisma adapter lives in `prisma-knowledge.repository.ts`;
+ * materialization and metrics merging stay independent of the vendor client.
+ */
+export interface ReviewKnowledgeStore {
+  findSnapshot(reviewId: string): Promise<{ knowledgeSnapshot: PersistedKnowledgeSnapshot | null } | null>;
+  saveSnapshot(reviewId: string, snapshot: PersistedKnowledgeSnapshot): Promise<void>;
+}
 
 /** Kinds each review type materializes (standard reviews need none). */
 const KINDS_BY_REVIEW_TYPE: Record<string, KnowledgeKind[]> = {
@@ -137,7 +147,7 @@ export interface MaterializeKnowledgeInput {
   workspacePath: string;
   /** Boot-time snapshot (may be null when knowledge init never ran). */
   snapshot: KnowledgeSnapshot | null;
-  prisma: Pick<PrismaClient, "review">;
+  store: ReviewKnowledgeStore;
   logger: Logger;
 }
 
@@ -167,15 +177,12 @@ export async function materializeReviewKnowledge(
     return { knowledgeDir: null, snapshot: null };
   }
 
-  const review = await input.prisma.review.findUnique({
-    where: { id: input.reviewId },
-    select: { knowledgeSnapshot: true },
-  });
+  const review = await input.store.findSnapshot(input.reviewId);
   if (!review) {
     throw new KnowledgeSnapshotError(`Review '${input.reviewId}' not found for knowledge materialization`);
   }
 
-  const stored = (review.knowledgeSnapshot ?? null) as PersistedKnowledgeSnapshot | null;
+  const stored = review.knowledgeSnapshot;
   if (stored) {
     // Recovery path: verify the persisted snapshot is still reproducible.
     for (const kind of kinds) {
@@ -222,10 +229,7 @@ export async function materializeReviewKnowledge(
         source: persistedFromSource(variant.source),
       }));
     }
-    await input.prisma.review.update({
-      where: { id: input.reviewId },
-      data: { knowledgeSnapshot: persisted as object },
-    });
+    await input.store.saveSnapshot(input.reviewId, persisted);
   }
 
   return { knowledgeDir, snapshot: input.snapshot };
@@ -238,7 +242,7 @@ export async function materializeReviewKnowledge(
  * failures must not fail a completed review.
  */
 export async function persistKnowledgeMetrics(
-  prisma: Pick<PrismaClient, "review">,
+  store: ReviewKnowledgeStore,
   reviewId: string,
   source: "skill" | "handbook",
   metrics: {
@@ -250,17 +254,10 @@ export async function persistKnowledgeMetrics(
     truncated: boolean;
   },
 ): Promise<void> {
-  const review = await prisma.review.findUnique({
-    where: { id: reviewId },
-    select: { knowledgeSnapshot: true },
-  });
+  const review = await store.findSnapshot(reviewId);
   if (!review) {
     return;
   } // row gone — nothing to persist
-  const stored = (review.knowledgeSnapshot ?? null) as PersistedKnowledgeSnapshot | null;
-  const merged: PersistedKnowledgeSnapshot = { ...(stored ?? {}), metrics: { source, ...metrics } };
-  await prisma.review.update({
-    where: { id: reviewId },
-    data: { knowledgeSnapshot: merged as object },
-  });
+  const merged: PersistedKnowledgeSnapshot = { ...(review.knowledgeSnapshot ?? {}), metrics: { source, ...metrics } };
+  await store.saveSnapshot(reviewId, merged);
 }

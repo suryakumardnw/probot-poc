@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Logger } from "../../ports/logger.js";
 import { buildCloneUrl, type InstallationTokenProvider } from "./credentials.js";
 import { parseNameStatus, type ChangedFile } from "./files.js";
-import { runGit } from "./git.js";
+import { runGit, type RunGitOptions } from "./git.js";
 import { redactCredentials, sanitizeGitUrl } from "./redact.js";
 import type { WorkspaceRepository } from "./workspace.repository.js";
 
@@ -118,6 +118,8 @@ export interface ReviewWorkspaceServiceOptions {
   /** Directory under which all workspaces are created. */
   rootDir: string;
   tokenProvider: InstallationTokenProvider;
+  /** Process environment supplying PATH/HOME to git (injected by bootstrap). */
+  appEnv: NodeJS.ProcessEnv;
   /** Persistence for the ReviewWorkspace aggregate; absent = filesystem only. */
   workspaceRepository?: WorkspaceRepository;
   logger?: Logger;
@@ -132,6 +134,11 @@ function sanitizeNameComponent(value: string): string {
 export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
   constructor(private readonly opts: ReviewWorkspaceServiceOptions) {
     fs.mkdirSync(opts.rootDir, { recursive: true });
+  }
+
+  /** Run git with the injected process environment. */
+  private runGit(args: readonly string[], options: Omit<RunGitOptions, "appEnv"> = {}): Promise<string> {
+    return runGit(args, { ...options, appEnv: this.opts.appEnv });
   }
 
   /**
@@ -176,7 +183,7 @@ export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
     try {
       // 1. Shallow clone (§5.1 step 2).
       try {
-        await runGit(["clone", "--depth", String(policy.cloneDepth), "--no-checkout", cloneUrl, workspacePath], {
+        await this.runGit(["clone", "--depth", String(policy.cloneDepth), "--no-checkout", cloneUrl, workspacePath], {
           timeoutMs: policy.gitTimeoutMs,
           secret: token,
         });
@@ -193,7 +200,7 @@ export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
 
       // 3. Fetch the PR head commit and check out the exact SHA.
       try {
-        await runGit(
+        await this.runGit(
           [
             "fetch",
             "--depth",
@@ -207,13 +214,13 @@ export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
         throw new CloneFailedError(redactCredentials(`Fetching PR head failed: ${(error as Error).message}`, token));
       }
       try {
-        await runGit(["checkout", "--detach", headSha], { cwd: workspacePath, timeoutMs: policy.gitTimeoutMs });
+        await this.runGit(["checkout", "--detach", headSha], { cwd: workspacePath, timeoutMs: policy.gitTimeoutMs });
       } catch (error) {
         throw new CloneFailedError(
           redactCredentials(`Checking out head SHA failed: ${(error as Error).message}`, token),
         );
       }
-      const actualHead = (await runGit(["rev-parse", "HEAD"], { cwd: workspacePath })).trim().toLowerCase();
+      const actualHead = (await this.runGit(["rev-parse", "HEAD"], { cwd: workspacePath })).trim().toLowerCase();
       if (actualHead !== headSha) {
         throw new StaleCommitError(`Checked-out HEAD ${actualHead} does not match requested head SHA ${headSha}`);
       }
@@ -242,11 +249,11 @@ export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
       let diff: string;
       let nameStatus: string;
       try {
-        diff = await runGit(["diff", "--find-renames", diffRange], {
+        diff = await this.runGit(["diff", "--find-renames", diffRange], {
           cwd: workspacePath,
           timeoutMs: policy.gitTimeoutMs,
         });
-        nameStatus = await runGit(["diff", "--name-status", "--find-renames", diffRange], {
+        nameStatus = await this.runGit(["diff", "--name-status", "--find-renames", diffRange], {
           cwd: workspacePath,
           timeoutMs: policy.gitTimeoutMs,
         });
@@ -302,7 +309,7 @@ export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
   ): Promise<void> {
     let lsRemote: string;
     try {
-      lsRemote = await runGit(["ls-remote", cloneUrl, `refs/pull/${pullRequestNumber}/head`], {
+      lsRemote = await this.runGit(["ls-remote", cloneUrl, `refs/pull/${pullRequestNumber}/head`], {
         timeoutMs: this.opts.policy.gitTimeoutMs,
         secret: token,
       });
@@ -325,12 +332,12 @@ export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
     const { policy } = this.opts;
     const fetchBase = async (spec: string, ref: string): Promise<string | null> => {
       try {
-        await runGit(["fetch", "--depth", String(policy.cloneDepth), "origin", spec], {
+        await this.runGit(["fetch", "--depth", String(policy.cloneDepth), "origin", spec], {
           cwd: workspacePath,
           timeoutMs: policy.gitTimeoutMs,
           secret: token,
         });
-        const sha = (await runGit(["rev-parse", ref], { cwd: workspacePath })).trim().toLowerCase();
+        const sha = (await this.runGit(["rev-parse", ref], { cwd: workspacePath })).trim().toLowerCase();
         return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
       } catch (error) {
         this.opts.logger?.debug(
@@ -375,7 +382,7 @@ export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
     const tryMergeBase = async (): Promise<string | null> => {
       try {
         const out = (
-          await runGit(["merge-base", headSha, baseSha], {
+          await this.runGit(["merge-base", headSha, baseSha], {
             cwd: workspacePath,
             timeoutMs: policy.gitTimeoutMs,
             secret: token,
@@ -398,12 +405,12 @@ export class ReviewWorkspaceService implements ReviewWorkspaceOperations {
     while (depth < MAX_MERGE_BASE_DEPTH) {
       depth = Math.min(depth * 2, MAX_MERGE_BASE_DEPTH);
       try {
-        await runGit(["fetch", `--deepen=${depth}`, "origin", baseSha], {
+        await this.runGit(["fetch", `--deepen=${depth}`, "origin", baseSha], {
           cwd: workspacePath,
           timeoutMs: policy.gitTimeoutMs,
           secret: token,
         });
-        await runGit(
+        await this.runGit(
           ["fetch", `--deepen=${depth}`, "origin", `+refs/pull/${pullRequestNumber}/head:refs/review/head`],
           { cwd: workspacePath, timeoutMs: policy.gitTimeoutMs, secret: token },
         );

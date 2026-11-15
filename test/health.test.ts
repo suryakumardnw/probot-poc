@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { checkPrisma } from "../src/platform/db/prisma.js";
 import { checkDependencies } from "../src/platform/health.js";
 import { createRedis, disconnectRedis } from "../src/platform/redis.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
@@ -21,7 +22,7 @@ describe("checkDependencies (degraded path)", () => {
   let result: Awaited<ReturnType<typeof checkDependencies>>;
 
   beforeEach(async () => {
-    result = await checkDependencies({ prisma, redis: healthRedis });
+    result = await checkDependencies({ checkDatabase: () => checkPrisma(prisma), redis: healthRedis });
   });
 
   test("reports both dependencies with a status", () => {

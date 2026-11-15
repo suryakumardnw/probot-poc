@@ -10,13 +10,16 @@ import {
   clearSessions,
   createAdminApi,
   createPrismaAuditRepository,
-  resetGithubFetch,
-  setGithubFetch,
-  type GithubFetch,
 } from "../../src/modules/admin/index.js";
 import { loadEnv, type Env } from "../../src/platform/config/env.js";
 import { createReviewConfigStore } from "../../src/platform/config/review-config-store.js";
 import { DEFAULT_CONFIG_PATH } from "../../src/platform/config/review-loader.js";
+import {
+  createGithubOAuthClient,
+  resetGithubFetch,
+  setGithubFetch,
+  type GithubFetch,
+} from "../../src/platform/github/oauth-client.js";
 import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
@@ -152,6 +155,7 @@ function makeHandler(env: Env, configPath: string): Handler {
     audit: createPrismaAuditRepository(prisma, logger),
     ingestion: createTestIngestion({ queue: reviewQueue, config }).services,
     config,
+    githubOAuth: createGithubOAuthClient(),
     logger,
   });
   return { handler, logs };

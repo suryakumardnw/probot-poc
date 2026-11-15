@@ -16,6 +16,7 @@ import path from "node:path";
 import { createAgentRuntime } from "../platform/agents/index.js";
 import { loadEnv } from "../platform/config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../platform/config/review-loader.js";
+import { createPrismaEvaluationRunRepository } from "../platform/db/evaluation-run.repository.js";
 import { createPrisma, disconnectPrisma } from "../platform/db/prisma.js";
 import { createLogger } from "../platform/logger.js";
 import {
@@ -67,6 +68,7 @@ async function main(): Promise<void> {
   const env = loadEnv();
   const logger = createLogger(env);
   const prisma = createPrisma(env);
+  const evaluationRuns = createPrismaEvaluationRunRepository(prisma);
 
   try {
     let allPassed = true;
@@ -84,7 +86,7 @@ async function main(): Promise<void> {
       // Persistence is best-effort: an offline run still prints its report.
       try {
         const persisted = await persistEvaluationRun(
-          prisma,
+          evaluationRuns,
           run,
           {
             model: config.provider.model,

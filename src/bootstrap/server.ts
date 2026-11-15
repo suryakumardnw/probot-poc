@@ -2,8 +2,9 @@ import type http from "node:http";
 import { createNodeMiddleware, createProbot, type Probot } from "probot";
 import { createApp } from "../index.js";
 import { createAdminApi, createAdminPanel, createPrismaAuditRepository } from "../modules/admin/index.js";
-import { loadEnv, type Env } from "../platform/config/env.js";
-import { disconnectPrisma } from "../platform/db/prisma.js";
+import { loadEnv, readEnv, readProcessEnv, type Env } from "../platform/config/env.js";
+import { checkPrisma, disconnectPrisma } from "../platform/db/prisma.js";
+import { createGithubOAuthClient } from "../platform/github/oauth-client.js";
 import { checkDependencies } from "../platform/health.js";
 import { createLogger, type PlatformLogger } from "../platform/logger.js";
 import { disconnectRedis } from "../platform/redis.js";
@@ -37,32 +38,39 @@ export interface ServerRuntime {
 }
 
 /**
- * Decode GITHUB_PRIVATE_KEY_BASE64 (single-line, base64-encoded PEM) into
- * PRIVATE_KEY. Base64 is the deployment-friendly form: PEMs are multiline and
- * many platforms (e.g. Dokploy env tabs) round-trip single-line values more
- * reliably than quoted multiline ones.
+ * Decode GITHUB_PRIVATE_KEY_BASE64 (single-line, base64-encoded PEM) when the
+ * deployment uses that form. Base64 is the deployment-friendly form: PEMs are
+ * multiline and many platforms (e.g. Dokploy env tabs) round-trip single-line
+ * values more reliably than quoted multiline ones.
+ *
+ * The decoded key is passed to Probot as an override; this function never
+ * mutates the process environment.
  */
-function materializePrivateKeyFromBase64(): void {
-  const base64 = process.env.GITHUB_PRIVATE_KEY_BASE64;
-  if (!base64 || process.env.PRIVATE_KEY || process.env.PRIVATE_KEY_PATH) {
-    return;
+function privateKeyFromBase64(processEnv: NodeJS.ProcessEnv): string | undefined {
+  const base64 = processEnv.GITHUB_PRIVATE_KEY_BASE64;
+  if (!base64 || processEnv.PRIVATE_KEY || processEnv.PRIVATE_KEY_PATH) {
+    return undefined;
   }
   try {
     const pem = Buffer.from(base64.replace(/\s+/g, ""), "base64").toString("utf8");
-    if (pem.includes("-----BEGIN")) {
-      process.env.PRIVATE_KEY = pem;
-    }
+    return pem.includes("-----BEGIN") ? pem : undefined;
   } catch {
     // Invalid base64 — fall through; the missing-credential warning below
     // surfaces the problem without leaking any key material.
+    return undefined;
   }
 }
 
-function maybeCreateProbot(env: Env, logger: Logger): Probot | undefined {
+function maybeCreateProbot(
+  env: Env,
+  logger: Logger,
+  processEnv: NodeJS.ProcessEnv,
+  privateKeyOverride: string | undefined,
+): Probot | undefined {
   // Probot requires APP_ID, PRIVATE_KEY and WEBHOOK_SECRET. When they are
   // absent (e.g. local dev without a GitHub App), run HTTP-only so health
   // and readiness endpoints remain available.
-  if (!process.env.APP_ID || (!process.env.PRIVATE_KEY && !process.env.PRIVATE_KEY_PATH)) {
+  if (!processEnv.APP_ID || (!processEnv.PRIVATE_KEY && !processEnv.PRIVATE_KEY_PATH && !privateKeyOverride)) {
     logger.warn(
       "APP_ID / PRIVATE_KEY not configured; starting without GitHub webhook processing. " +
         "Health and readiness endpoints remain available.",
@@ -73,11 +81,13 @@ function maybeCreateProbot(env: Env, logger: Logger): Probot | undefined {
     overrides: {
       port: env.PORT,
       host: env.HOST,
+      ...(privateKeyOverride ? { privateKey: privateKeyOverride } : {}),
     },
   });
 }
 
 export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerRuntime> {
+  const processEnv = readProcessEnv();
   const logger = createLogger(env);
   const clients = createPlatformClients(env);
   const config = createConfigStore(env);
@@ -97,6 +107,7 @@ export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerR
     audit: createPrismaAuditRepository(clients.prisma, logger),
     ingestion: ingestion.services,
     config,
+    githubOAuth: createGithubOAuthClient(),
     logger,
   });
 
@@ -108,10 +119,12 @@ export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerR
     audit: createPrismaAuditRepository(clients.prisma, logger),
     config,
     logger,
+    devLoginEnabled:
+      env.NODE_ENV === "development" && readEnv("ADMIN_DEV_LOGIN") === "1" && Boolean(env.SESSION_SECRET),
   });
 
-  materializePrivateKeyFromBase64();
-  const probot = maybeCreateProbot(env, logger);
+  const privateKeyOverride = privateKeyFromBase64(processEnv);
+  const probot = maybeCreateProbot(env, logger, processEnv, privateKeyOverride);
   const appFn = createApp({
     ingestion: ingestion.services,
     ingestionRepositories: ingestion.repositories,
@@ -128,7 +141,8 @@ export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerR
     adminApi,
     adminPanel,
     ...(probotMiddlewarePromise ? { probotMiddlewarePromise } : {}),
-    checkDependencies: () => checkDependencies({ prisma: clients.prisma, redis: clients.redis }),
+    checkDependencies: () =>
+      checkDependencies({ checkDatabase: () => checkPrisma(clients.prisma), redis: clients.redis }),
   });
 
   async function close(): Promise<void> {

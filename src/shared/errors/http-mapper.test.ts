@@ -11,7 +11,7 @@ import {
   RateLimitError,
   ValidationError,
 } from "../../shared/errors/index.js";
-import { toErrorLogPayload, toHttpEnvelope } from "./error-mapper.js";
+import { toErrorLogPayload, toHttpEnvelope } from "./http-mapper.js";
 
 interface MapperCase {
   name: string;

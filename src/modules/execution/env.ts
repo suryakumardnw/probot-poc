@@ -43,10 +43,10 @@ const GIT_HARDENING: Record<string, string> = {
 export function buildExecutionEnv(options: {
   homeDir: string;
   tmpDir: string;
-  appEnv?: NodeJS.ProcessEnv;
+  appEnv: NodeJS.ProcessEnv;
   extraEnv?: Record<string, string>;
 }): Record<string, string> {
-  const appEnv = options.appEnv ?? process.env;
+  const appEnv = options.appEnv;
   const env: Record<string, string> = {
     PATH: appEnv.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     HOME: options.homeDir,

@@ -1,4 +1,3 @@
-import type { PrismaClient } from "@prisma/client";
 import type { Redis } from "ioredis";
 import { createFindingsDependencies, type FindingsServiceDependencies } from "../modules/findings/index.js";
 import {
@@ -11,7 +10,7 @@ import { createIngestionRepositories } from "../modules/ingestion/prisma-ingesti
 import { createIngestionUnitOfWork } from "../modules/ingestion/prisma-ingestion.unit-of-work.js";
 import { createPublishingRepositories, type PublishingRepositories } from "../modules/publishing/index.js";
 import type { TriageServiceDependencies } from "../modules/triage/index.js";
-import type { Env } from "../platform/config/env.js";
+import { readProcessEnv, type Env } from "../platform/config/env.js";
 import { createReviewConfigStore } from "../platform/config/review-config-store.js";
 import { createPrisma } from "../platform/db/prisma.js";
 import { createLogger } from "../platform/logger.js";
@@ -31,8 +30,14 @@ import type { ReviewQueue } from "../ports/review-queue.js";
  * tests build their own graphs from the same factories.
  */
 
+/**
+ * Database client type inferred from the platform factory. Bootstrap never
+ * imports the vendor type directly; `platform/db` owns the Prisma client.
+ */
+type DatabaseClient = ReturnType<typeof createPrisma>;
+
 export interface PlatformClients {
-  prisma: PrismaClient;
+  prisma: DatabaseClient;
   redis: Redis;
   reviewQueue: BullMqReviewQueue;
 }
@@ -52,7 +57,7 @@ export function createPlatformClients(env: Env): PlatformClients {
 export function createConfigStore(env: Env): ReviewConfigStore {
   return createReviewConfigStore({
     env: {
-      ...process.env,
+      ...readProcessEnv(),
       ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key, String(value)])),
     },
   });
@@ -65,7 +70,7 @@ export interface IngestionModule {
 }
 
 export function createIngestionModule(input: {
-  prisma: PrismaClient;
+  prisma: DatabaseClient;
   queue: ReviewQueue;
   config: ReviewConfigStore;
   logger: Logger;
@@ -90,7 +95,7 @@ export interface ReviewModule {
 }
 
 /** Data-side dependencies of the review pipeline (findings + publication). */
-export function createReviewModule(prisma: PrismaClient): ReviewModule {
+export function createReviewModule(prisma: DatabaseClient): ReviewModule {
   return {
     findings: createFindingsDependencies(prisma),
     publishing: createPublishingRepositories(prisma),
@@ -119,7 +124,7 @@ export interface AppServices {
  * variables and resolves them lazily on the first triage call, so composition
  * never fails when triage is not configured.
  */
-export function createTriageDependencies(env: NodeJS.ProcessEnv = process.env): TriageServiceDependencies {
+export function createTriageDependencies(env: NodeJS.ProcessEnv = readProcessEnv()): TriageServiceDependencies {
   return { provider: createGroqTriageProvider({ env }) };
 }
 

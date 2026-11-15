@@ -54,7 +54,8 @@ export interface DockerExecutorOptions {
   networkName?: string;
   /** Docker CLI binary. */
   dockerBin?: string;
-  appEnv?: NodeJS.ProcessEnv;
+  /** Process environment passed to the container after the allowlist filter. */
+  appEnv: NodeJS.ProcessEnv;
 }
 
 export class DockerSandboxExecutor implements SandboxExecutor {
@@ -65,12 +66,12 @@ export class DockerSandboxExecutor implements SandboxExecutor {
   private readonly dockerBin: string;
   private readonly appEnv: NodeJS.ProcessEnv;
 
-  constructor(options: DockerExecutorOptions = {}) {
+  constructor(options: DockerExecutorOptions) {
     this.image = options.image ?? DEFAULT_SANDBOX_IMAGE;
-    this.dockerHost = options.dockerHost ?? process.env.SANDBOX_DOCKER_HOST;
-    this.networkName = options.networkName ?? process.env.SANDBOX_DOCKER_NETWORK;
+    this.dockerHost = options.dockerHost;
+    this.networkName = options.networkName;
     this.dockerBin = options.dockerBin ?? "docker";
-    this.appEnv = options.appEnv ?? process.env;
+    this.appEnv = options.appEnv;
   }
 
   /** Ensure the sandbox image exists locally (build it once if missing). */

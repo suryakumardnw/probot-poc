@@ -1,6 +1,5 @@
-import type { PrismaClient } from "@prisma/client";
 import type { Redis } from "ioredis";
-import { checkPrisma } from "./db/prisma.js";
+import type { DependencyCheck } from "./db/prisma.js";
 import { checkRedis } from "./redis.js";
 
 /**
@@ -29,12 +28,13 @@ export type ReadinessReport = {
 };
 
 export type HealthDependencies = {
-  prisma: PrismaClient;
+  /** Database probe supplied by `platform/db` (never the vendor client). */
+  checkDatabase: () => Promise<DependencyCheck>;
   redis: Redis;
 };
 
 export async function checkDependencies(deps: HealthDependencies): Promise<ReadinessReport> {
-  const results = await Promise.all([checkPrisma(deps.prisma), checkRedis(deps.redis)]);
+  const results = await Promise.all([deps.checkDatabase(), checkRedis(deps.redis)]);
 
   const dependencies: DependencyStatus[] = [
     { name: "postgres", ...results[0] },

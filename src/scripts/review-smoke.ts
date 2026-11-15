@@ -24,6 +24,7 @@ import path from "node:path";
 import { runReview } from "../modules/review/index.js";
 import type { ChangedFile, WorkspaceResult } from "../modules/workspace/index.js";
 import { createAgentRuntime } from "../platform/agents/index.js";
+import { readEnv } from "../platform/config/env.js";
 import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../platform/config/review-loader.js";
 
 const UTILS_TS = "export function formatName(user: { name: string }) {\n  return { name: user.name };\n}\n";
@@ -52,7 +53,7 @@ function truncate(text: string, max = 400): string {
 }
 
 async function main(): Promise<void> {
-  if (!process.env.MODEL_API_KEY) {
+  if (!readEnv("MODEL_API_KEY")) {
     console.error("MODEL_API_KEY is not set — cannot run the real-endpoint smoke test.");
     process.exitCode = 1;
     return;

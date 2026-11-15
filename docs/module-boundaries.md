@@ -1,9 +1,8 @@
 # Module boundaries
 
-ESLint enforces the module layout while Phase 3 moves code. The target policies
-are active now; temporary allowances keep the current top-level layout lintable
-until each directory moves. **PR 3.12 removes every temporary allowance and the
-`legacy` element type.**
+ESLint enforces the module layout. The Phase 3 move is complete: there are no
+temporary path allowances, no `legacy` element type, and no disabled boundary
+rule. The rules below are the permanent policy.
 
 Source of truth: `eslint.config.mjs`. This document must match the config in the
 same commit.
@@ -19,13 +18,16 @@ descriptor and are therefore `bootstrap`.
 |---|---|---|
 | `bootstrap` | `src/bootstrap`, `src/index.ts`, `src/server.ts`, `src/worker.ts` | Process entry points and composition roots. May wire every layer. |
 | `module` | `src/modules/*` | Vertical capabilities with a public `index.ts` entry point. |
-| `platform` | `src/platform` | Infrastructure adapters (HTTP error mapping, config, DB, queues, observability, runtimes). |
+| `platform` | `src/platform` | Infrastructure adapters (config, DB, queues, observability, HTTP/network clients, runtimes). |
 | `contracts` | `src/contracts` | Zod schemas and inferred types. |
 | `ports` | `src/ports` | Interfaces modules and platform adapters depend on. |
-| `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
+| `shared` | `src/shared` | Dependency-free helpers, projections, and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | _(none)_ | **Temporary type with an empty path list.** `src/eval` moved to `src/scripts/eval` in PR 3.11. The descriptor is omitted while the list is empty; PR 3.12 deletes the type and its policy. |
+
+There is no `legacy` element type. PR 3.11 moved the last top-level directory
+(`src/eval` to `src/scripts/eval`), and PR 3.12 deleted the unused descriptor
+and its policy.
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -42,45 +44,92 @@ cross-element dependency needs a policy.
 |---|---|
 | `bootstrap` | every application element |
 | `module` | `contracts`, `ports`, `shared`, its own internals, and other modules' `index.ts` only |
-| `platform` | `contracts`, `ports`, `shared` |
+| `platform` | `contracts`, `ports`, `shared` (and its own internals) |
 | `contracts` | `zod` only (own internals are unrestricted) |
 | `ports` | `contracts`, `shared` |
 | `shared` | `contracts` |
 | `script` | every application element |
 | `test` | every application element |
-| `legacy` (temporary, no paths) | Matches nothing; the descriptor and policy are deleted in PR 3.12. |
 
 External and Node core packages are allowed from every element except
 `contracts`. `contracts` may import only `zod`; test-category files are exempt.
-No module may import another module's internal file or a platform adapter,
-except the explicit temporary admin allowance listed below.
+No module may import another module's internal file or a platform adapter.
 
 `import/no-cycle` remains enabled for every source file.
 
-## PR 3.10 placement rulings
+## Placement rulings
+
+### PR 3.10
 
 - `src/observability/retry.ts` moved to `src/shared/retry.ts`, and
   `src/observability/correlation.ts` moved to
   `src/ports/review-logging.ts`. Both are dependency-free, module-facing
   helpers: placing them under `src/platform` would force a
-  `module -> platform` import, which the active policy rejects. Behavior is
+  `module -> platform` import, which the policy rejects. Behavior is
   unchanged.
-- The `/review` webhook now loads configuration through the injected
-  `ReviewConfigStore` built by the composition root, instead of reading
+- The `/review` webhook loads configuration through the injected
+  `ReviewConfigStore` built by the composition root instead of reading
   `process.env` on every delivery. That store is a boot-time snapshot of the
   static deployment environment; the shipped `config/review.json` resolves
   identically, and static deployment env is the intended contract.
 
-## PR 3.11 placement ruling
+### PR 3.11
 
-- `src/eval/` moved to `src/scripts/eval/`. Benchmark evaluation is tooling that
-  exercises the review engine; no production module imports it, and the
+- `src/eval/` moved to `src/scripts/eval/`. Benchmark evaluation is tooling
+  that exercises the review engine; no production module imports it, and the
   `script` element policy already allows it to depend on every layer.
 - `src/scripts/eval-run.ts` remains the CLI, so the compiled entry point
   (`lib/scripts/eval-run.js`) and `npm run eval:run` are unchanged.
 - The evaluation test and the CLI import the package through
   `src/scripts/eval/index.ts`, matching the public surface to the internal
   module files.
+
+### PR 3.12
+
+- `src/platform/http/error-mapper.ts` moved to
+  `src/shared/errors/http-mapper.ts`. It is a pure projection of the shared
+  `AppError` family and the error contract; it performs no platform I/O. Admin
+  HTTP handlers and the bootstrap HTTP surface import it from `shared` instead
+  of forcing a `module -> platform` edge. The co-located test moved with it.
+- `FINDING_CATEGORIES` moved from `modules/review/types.ts` to
+  `contracts/review.ts`. The taxonomy validates model output at the contract
+  boundary and is shared by findings validation and publication ordering;
+  `contracts` may no longer import a module.
+- The knowledge HTTP adapter moved to `src/platform/knowledge/fetch.ts`. The
+  `KnowledgeFetcher` type is a port (`src/ports/knowledge.ts`); bootstrap
+  injects the default adapter and tests inject fakes. Response parsing and
+  cache/manifest logic remain in `modules/knowledge`.
+- `modules/knowledge/materialize.ts` takes a `ReviewKnowledgeStore` port. The
+  Prisma adapter is `modules/knowledge/prisma-knowledge.repository.ts` (the
+  approved `*.repository.ts` exception), so materialization never imports
+  `@prisma/client`.
+- `modules/execution/service.ts` takes an `ExecutionAuditRepository` port and an
+  injected process environment. The Prisma adapter is
+  `modules/execution/prisma-execution-audit.repository.ts`; the Docker and
+  local executors receive `appEnv` explicitly instead of reading the process
+  environment in their constructors.
+- `modules/workspace` receives the process environment through
+  `ReviewWorkspaceServiceOptions.appEnv` (git needs `PATH`/`HOME`) and through
+  `createDefaultTokenProvider(appEnv)` (GitHub App credentials). Report
+  publication receives `deps.env` for model-id metadata.
+- Admin OAuth network calls moved to `src/platform/github/oauth-client.ts`,
+  which implements the `GithubOAuthClient` port. `createAdminApi` receives the
+  client from bootstrap; authorization policy, OAuth state and sessions remain
+  in `modules/admin`. The shared `GithubOauthError` moved to
+  `src/shared/errors/github-oauth.ts`.
+- The admin panel receives `devLoginEnabled` from bootstrap. The panel no
+  longer reads `ADMIN_DEV_LOGIN` itself; the composition root combines it with
+  `NODE_ENV` and `SESSION_SECRET`.
+- Bootstrap reads operational overrides through
+  `platform/config/env.ts` (`readEnv`, `readProcessEnv`). It no longer mutates
+  `process.env`: a base64-encoded GitHub private key is passed to Probot as a
+  `privateKey` override.
+- `platform/health.ts` receives a `checkDatabase` probe. `platform/db` owns
+  `checkPrisma`; the readiness module needs no vendor type.
+- Benchmark persistence moved behind
+  `platform/db/evaluation-run.repository.ts`. `scripts/eval` maps a
+  `BenchmarkRun` to a plain `EvaluationRunRecord`; no tooling file imports
+  `@prisma/client`.
 
 ## Vendor and environment rules
 
@@ -89,9 +138,9 @@ The rules apply to TypeScript (`**/*.{ts,mts,cts}`), root tooling
 
 | Rule | Restriction | Approved exceptions |
 |---|---|---|
-| `no-restricted-imports` | No `@prisma/client` import, including deep subpaths via the `@prisma/client/*` pattern. | `src/**/*.repository.ts`, `src/platform/db/**`, and `test/**` (permanent). Temporary file allowances below. |
-| `no-restricted-syntax` | No `process.env` reads. | `src/platform/config/**`, `test/**`, and `deploy/inspect-key.js` (permanent). Temporary directory allowances below. |
-| `no-restricted-globals` | No global `fetch`. | `src/platform/**` (permanent). Temporary directory allowances below. |
+| `no-restricted-imports` | No `@prisma/client` import, including deep subpaths via the `@prisma/client/*` pattern. | `src/**/*.repository.ts`, `src/platform/db/**`, and `test/**` (permanent). |
+| `no-restricted-syntax` | No `process.env` reads (dot or bracket form). | `src/platform/config/**`, `test/**`, and `deploy/inspect-key.js` (permanent). |
+| `no-restricted-globals` | No global `fetch`. | `src/platform/**` (permanent). |
 
 Tests may use `@prisma/client` row types to assert database state and fixture
 shapes. This is an **approved test-tier exception**, not application code:
@@ -104,101 +153,45 @@ worker container; it is CommonJS, outside the package, and never imported by the
 application. It is deliberately linted by these rules, with one permanent
 `process.env` exception because reading the mounted key is its entire purpose.
 
-## Temporary allowances
+No module imports `@prisma/client`, calls global `fetch`, or reads
+`process.env`. Modules depend on ports supplied by bootstrap:
 
-Every allowance is a `TODO(PR x.y)` in `eslint.config.mjs` with the same removal
-PR recorded here. Move-only PRs sometimes leave a vendor or `fetch` use behind;
-where that happens the table names both the move PR and PR 3.12 as the final
-removal.
-
-### `legacy` element type
-
-`LEGACY_ELEMENT_PATHS` is empty and the descriptor is omitted from the element
-list, so no file is classified as `legacy`. The unused policy remains until PR
-3.12 deletes it with the type.
-
-| Path | Removed by |
-|---|---|
-| _(none — `src/eval` moved to `src/scripts/eval` in PR 3.11)_ | PR 3.11 |
-| The `legacy` type, policy, and this table | PR 3.12 |
-
-### Cross-element import allowances
-
-| Allowance | Why it exists | Removed by |
+| Module | Port / injected value | Platform adapter |
 |---|---|---|
-| `contracts/review.ts` -> `src/modules/review` | `FINDING_CATEGORIES` still lives in the review module's `types.ts`. The move PR is move-only, so PR 3.12 moves the constant into `contracts/review.ts`. | PR 3.12 |
-| `modules/admin` -> `platform/http/error-mapper.ts` | The admin API and panel render failures through the platform HTTP projection. PR 3.12 injects the projection from the composition root or makes it a shared helper. | PR 3.12 |
-
-### `process.env` allowances
-
-Permanent: `src/platform/config/**`, `test/**`, `deploy/inspect-key.js`.
-
-Every temporary row below names the move PR and **PR 3.12 as the explicit final
-removal**. The reads survive move-only PRs, so the move PR alone cannot remove
-the allowance.
-
-| Temporary path | Removed by |
-|---|---|
-| `src/bootstrap/**` | PR 3.12 final (composition roots read operational overrides) |
-| `src/modules/admin/**` | PR 3.12 final (development-only login reads `ADMIN_DEV_LOGIN`) |
-| `src/modules/execution/**` | PR 3.12 final (sandbox and process environment reads) |
-| `src/modules/knowledge/**` | PR 3.12 final (GitHub token reads) |
-| `src/platform/agents/**` | PR 3.12 final (runtime operational overrides) |
-| `src/platform/models/**` | PR 3.12 final (provider API key and model id) |
-| `src/platform/observability/**` | PR 3.12 final (alert thresholds load from environment overrides) |
-| `src/modules/publishing/**` | PR 3.12 final (model id resolution reads environment) |
-| `src/modules/workspace/**` | PR 3.12 final (token provider reads environment) |
-| `src/scripts/**` | PR 3.12 final (CLI scripts read environment directly) |
-
-### Prisma allowances
-
-Permanent: `src/**/*.repository.ts`, `src/platform/db/**`, `test/**`.
-
-| Temporary file | Removed by |
-|---|---|
-| `src/platform/health.ts` | PR 3.12 removes the vendor type from the readiness check |
-| `src/bootstrap/clients.ts` | PR 3.12 removes any direct vendor type; the composition root already consumes the platform factories |
-| `src/modules/knowledge/materialize.ts` | PR 3.12 replaces the vendor type with a port |
-| `src/modules/execution/service.ts` | PR 3.12 replaces the vendor type with a port |
-| `src/scripts/eval/persistence.ts` | PR 3.12 removes the vendor type |
-
-### `fetch` allowances
-
-Permanent: `src/platform/**`.
-
-| Temporary path | Removed by |
-|---|---|
-| `src/modules/admin/**` | PR 3.12 replaces the OAuth client with a platform-owned identity client |
-| `src/modules/knowledge/**` | PR 3.12 replaces the client with a platform-owned client or port |
+| `execution` | `ExecutionAuditRepository`, `appEnv` | `prisma-execution-audit.repository.ts`, bootstrap |
+| `knowledge` | `KnowledgeFetcher`, `ReviewKnowledgeStore`, `env` | `platform/knowledge/fetch.ts`, `prisma-knowledge.repository.ts` |
+| `admin` | `GithubOAuthClient`, `devLoginEnabled` | `platform/github/oauth-client.ts`, bootstrap |
+| `workspace` | `appEnv`, `InstallationTokenProvider` | bootstrap |
+| `publishing` | `env` | bootstrap |
 
 ## Negative checks
 
-The rules are verified manually because a deliberately broken fixture would
-fail `npm run lint` in CI. From the repository root, create a probe, run ESLint
-on it, and delete it:
+A deliberately broken fixture would fail `npm run lint` in CI, so the checks are
+documented manual probes. From the repository root: create the probe, run
+`npx eslint <probe>`, confirm the listed rule fires, then delete the probe.
+The probe must not end in `*.test.ts` (test-category files are exempt from
+several policies).
 
 | Probe | Expected rule |
 |---|---|
-| A module imports another module's non-`index.ts` file. | `boundaries/dependencies` |
-| A module imports `../../platform/...`. | `boundaries/dependencies` |
-| `src/contracts/...` imports `node:fs` or a non-Zod package. | `boundaries/dependencies` |
-| `src/shared/...` imports `../platform/...`. | `boundaries/dependencies` |
-| A non-repository file imports `@prisma/client`. | `no-restricted-imports` |
-| A non-repository file imports `@prisma/client/runtime/library`. | `no-restricted-imports` (deep-import pattern) |
-| A non-platform file reads `process.env`. | `no-restricted-syntax` |
-| A non-platform file calls global `fetch`. | `no-restricted-globals` |
+| `src/modules/knowledge/__probe.ts` imports `../review/prompts/index.js`. | `boundaries/dependencies` (cross-module internal, nested path) |
+| `src/modules/knowledge/__probe.ts` imports `../review/types.js`. | `boundaries/dependencies` (cross-module internal, non-`index.ts`) |
+| `src/modules/knowledge/__probe.ts` imports `../../platform/config/env.js`. | `boundaries/dependencies` (`module -> platform`) |
+| `src/modules/knowledge/__probe.ts` imports `../../bootstrap/clients.js`. | `boundaries/dependencies` (`module -> bootstrap`) |
+| `src/platform/__probe.ts` imports `../../modules/knowledge/index.js`. | `boundaries/dependencies` (`platform -> module`) |
+| `src/contracts/__probe.ts` imports `node:fs`. | `boundaries/dependencies` (`contracts` external allowlist) |
+| `src/contracts/__probe.ts` imports `../modules/review/index.js`. | `boundaries/dependencies` (`contracts -> module`) |
+| `src/shared/__probe.ts` imports `../platform/config/env.js`. | `boundaries/dependencies` (`shared -> platform`) |
+| `src/ports/__probe.ts` imports `../modules/knowledge/index.js`. | `boundaries/dependencies` (`ports -> module`) |
+| `src/shared/__probe.ts` imports `@prisma/client`. | `no-restricted-imports` |
+| `src/shared/__probe.ts` imports `@prisma/client/runtime/library`. | `no-restricted-imports` (deep-import pattern) |
+| `src/shared/__probe.ts` reads `process.env.EXAMPLE`. | `no-restricted-syntax` |
+| `src/shared/__probe.ts` reads `process.env["EXAMPLE"]`. | `no-restricted-syntax` (computed form) |
+| `src/shared/__probe.ts` calls `fetch("https://example.com")`. | `no-restricted-globals` |
+| `src/modules/knowledge/__probe_a.ts` imports `__probe_b.ts`, and `__probe_b.ts` imports `__probe_a.ts`. | `import/no-cycle` |
 
-The PR 3.1 verification used this probe set and each import produced the
-expected rule error; the probes were then removed.
-
-## PR 3.12 removal checklist
-
-1. Delete `LEGACY_ELEMENT_PATHS`, `PROCESS_ENV_ALLOWED_FILES`,
-   `PRISMA_ALLOWED_FILES`, and `FETCH_ALLOWED_FILES` from `eslint.config.mjs`.
-2. Delete the `legacy` element descriptor and every policy that references it.
-3. Keep only the permanent exceptions: `*.repository.ts`/`platform/db` and
-   `test/**` for Prisma (including deep imports), `platform/config`, `test/**`,
-   and `deploy/inspect-key.js` for `process.env`, `platform/**` for `fetch`, and
-   the `test` element/file category.
-4. Update this document in the same commit.
-5. Re-run the negative checks above with no temporary allowances present.
+The PR 3.12 verification used this probe set with no temporary allowances
+present. Every probe produced the expected rule error; the probes were then
+deleted. `rg 'eslint-disable.*boundaries' .` returns no matches, and
+`eslint.config.mjs` contains only the approved vendor/environment exceptions
+listed above.

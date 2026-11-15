@@ -450,21 +450,22 @@ export async function stopReviewWorker(worker: Worker<ReviewJobPayload>): Promis
 }
 
 /**
- * Default installation-token provider built from environment credentials.
- * Falls back to a NullTokenProvider (throws on use) when no GitHub App
- * credentials are configured. Private key material never leaves this module.
+ * Default installation-token provider built from injected environment
+ * credentials. Falls back to a NullTokenProvider (throws on use) when no
+ * GitHub App credentials are configured. Private key material never leaves
+ * this module.
  */
-export function createDefaultTokenProvider(): InstallationTokenProvider {
-  const appId = process.env.GITHUB_APP_ID;
-  let privateKey = process.env.GITHUB_PRIVATE_KEY;
+export function createDefaultTokenProvider(appEnv: NodeJS.ProcessEnv): InstallationTokenProvider {
+  const appId = appEnv.GITHUB_APP_ID;
+  let privateKey = appEnv.GITHUB_PRIVATE_KEY;
   if (!privateKey) {
-    const privateKeyPath = process.env.GITHUB_PRIVATE_KEY_PATH;
+    const privateKeyPath = appEnv.GITHUB_PRIVATE_KEY_PATH;
     if (privateKeyPath) {
       privateKey = fs.readFileSync(privateKeyPath, "utf-8");
     }
   }
-  if (!privateKey && process.env.GITHUB_PRIVATE_KEY_BASE64) {
-    privateKey = Buffer.from(process.env.GITHUB_PRIVATE_KEY_BASE64.replace(/\s+/g, ""), "base64").toString("utf8");
+  if (!privateKey && appEnv.GITHUB_PRIVATE_KEY_BASE64) {
+    privateKey = Buffer.from(appEnv.GITHUB_PRIVATE_KEY_BASE64.replace(/\s+/g, ""), "base64").toString("utf8");
   }
   if (!appId || !privateKey) {
     return new NullTokenProvider();
@@ -472,7 +473,7 @@ export function createDefaultTokenProvider(): InstallationTokenProvider {
   return new AppInstallationTokenProvider({
     appId,
     privateKey,
-    baseUrl: process.env.GITHUB_BASE_URL,
+    baseUrl: appEnv.GITHUB_BASE_URL,
   });
 }
 

@@ -4,7 +4,11 @@
  * Public API for the rest of the application (tool protocol, review engine,
  * admin tooling — and ticket 13's Docker Compose deployment):
  *
- *   const service = new ExecutionService({ prisma, execution: config.execution });
+ *   const service = new ExecutionService({
+ *     audit: createPrismaExecutionAuditRepository(prisma),
+ *     execution: config.execution,
+ *     appEnv: processEnv, // supplied by the composition root
+ *   });
  *   const result = await service.runCommand({
  *     command: "git", args: ["log", "--oneline", "-5"],
  *     workspacePath, actor: "review-engine", reviewId,
@@ -14,7 +18,13 @@
  * engine OUTSIDE the agent and audited in `command_execution_audits`.
  */
 
-export { ExecutionService, type ExecutionServiceOptions } from "./service.js";
+export {
+  ExecutionService,
+  type ExecutionAuditEntry,
+  type ExecutionAuditRepository,
+  type ExecutionServiceOptions,
+} from "./service.js";
+export { createPrismaExecutionAuditRepository } from "./prisma-execution-audit.repository.js";
 export {
   DockerSandboxExecutor,
   DEFAULT_SANDBOX_IMAGE,

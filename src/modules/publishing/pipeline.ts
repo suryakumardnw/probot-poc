@@ -81,6 +81,8 @@ export interface ReviewPipelineDeps {
   tokenProvider: InstallationTokenProvider;
   /** Octokit factory supplied by the composition root (tests inject a fake). */
   octokitFactory: (token: string) => PublisherOctokit;
+  /** Process environment for model-id metadata (injected by bootstrap). */
+  env: NodeJS.ProcessEnv;
   /** Bounded retry policy for GitHub API calls. */
   publishRetry?: { maxAttempts: number; baseDelayMs: number };
 }
@@ -350,7 +352,7 @@ export async function finalizeReview(
         prNumber: payload.pullRequestNumber,
         commit: workspace.headSha.slice(0, 7),
         source: `${payload.repositoryFullName}#${payload.pullRequestNumber} @ ${workspace.headSha.slice(0, 7)}`,
-        model: resolveModelId(deps.config, process.env),
+        model: resolveModelId(deps.config, deps.env),
         reviewedAt: new Date(),
         timezone: deps.config.application.timezone,
       },

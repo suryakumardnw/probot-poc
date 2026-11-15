@@ -9,15 +9,7 @@ import { AuthError, ForbiddenError, ValidationError } from "../../shared/errors/
 import { headerValue, parseQuery, sendError, sendJson } from "./admin.http.helpers.js";
 import type { AdminRequestContext } from "./admin.types.js";
 import { CSRF_HEADER, verifyCsrfToken } from "./auth/csrf.js";
-import {
-  authorizeAdmin,
-  buildAuthorizeUrl,
-  consumeOauthState,
-  createOauthState,
-  exchangeOAuthCode,
-  fetchGithubUser,
-  fetchOrgMembership,
-} from "./auth/github-oauth.js";
+import { authorizeAdmin, buildAuthorizeUrl, consumeOauthState, createOauthState } from "./auth/github-oauth.js";
 import {
   buildClearCookieHeader,
   buildSetCookieHeader,
@@ -57,9 +49,10 @@ export async function handleOAuthCallback(ctx: AdminRequestContext): Promise<voi
     return;
   }
 
-  const accessToken = await exchangeOAuthCode(ctx.env, code);
-  const user = await fetchGithubUser(accessToken);
-  const membership = await fetchOrgMembership(ctx.env.ADMIN_GITHUB_ORG!, user.login, accessToken);
+  const accessToken = await ctx.deps.githubOAuth.exchangeOAuthCode(ctx.env, code);
+  const user = await ctx.deps.githubOAuth.fetchUser(accessToken);
+  const org = ctx.env.ADMIN_GITHUB_ORG;
+  const membership = org ? await ctx.deps.githubOAuth.fetchOrgMembership(org, user.login, accessToken) : null;
   const decision = authorizeAdmin(ctx.env, user, membership);
 
   if (!decision.allowed) {

@@ -58,10 +58,10 @@ export function knowledgeRefSlug(ref: string): string {
 
 /**
  * Injectable HTTP fetcher for knowledge sources (test seam — no real network
- * in CI). Must resolve with a status code and body text, never throw for
- * HTTP-level failures (non-2xx is expressed via status).
+ * in CI). The port lives in `src/ports/knowledge.ts`; the default adapter is
+ * platform-owned (`src/platform/knowledge/fetch.ts`).
  */
-export type KnowledgeFetcher = (url: string, init?: { timeoutMs: number }) => Promise<{ status: number; text: string }>;
+export type { KnowledgeFetcher } from "../../ports/knowledge.js";
 
 /** Per-source identity persisted on the Review row (reproducibility, §4). */
 export interface PersistedKnowledgeSource {

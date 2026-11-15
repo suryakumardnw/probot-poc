@@ -1,4 +1,5 @@
 import type { Logger } from "../../ports/logger.js";
+import { readEnv } from "../config/env.js";
 import { getMetricsRegistry } from "./metrics.js";
 
 /**
@@ -72,7 +73,7 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
 };
 
 function numEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
+  const raw = readEnv(name);
   if (!raw) {
     return fallback;
   }

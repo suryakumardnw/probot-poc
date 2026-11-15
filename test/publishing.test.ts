@@ -446,6 +446,7 @@ function makeDeps(state: FakeState, overrides: Partial<ReviewPipelineDeps> = {})
         expiresAt: new Date(Date.now() + 60_000),
       }),
     },
+    env: process.env,
     octokitFactory: () => makeFakeOctokit(state),
     publishRetry: { maxAttempts: 1, baseDelayMs: 0 },
     ...overrides,

@@ -55,4 +55,5 @@ export type {
   RunReviewOutput,
   StageId,
 } from "./types.js";
-export { FINDING_CATEGORIES, ReviewEngineError } from "./types.js";
+export { ReviewEngineError } from "./types.js";
+export { FINDING_CATEGORIES } from "../../contracts/review.js";

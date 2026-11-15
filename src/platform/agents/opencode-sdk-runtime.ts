@@ -33,6 +33,7 @@ import type {
   RuntimeHealth,
 } from "../../ports/agent-runtime.js";
 import { AgentRuntimeError } from "../../shared/errors/index.js";
+import { readEnv, readProcessEnv } from "../config/env.js";
 import type { AgentRuntimeConfigSource } from "./opencode-config.js";
 import { buildChildEnv } from "./opencode-config.js";
 import { buildPrompt, extractJson, type AgentRuntimeLogger } from "./opencode-runtime.js";
@@ -319,7 +320,7 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
     }
     try {
       const { version } = await this.probeSdkHost({
-        env: buildChildEnv(this.config, process.env),
+        env: buildChildEnv(this.config, readProcessEnv()),
         hostProcessPath: this.hostProcessPath,
         ...(this.spawnImpl ? { spawnImpl: this.spawnImpl } : {}),
       });
@@ -457,13 +458,13 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
     }
     const session = state.session;
 
-    const inlineConfig = buildSdkInlineConfig(this.config, process.env, {
+    const inlineConfig = buildSdkInlineConfig(this.config, readProcessEnv(), {
       maxOutputTokens: state.options.maxOutputTokens ?? this.config.agent.context.maxOutputTokens,
       reviewId: session.reviewId,
       repository: state.options.traceCorrelation?.repository,
       pullRequestNumber: state.options.traceCorrelation?.pullRequestNumber,
     });
-    const env = buildChildEnv(this.config, process.env, { reviewId: session.reviewId });
+    const env = buildChildEnv(this.config, readProcessEnv(), { reviewId: session.reviewId });
     env.XDG_CONFIG_HOME = path.join(state.dir, "config");
     env.XDG_DATA_HOME = path.join(state.dir, "data");
     env.XDG_STATE_HOME = path.join(state.dir, "state");
@@ -745,15 +746,15 @@ export class OpenCodeSdkAgentRuntime implements AgentRuntime {
 
   private scrub(text: string): string {
     let out = text;
-    const apiKey = process.env[this.config.provider.apiKeyEnv];
+    const apiKey = readEnv(this.config.provider.apiKeyEnv);
     if (apiKey) {
       out = out.split(apiKey).join("[redacted]");
     }
-    const langfuseSecret = process.env.LANGFUSE_SECRET_KEY;
+    const langfuseSecret = readEnv("LANGFUSE_SECRET_KEY");
     if (langfuseSecret) {
       out = out.split(langfuseSecret).join("[redacted]");
     }
-    const otlpHeaders = process.env.OPENCODE_OTLP_HEADERS;
+    const otlpHeaders = readEnv("OPENCODE_OTLP_HEADERS");
     if (otlpHeaders) {
       out = out.split(otlpHeaders).join("[redacted]");
       for (const pair of otlpHeaders.split(",")) {

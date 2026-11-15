@@ -7,26 +7,14 @@
  * inline/uncertain split and the summary.
  */
 
+import type { FindingCategoryValue } from "../../contracts/review.js";
 import type { ChangedFile, WorkspaceResult } from "../workspace/index.js";
 
 // ---------------------------------------------------------------------------
 // Structured review result (§7.1 finding schema)
 // ---------------------------------------------------------------------------
 
-export const FINDING_CATEGORIES = [
-  "functional",
-  "regression",
-  "security",
-  "performance",
-  "concurrency",
-  "dataIntegrity",
-  "errorHandling",
-  "apiCompatibility",
-  "maintainability",
-  "testing",
-] as const;
-
-export type FindingCategory = (typeof FINDING_CATEGORIES)[number];
+export type FindingCategory = FindingCategoryValue;
 
 export type FindingSeverity = "critical" | "high" | "medium" | "low" | "informational";
 

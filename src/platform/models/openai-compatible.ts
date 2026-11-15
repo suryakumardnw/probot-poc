@@ -32,6 +32,7 @@ import type {
   ProviderHealth,
 } from "../../ports/model-provider.js";
 import { ModelProviderError, type ModelErrorCode } from "../../shared/errors/index.js";
+import { readProcessEnv } from "../config/env.js";
 import { ProviderConfigError } from "./provider-config-error.js";
 
 export interface OpenAICompatibleProviderConfig {
@@ -190,7 +191,7 @@ export function createOpenAICompatibleProvider(
   if (config.type !== "openai-compatible") {
     throw new ProviderConfigError(`Unsupported provider type: ${String(config.type)}`);
   }
-  const env = options.env ?? process.env;
+  const env = options.env ?? readProcessEnv();
   const apiKey = env[config.apiKeyEnv];
   if (!apiKey) {
     throw new ProviderConfigError(
@@ -496,7 +497,7 @@ export function createOpenAICompatibleProvider(
 export function createModelProviderFromConfig(
   provider: OpenAICompatibleProviderConfig,
   logger?: CreateModelProviderOptions["logger"],
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = readProcessEnv(),
 ): ModelProvider {
   return createOpenAICompatibleProvider(provider, { logger, env });
 }

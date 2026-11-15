@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Env } from "../../contracts/config.js";
+import type { GithubOAuthClient } from "../../ports/github-oauth.js";
 import type { ReviewConfigStore } from "../../ports/review-config.js";
 import type { IngestionReadService } from "../ingestion/index.js";
 import type { AuditRepository } from "./audit.repository.js";
@@ -19,6 +20,8 @@ export interface AdminApiDeps {
   ingestion: IngestionReadService;
   /** Review config port: read/validate/update happens behind it. */
   config: ReviewConfigStore;
+  /** Platform-owned GitHub OAuth identity client (network I/O lives there). */
+  githubOAuth: GithubOAuthClient;
   logger: AdminLogger;
   now?: () => number;
 }
@@ -29,6 +32,12 @@ export interface AdminPanelDeps {
   audit: AuditRepository;
   config: ReviewConfigStore;
   logger: AdminLogger;
+  /**
+   * Whether the development-only login route is enabled. Computed by the
+   * composition root from `NODE_ENV`, `ADMIN_DEV_LOGIN` and `SESSION_SECRET`;
+   * the panel never reads the process environment itself.
+   */
+  devLoginEnabled: boolean;
 }
 
 /** Per-request state shared by the API route handlers. */

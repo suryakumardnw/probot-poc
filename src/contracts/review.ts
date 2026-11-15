@@ -13,7 +13,26 @@
  */
 
 import { z } from "zod";
-import { FINDING_CATEGORIES } from "../modules/review/types.js";
+
+/**
+ * Finding category taxonomy.
+ *
+ * It lives in the contract layer because `contracts/review.ts` validates the
+ * model output against it and downstream consumers (findings validation,
+ * publication ordering) share it. The review module re-exports the type.
+ */
+export const FINDING_CATEGORIES = [
+  "functional",
+  "regression",
+  "security",
+  "performance",
+  "concurrency",
+  "dataIntegrity",
+  "errorHandling",
+  "apiCompatibility",
+  "maintainability",
+  "testing",
+] as const;
 
 const findingEvidenceSchema = z.object({
   file: z.string().min(1).max(512),

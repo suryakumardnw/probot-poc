@@ -1,4 +1,3 @@
-import type { PrismaClient } from "@prisma/client";
 import { DockerSandboxExecutor } from "./docker-executor.js";
 import { createDiskQuotaWatcher } from "./limits.js";
 import { LocalSandboxExecutor } from "./local-executor.js";
@@ -20,7 +19,34 @@ import {
  * hardened process or Docker sandbox) → audit record. Every request —
  * allowed, denied, or failed — produces a `command_execution_audits` row.
  * stdout/stderr CONTENT is never persisted, only byte counts.
+ *
+ * Prisma stays behind `ExecutionAuditRepository`; the composition root
+ * supplies the adapter and the process environment.
  */
+
+/** Audit fields as plain data; the repository adapter owns the vendor types. */
+export interface ExecutionAuditEntry {
+  reviewId?: string;
+  actor: string;
+  command: string;
+  args: string[];
+  decision: ExecutionResult["decision"];
+  reason: ExecutionResult["reason"];
+  mode: EffectivePolicy["mode"];
+  sandboxed: boolean;
+  networkMode: EffectivePolicy["networkMode"];
+  exitCode: number | null;
+  timedOut: boolean;
+  diskQuotaExceeded: boolean;
+  durationMs: number | null;
+  stdoutBytes: number;
+  stderrBytes: number;
+  detail?: string;
+}
+
+export interface ExecutionAuditRepository {
+  record(entry: ExecutionAuditEntry): Promise<void>;
+}
 
 /** Make an argument safe for Postgres jsonb (it cannot store NUL at all) —
  * replace control bytes with visible placeholders for the audit record. */
@@ -30,9 +56,11 @@ function escapeControlBytes(arg: string): string {
 }
 
 export interface ExecutionServiceOptions {
-  prisma: PrismaClient;
+  audit: ExecutionAuditRepository;
   /** Config value `execution.*` (ticket 02 schema). */
   execution: ReviewExecutionConfig;
+  /** Process environment for the executor (injected by the composition root). */
+  appEnv: NodeJS.ProcessEnv;
   /** Override the executor (tests); defaults by `sandbox.enabled`. */
   executor?: SandboxExecutor;
   /** Clamp per-request timeouts DOWN to this ceiling. */
@@ -40,18 +68,24 @@ export interface ExecutionServiceOptions {
 }
 
 export class ExecutionService {
-  private readonly prisma: PrismaClient;
+  private readonly auditRepository: ExecutionAuditRepository;
   private readonly execution: ReviewExecutionConfig;
   private readonly executor: SandboxExecutor;
   private readonly timeoutCeilingMs?: number;
 
   constructor(options: ExecutionServiceOptions) {
-    this.prisma = options.prisma;
+    this.auditRepository = options.audit;
     this.execution = options.execution;
     this.timeoutCeilingMs = options.timeoutCeilingMs;
     this.executor =
       options.executor ??
-      (options.execution.sandbox.enabled ? new DockerSandboxExecutor() : new LocalSandboxExecutor());
+      (options.execution.sandbox.enabled
+        ? new DockerSandboxExecutor({
+            appEnv: options.appEnv,
+            ...(options.appEnv.SANDBOX_DOCKER_HOST ? { dockerHost: options.appEnv.SANDBOX_DOCKER_HOST } : {}),
+            ...(options.appEnv.SANDBOX_DOCKER_NETWORK ? { networkName: options.appEnv.SANDBOX_DOCKER_NETWORK } : {}),
+          })
+        : new LocalSandboxExecutor({ appEnv: options.appEnv }));
   }
 
   /** The configured executor (for lifecycle management by callers). */
@@ -158,29 +192,25 @@ export class ExecutionService {
     detail?: string,
   ): Promise<void> {
     try {
-      await this.prisma.commandExecutionAudit.create({
-        data: {
-          reviewId: request.reviewId,
-          actor: request.actor,
-          command: result.command,
-          // Control bytes (e.g. rejected NUL injections) cannot be stored in
-          // Postgres JSON — escape them for the audit record only.
-          args: result.args.map(escapeControlBytes) as never,
-          decision: result.decision,
-          reason: result.reason,
-          mode: policy.mode,
-          sandboxed: result.sandboxed,
-          networkMode: policy.networkMode,
-          exitCode: result.exitCode,
-          timedOut: result.timedOut,
-          diskQuotaExceeded: result.diskQuotaExceeded,
-          durationMs: result.durationMs,
-          stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
-          stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
-          ...(result.detail || detail
-            ? { metadata: { detail: escapeControlBytes(result.detail ?? detail ?? "") } as never }
-            : {}),
-        },
+      await this.auditRepository.record({
+        reviewId: request.reviewId,
+        actor: request.actor,
+        command: result.command,
+        // Control bytes (e.g. rejected NUL injections) cannot be stored in
+        // Postgres JSON — escape them for the audit record only.
+        args: result.args.map(escapeControlBytes),
+        decision: result.decision,
+        reason: result.reason,
+        mode: policy.mode,
+        sandboxed: result.sandboxed,
+        networkMode: policy.networkMode,
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+        diskQuotaExceeded: result.diskQuotaExceeded,
+        durationMs: result.durationMs,
+        stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+        stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
+        ...(result.detail || detail ? { detail: escapeControlBytes(result.detail ?? detail ?? "") } : {}),
       });
     } catch (error) {
       // Audit failure must not silently drop the trail — rethrow after the

@@ -4,10 +4,9 @@
  * All network access happens at worker boot through `ensureKnowledgeSources`
  * — never per review. Repositories are addressed as "owner/repo" and a
  * pinned commit SHA; file contents come from the git-trees API (path list)
- * followed by the contents API (base64 blobs). Authentication is optional:
- * public sources work unauthenticated, and a bearer token from
- * KNOWLEDGE_GITHUB_TOKEN / GITHUB_TOKEN is attached when present (the
- * handbook repository is org-private).
+ * followed by the contents API (base64 blobs). The request itself is performed
+ * by the injected `KnowledgeFetcher` port; the default platform adapter
+ * (`src/platform/knowledge/fetch.ts`) attaches an optional bearer token.
  *
  * Response bodies are parsed against the contracts in
  * `src/contracts/knowledge.ts` before any field is read.
@@ -19,7 +18,7 @@ import {
   githubTreeResponseSchema,
   type GitHubTreeEntry,
 } from "../../contracts/knowledge.js";
-import type { KnowledgeFetcher } from "./types.js";
+import type { KnowledgeFetcher } from "../../ports/knowledge.js";
 
 export type { GitHubTreeEntry };
 
@@ -27,36 +26,6 @@ export const DEFAULT_GITHUB_API = "https://api.github.com";
 
 export function sha256Hex(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
-}
-
-/** Resolve a GitHub API bearer token when one is configured (never logged). */
-function authHeader(): Record<string, string> {
-  const token = process.env.KNOWLEDGE_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "";
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-/** Default fetcher: plain fetch + AbortController timeout, optional bearer token. */
-export function createDefaultKnowledgeFetcher(): KnowledgeFetcher {
-  return async (url, init) => {
-    const timeoutMs = init?.timeoutMs ?? 30_000;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "ai-pr-reviewer-knowledge",
-          ...authHeader(),
-        },
-        redirect: "follow",
-        signal: controller.signal,
-      });
-      const text = await response.text();
-      return { status: response.status, text };
-    } finally {
-      clearTimeout(timer);
-    }
-  };
 }
 
 /** Parse a response body without leaking its content into the error. */
