@@ -9,7 +9,12 @@ import { disconnectRedis } from "../lib/redis.js";
 import { registerGracefulShutdown } from "../lib/shutdown.js";
 import { createAdminApi, createAdminPanel, createPrismaAuditRepository } from "../modules/admin/index.js";
 import type { Logger } from "../ports/logger.js";
-import { createConfigStore, createIngestionModule, createPlatformClients } from "./clients.js";
+import {
+  createConfigStore,
+  createIngestionModule,
+  createPlatformClients,
+  createTriageDependencies,
+} from "./clients.js";
 import { createHttpServer } from "./http.js";
 
 /**
@@ -111,6 +116,7 @@ export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerR
     ingestion: ingestion.services,
     ingestionRepositories: ingestion.repositories,
     ingestionUnitOfWork: ingestion.unitOfWork,
+    triage: createTriageDependencies(),
   });
   const probotMiddlewarePromise = probot ? createNodeMiddleware(appFn, { probot, webhooksPath: "/" }) : undefined;
 

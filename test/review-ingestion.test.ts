@@ -11,6 +11,7 @@ import { createReviewQueue, type ReviewJobPayload } from "../src/modules/ingesti
 import { disconnectDatabase, prisma } from "./helpers/db.js";
 import { testEnv } from "./helpers/env.js";
 import { createTestIngestion } from "./helpers/ingestion.js";
+import { createTestTriage } from "./helpers/triage.js";
 
 /**
  * Ticket 03 integration tests: durable review ingestion.
@@ -190,6 +191,7 @@ function makeTestApp() {
     ingestion: ingestion.services,
     ingestionRepositories: ingestion.repositories,
     ingestionUnitOfWork: ingestion.unitOfWork,
+    triage: createTestTriage(),
   });
 }
 let testApp = makeTestApp();

@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vit
 import { createApp } from "../../src/index.js";
 import { disconnectDatabase } from "../helpers/db.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
+import { createTestTriage } from "../helpers/triage.js";
 
 /**
  * Characterization: issue triage (ARCHITECTURE.md §1.2 triage flow).
@@ -27,11 +28,16 @@ const testIngestion = createTestIngestion({
     close: async () => {},
   },
 });
-const testApp = createApp({
-  ingestion: testIngestion.services,
-  ingestionRepositories: testIngestion.repositories,
-  ingestionUnitOfWork: testIngestion.unitOfWork,
-});
+
+/** A fresh graph per test keeps the lazily resolved provider env isolated. */
+function makeTestApp() {
+  return createApp({
+    ingestion: testIngestion.services,
+    ingestionRepositories: testIngestion.repositories,
+    ingestionUnitOfWork: testIngestion.unitOfWork,
+    triage: createTestTriage(),
+  });
+}
 
 interface CapturedRequest {
   method: string;
@@ -81,7 +87,15 @@ function installFetchStub(): void {
   vi.stubGlobal("fetch", stub);
 }
 
-function issuePayload(overrides: { userType?: string } = {}) {
+function issuePayload(overrides: { userType?: string; pullRequest?: boolean } = {}) {
+  const issue = {
+    number: 5,
+    title: "Crash on startup",
+    body: "The app crashes immediately after install.",
+    state: "open",
+    user: { type: overrides.userType ?? "User", login: "reporter" },
+    ...(overrides.pullRequest ? { pull_request: { url: "https://api.github.com/repos/octo-org/widget/pulls/5" } } : {}),
+  };
   return {
     action: "opened",
     installation: { id: 2 },
@@ -90,13 +104,7 @@ function issuePayload(overrides: { userType?: string } = {}) {
       full_name: "octo-org/widget",
       owner: { login: "octo-org" },
     },
-    issue: {
-      number: 5,
-      title: "Crash on startup",
-      body: "The app crashes immediately after install.",
-      state: "open",
-      user: { type: overrides.userType ?? "User", login: "reporter" },
-    },
+    issue,
   };
 }
 
@@ -111,7 +119,7 @@ function makeProbot(log?: pino.Logger): Probot {
       throttle: { enabled: false },
     })),
   });
-  probot.load(testApp);
+  probot.load(makeTestApp());
   return probot;
 }
 
@@ -131,6 +139,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.GROQ_API_KEY;
+  delete process.env.GROQ_MODEL;
 });
 
 afterAll(async () => {
@@ -145,6 +154,9 @@ describe("issues.opened triage", () => {
 
     const providerCall = captured.find((request) => request.url.origin === new URL(GROQ_URL).origin);
     expect(providerCall).toBeDefined();
+    expect(providerCall!.body.model).toBe("llama-3.3-70b-versatile");
+    expect(providerCall!.body.max_tokens).toBe(1024);
+    expect(providerCall!.body.temperature).toBe(0.2);
     expect(providerCall!.body.messages[1].content).toContain("Issue #5:");
     expect(providerCall!.body.messages[1].content).toContain("Crash on startup");
 
@@ -155,9 +167,29 @@ describe("issues.opened triage", () => {
     expect(posts[0]!.body.body).toContain("human review still required");
   });
 
+  test("uses GROQ_MODEL when configured", async () => {
+    process.env.GROQ_MODEL = "custom-groq-model";
+    const probot = makeProbot(pino({ level: "silent" }));
+    await probot.receive({ name: "issues", payload: issuePayload() });
+    await probot.teardown?.();
+
+    const providerCall = captured.find((request) => request.url.origin === new URL(GROQ_URL).origin);
+    expect(providerCall).toBeDefined();
+    expect(providerCall!.body.model).toBe("custom-groq-model");
+  });
+
   test("bot-authored issues are skipped without calling the provider", async () => {
     const probot = makeProbot(pino({ level: "silent" }));
     await probot.receive({ name: "issues", payload: issuePayload({ userType: "Bot" }) });
+    await probot.teardown?.();
+
+    expect(captured).toHaveLength(0);
+    expect(commentPosts()).toHaveLength(0);
+  });
+
+  test("pull request issues are skipped without calling the provider", async () => {
+    const probot = makeProbot(pino({ level: "silent" }));
+    await probot.receive({ name: "issues", payload: issuePayload({ pullRequest: true }) });
     await probot.teardown?.();
 
     expect(captured).toHaveLength(0);
@@ -182,6 +214,28 @@ describe("issues.opened triage", () => {
     await probot.teardown?.();
 
     expect(captured.some((request) => request.url.origin === new URL(GROQ_URL).origin)).toBe(true);
+    expect(commentPosts()).toHaveLength(0);
+    expect(logs.join("")).toContain("AI issue triage failed");
+  });
+
+  test("a missing GROQ_API_KEY is logged and does not crash the webhook", async () => {
+    delete process.env.GROQ_API_KEY;
+    const logs: string[] = [];
+    const probot = makeProbot(
+      pino(
+        { level: "error" },
+        {
+          write(chunk: string) {
+            logs.push(chunk);
+          },
+        },
+      ),
+    );
+
+    await expect(probot.receive({ name: "issues", payload: issuePayload() })).resolves.toBeUndefined();
+    await probot.teardown?.();
+
+    expect(captured).toHaveLength(0);
     expect(commentPosts()).toHaveLength(0);
     expect(logs.join("")).toContain("AI issue triage failed");
   });

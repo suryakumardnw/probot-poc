@@ -25,7 +25,7 @@ descriptor and are therefore `bootstrap`.
 | `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | `src/{agent,config,controllers,eval,lib,models,observability,services,views}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
+| `legacy` | `src/{agent,config,eval,lib,models,observability}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -90,7 +90,6 @@ removal.
 
 | Path | Removed by |
 |---|---|
-| `src/controllers`, `src/services`, `src/views` | PR 3.7 (triage moves out of the MVC layout) |
 | `src/agent`, `src/models` | PR 3.9 |
 | `src/config`, `src/lib`, `src/observability` | PR 3.10 |
 | `src/eval` | PR 3.11 |
@@ -101,6 +100,8 @@ removal.
 | Allowance | Why it exists | Removed by |
 |---|---|---|
 | `module` -> `src/agent` | Workspace processors and the review engine use the agent runtime types before agent becomes a platform adapter. | PR 3.9 |
+| `module` -> `src/models` | Triage imports the `ModelProvider` contract from `src/models` before it becomes `src/ports/model-provider.ts`. | PR 3.9 |
+| `platform/models` -> `src/models` | The Groq triage provider reuses the OpenAI-compatible adapter until models move under `src/platform/models`. | PR 3.9 |
 | `module` -> `src/config` | Modules use the review schema/loader before config becomes `platform/config`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `module` -> `src/observability` | Modules emit metrics before observability becomes `platform/observability`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
 | `ports` -> `src/config` | `ports/review-config.ts` re-exports `ConfigValidationError` and the `ReviewConfig` type from the concrete loader. | PR 3.10 |
@@ -126,7 +127,6 @@ the allowance.
 | `src/models/**` | PR 3.9; PR 3.12 final |
 | `src/observability/**` | PR 3.10; PR 3.12 final |
 | `src/modules/publishing/**` | PR 3.12 final (model id resolution reads environment) |
-| `src/services/**` | PR 3.7; PR 3.12 final |
 | `src/modules/workspace/**` | PR 3.12 final (token provider reads environment) |
 | `src/scripts/**` | PR 3.11; PR 3.12 final |
 
@@ -150,7 +150,6 @@ Permanent: `src/platform/**`.
 |---|---|
 | `src/modules/admin/**` | PR 3.12 replaces the OAuth client with a platform-owned identity client |
 | `src/modules/knowledge/**` | PR 3.12 replaces the client with a platform-owned client or port |
-| `src/services/**` | PR 3.7 (triage uses the model-provider port) |
 
 ## Negative checks
 

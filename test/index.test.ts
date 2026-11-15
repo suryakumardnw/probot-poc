@@ -2,12 +2,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pino from "pino";
 import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApp } from "../src/index.js";
 import issueOpenedPayload from "./fixtures/issues.opened.json" with { type: "json" };
 import { disconnectDatabase } from "./helpers/db.js";
 import { createTestIngestion } from "./helpers/ingestion.js";
+import { createTestTriage } from "./helpers/triage.js";
 // Requiring our fixtures
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -19,11 +21,6 @@ const testIngestion = createTestIngestion({
     enqueue: async () => ({ id: "test-job" }),
     close: async () => {},
   },
-});
-const testApp = createApp({
-  ingestion: testIngestion.services,
-  ingestionRepositories: testIngestion.repositories,
-  ingestionUnitOfWork: testIngestion.unitOfWork,
 });
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -75,8 +72,18 @@ function createServer() {
   return { stub, captured };
 }
 
+/** A fresh graph per test keeps the lazily resolved provider env isolated. */
+function makeTestApp() {
+  return createApp({
+    ingestion: testIngestion.services,
+    ingestionRepositories: testIngestion.repositories,
+    ingestionUnitOfWork: testIngestion.unitOfWork,
+    triage: createTestTriage(),
+  });
+}
+
 describe("probot-poc app", () => {
-  let probot: any;
+  let probot: Probot;
 
   afterAll(async () => {
     await disconnectDatabase();
@@ -86,6 +93,7 @@ describe("probot-poc app", () => {
     probot = new Probot({
       appId: 123,
       privateKey,
+      log: pino({ level: "silent" }),
       // disable request throttling and retries for testing
       Octokit: ProbotOctokit.defaults((instanceOptions: any) => ({
         ...instanceOptions,
@@ -94,12 +102,13 @@ describe("probot-poc app", () => {
       })),
     });
     // Load our app into probot
-    probot.load(testApp);
+    probot.load(makeTestApp());
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env.GROQ_API_KEY;
+    delete process.env.GROQ_MODEL;
   });
 
   test("posts an AI triage comment when an issue is opened", async () => {
@@ -143,8 +152,15 @@ describe("probot-poc app", () => {
   test("skips triage when GROQ_API_KEY is missing", async () => {
     const { captured } = createServer();
 
-    // The app-level try/catch means the comment is simply never posted;
-    // assert no GitHub comment (and no LLM call) happened.
+    // The triage module's failure boundary logs the provider config error;
+    // the delivery still succeeds and no GitHub comment is posted.
+    await expect(
+      probot.receive({
+        name: "issues",
+        payload: issueOpenedPayload,
+      }),
+    ).resolves.toBeUndefined();
+
     const comment = captured.find((r) => r.url.pathname === "/repos/hiimbex/testing-things/issues/1/comments");
     const llm = captured.find((r) => r.url.origin === new URL(GROQ_URL).origin);
     expect(comment).toBeUndefined();

@@ -16,6 +16,8 @@ import { createIngestionRepositories } from "../modules/ingestion/prisma-ingesti
 import { createIngestionUnitOfWork } from "../modules/ingestion/prisma-ingestion.unit-of-work.js";
 import { createReviewQueue, type BullMqReviewQueue } from "../modules/ingestion/queue.js";
 import { createPublishingRepositories, type PublishingRepositories } from "../modules/publishing/index.js";
+import type { TriageServiceDependencies } from "../modules/triage/index.js";
+import { createGroqTriageProvider } from "../platform/models/groq-triage.js";
 import { systemClock, type Clock } from "../ports/clock.js";
 import type { Logger } from "../ports/logger.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";
@@ -106,6 +108,18 @@ export interface AppServices {
   ingestion: IngestionServices;
   ingestionRepositories: IngestionRepositories;
   ingestionUnitOfWork: IngestionUnitOfWork;
+  triage: TriageServiceDependencies;
+}
+
+/**
+ * Triage provider wiring.
+ *
+ * The provider reads the existing `GROQ_API_KEY` / `GROQ_MODEL` environment
+ * variables and resolves them lazily on the first triage call, so composition
+ * never fails when triage is not configured.
+ */
+export function createTriageDependencies(env: NodeJS.ProcessEnv = process.env): TriageServiceDependencies {
+  return { provider: createGroqTriageProvider({ env }) };
 }
 
 export interface WebhookServices extends AppServices {
@@ -122,6 +136,7 @@ export function createWebhookServices(env: Env): WebhookServices {
     ingestion: module.services,
     ingestionRepositories: module.repositories,
     ingestionUnitOfWork: module.unitOfWork,
+    triage: createTriageDependencies(),
     async close(): Promise<void> {
       await reviewQueue.close();
       await prisma.$disconnect().catch(() => {

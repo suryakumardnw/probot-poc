@@ -10,17 +10,7 @@ import tseslint from "typescript-eslint";
  * `src/modules` or `src/platform` yet. Every path here is listed with its
  * removal PR in docs/module-boundaries.md; PR 3.12 deletes this list.
  */
-const LEGACY_ELEMENT_PATHS = [
-  "src/agent",
-  "src/config",
-  "src/controllers",
-  "src/eval",
-  "src/lib",
-  "src/models",
-  "src/observability",
-  "src/services",
-  "src/views",
-];
+const LEGACY_ELEMENT_PATHS = ["src/agent", "src/config", "src/eval", "src/lib", "src/models", "src/observability"];
 
 /**
  * Temporary `process.env` allowances. `platform/config` owns environment
@@ -57,8 +47,6 @@ const PROCESS_ENV_ALLOWED_FILES = [
   // TODO(PR 3.12): the publishing module still resolves the model id from the
   // environment.
   "src/modules/publishing/**/*.ts",
-  // TODO(PR 3.7; PR 3.12 final): triage services move into a module.
-  "src/services/**/*.ts",
   // TODO(PR 3.12): the workspace module still reads GitHub App credentials
   // from the environment in its token provider.
   "src/modules/workspace/**/*.ts",
@@ -101,8 +89,6 @@ const FETCH_ALLOWED_FILES = [
   // TODO(PR 3.12): the knowledge module fetches its sources directly; replace
   // this with a platform-owned knowledge client.
   "src/modules/knowledge/**/*.ts",
-  // TODO(PR 3.7): triage moves to the model-provider port.
-  "src/services/**/*.ts",
 ];
 
 /**
@@ -269,7 +255,7 @@ export default tseslint.config(
                 to: {
                   element: {
                     type: "legacy",
-                    path: ["src/agent", "src/config", "src/observability"],
+                    path: ["src/agent", "src/config", "src/models", "src/observability"],
                   },
                 },
               },
@@ -278,6 +264,14 @@ export default tseslint.config(
               // Platform adapters may use contracts, ports, and shared only.
               from: { element: { type: "platform" } },
               allow: { to: { element: { type: ["contracts", "ports", "shared"] } } },
+            },
+            {
+              // TODO(PR 3.9): the Groq triage provider reuses the
+              // OpenAI-compatible adapter from `src/models`; PR 3.9 moves that
+              // adapter under `src/platform/models`, making this a sibling
+              // import.
+              from: { element: { type: "platform", fileInternalPath: "models/**" } },
+              allow: { to: { element: { type: "legacy", path: "src/models" } } },
             },
             {
               from: { element: { type: "ports" } },

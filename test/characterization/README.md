@@ -40,7 +40,7 @@ one Postgres/Redis instance and truncates fixture tables between tests.
 | `publishing.test.ts`        | `publishReview` with an injected Octokit + ReviewComment rows                                                                              | Stale head rejects publication, invalid inline position falls back to summary, duplicate summary/comments are not re-published, worker death after `createReview` retries without duplicates, GitHub 5xx retries, 4xx does not (§4.4, §7.4, §13.1)                     | `test/publishing.test.ts`                                                                                                             |
 | `admin-auth.test.ts`        | `createAdminApi` HTTP handler (+ `setGithubFetch`) + AuditLog rows                                                                         | OAuth state/CSRF, session cookie, org membership, allowlist vs role policy, rate limit, audit row, unauthenticated/forbidden responses (§14.2, §15)                                                                                                                    | `test/admin-api.test.ts`                                                                                                              |
 | `worker-shutdown.test.ts`   | `registerGracefulShutdown` child process + real BullMQ worker with `stopReviewWorker` + `orderShutdownSteps`                               | SIGTERM helper waits for an active step within the deadline; forced timeout does not acknowledge unfinished work; worker drains before connection teardown; an active attempt that fails transiently while the worker is closing is retried, never lost (§12.4, §17.3) | `test/logger.test.ts` (`registerGracefulShutdown` registration smoke test)                                                            |
-| `triage.test.ts`            | Probot `issues.opened` handler + global fetch transport                                                                                    | `issues.opened` posts a comment, bot issues are skipped, provider failure is logged without crashing the webhook (§1.2, §6.7)                                                                                                                                          | `test/index.test.ts`                                                                                                                  |
+| `triage.test.ts`            | Probot `issues.opened` handler + global fetch transport                                                                                    | `issues.opened` posts a comment, bot/PR issues are skipped, provider/config failures are logged without crashing the webhook (§1.2, §6.7)                                                                                                                              | `test/index.test.ts`                                                                                                                  |
 
 ## Per-test / per-describe map
 
@@ -126,9 +126,12 @@ one Postgres/Redis instance and truncates fixture tables between tests.
 
 ### `triage.test.ts`
 
-- `issues.opened triage > posts the rendered triage comment …` — human issue posts comment.
+- `issues.opened triage > posts the rendered triage comment …` — human issue posts comment with the preserved model/temperature/token parameters.
+- `issues.opened triage > uses GROQ_MODEL …` — the configured model overrides the default.
 - `issues.opened triage > bot-authored issues …` — bot skip.
+- `issues.opened triage > pull request issues …` — PR-delivered `issues.opened` events are skipped.
 - `issues.opened triage > a provider failure is logged …` — webhook survives provider error.
+- `issues.opened triage > a missing GROQ_API_KEY is logged …` — missing configuration does not crash the webhook.
 
 ## Shared fixtures
 

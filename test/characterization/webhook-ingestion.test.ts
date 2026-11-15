@@ -7,6 +7,7 @@ import { createApp } from "../../src/index.js";
 import { createReviewQueue } from "../../src/modules/ingestion/queue.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
+import { createTestTriage } from "../helpers/triage.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";
 
 /**
@@ -109,6 +110,7 @@ const testApp = createApp({
   ingestion: ingestion.services,
   ingestionRepositories: ingestion.repositories,
   ingestionUnitOfWork: ingestion.unitOfWork,
+  triage: createTestTriage(),
 });
 
 function installFetchStub(): void {
