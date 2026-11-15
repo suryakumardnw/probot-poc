@@ -10,7 +10,7 @@
 #   - GET /readyz reports every dependency as ok;
 #   - the server starts in the degraded (no GitHub App credentials) mode;
 #   - the worker logs readiness with Postgres and Redis ok;
-#   - the worker has a BullMQ consumer connected to the review queue.
+#   - the worker has a BullMQ consumer connected to the review-jobs queue.
 #
 # No real GitHub or model-provider credentials are required: the server's
 # degraded path keeps health/readiness available and the worker only needs
@@ -41,6 +41,7 @@ PROJECT_NAME="${SMOKE_PROJECT_NAME:-probot-smoke-$$}"
 EDGE_NETWORK="${SMOKE_EDGE_NETWORK:-${PROJECT_NAME}-edge}"
 LOG_DIR="${SMOKE_LOG_DIR:-${ROOT_DIR}/test-results/docker-smoke}"
 TIMEOUT_SECONDS="${SMOKE_TIMEOUT:-180}"
+REVIEW_QUEUE_CLIENT_NAME="bull:$(printf 'review-jobs' | base64 | tr -d '\r\n')"
 
 STARTED=0
 CREATED_NETWORK=0
@@ -172,16 +173,33 @@ wait_for_log() {
 wait_for_queue_consumer() {
   local deadline=$((SECONDS + TIMEOUT_SECONDS))
   local clients
+  # BullMQ names a worker's blocking connection after the queue:
+  # "<prefix>:<base64(queue name)>" (optionally ":w:<worker name>"). Matching
+  # the exact review-jobs name avoids counting an unrelated BullMQ consumer.
   while ((SECONDS < deadline)); do
     clients="$(compose exec -T redis redis-cli --raw CLIENT LIST 2>/dev/null || true)"
     if printf '%s\n' "$clients" \
-      | grep -F 'name=bull:' \
+      | grep -F "name=${REVIEW_QUEUE_CLIENT_NAME}" \
       | grep -E 'cmd=(bzpopmin|brpoplpush)' >/dev/null; then
       return 0
     fi
     sleep 1
   done
-  fail "no BullMQ queue consumer connected to the worker within ${TIMEOUT_SECONDS}s"
+  fail "no BullMQ consumer for the review-jobs queue connected within ${TIMEOUT_SECONDS}s"
+}
+
+wait_for_migrate() {
+  local deadline=$((SECONDS + TIMEOUT_SECONDS))
+  local row
+  while ((SECONDS < deadline)); do
+    row="$(compose ps -a --format '{{.Service}}|{{.State}}|{{.ExitCode}}' migrate 2>/dev/null || true)"
+    case "$row" in
+      "migrate|exited|0") return 0 ;;
+      "migrate|exited|"*) fail "migration service failed (${row})" ;;
+    esac
+    sleep 1
+  done
+  fail "migration service did not complete within ${TIMEOUT_SECONDS}s"
 }
 
 mkdir -p "$LOG_DIR"
@@ -210,6 +228,8 @@ if ! compose up -d --no-build postgres redis migrate probot worker; then
   fail "docker compose up failed"
 fi
 
+wait_for_migrate
+
 wait_for_log probot "starting without GitHub webhook processing" "degraded server start"
 wait_for_http_ok "http://127.0.0.1:${PROBOT_PORT}/healthz" "/healthz"
 wait_for_ready "http://127.0.0.1:${PROBOT_PORT}/readyz"
@@ -232,4 +252,4 @@ for service in postgres redis probot worker; do
   fi
 done
 
-log "PASS: /healthz 200, /readyz ok, degraded server start, worker ready and consuming the review queue"
+log "PASS: /healthz 200, /readyz ok, degraded server start, worker ready and consuming review-jobs"

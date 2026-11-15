@@ -41,8 +41,47 @@ jobs:
       - name: Quality metrics
         run: npm run metrics:quality
 
+  unit:
+    name: Unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npm run db:generate
+      # No service containers and no DATABASE_URL/REDIS_URL: this job proves
+      # the unit and contract tiers stay infrastructure-free. The same
+      # tee/pipefail pattern as the integration job preserves exit statuses
+      # and captures logs for the failure artifact.
+      - name: Unit tests
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run test:unit 2>&1 | tee test-results/unit.log
+      - name: Contract tests
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run test:contract 2>&1 | tee test-results/contract.log
+      - name: Upload unit test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-logs
+          path: test-results/
+          if-no-files-found: ignore
+
   test:
     name: Test
+    needs: [quality, unit]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -84,22 +123,11 @@ jobs:
         run: npm ci
       - name: Generate Prisma client
         run: npm run db:generate
-      # Cheapest tiers first: unit and contract need no migrated database, so
-      # a logic or contract failure fails the job before the infrastructure
-      # tiers spend time on migrations and review fixtures. Logs are tee'd so
-      # the failure artifact below includes the full Vitest output.
-      - name: Unit tests
-        run: |
-          mkdir -p test-results
-          set -o pipefail
-          npm run test:unit 2>&1 | tee test-results/unit.log
-      - name: Contract tests
-        run: |
-          mkdir -p test-results
-          set -o pipefail
-          npm run test:contract 2>&1 | tee test-results/contract.log
       - name: Apply database migrations
-        run: npx prisma migrate deploy
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npx prisma migrate deploy 2>&1 | tee test-results/migrate.log
       # The infrastructure tiers share one Postgres/Redis instance and run
       # with a single worker each; keep them in separate steps so a failure
       # names the tier.
@@ -128,7 +156,7 @@ jobs:
 
   docker-smoke:
     name: Docker smoke
-    needs: quality
+    needs: [quality, unit]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -142,7 +170,12 @@ jobs:
       # the worker through the real Compose files. No GitHub/model credentials
       # are configured; the server must reach health/readiness in its degraded
       # mode and the worker must connect to the review queue.
+      #
+      # The step timeout is lower than the job timeout so a hung smoke run
+      # fails the step first and the `if: failure()` artifact upload still
+      # executes.
       - name: Run Docker Compose smoke test
+        timeout-minutes: 25
         run: bash scripts/smoke/docker-smoke.sh
       - name: Upload smoke logs
         if: failure()

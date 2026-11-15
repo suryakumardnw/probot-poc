@@ -47,4 +47,4 @@ involved. -->
 - [ ] Tests cover the change, and any new infrastructure dependency is explicit.
 - [ ] This PR is one intent; refactors and behavior changes are separate.
 - [ ] Any disabled lint rule is documented with a TODO and a follow-up PR.
-- [ ] Branch protection requires the `Quality`, `Test`, `Commitlint`, and `Security` checks before merge.
+- [ ] Branch protection requires the `Quality`, `Unit`, `Test`, `Docker smoke`, `Commitlint`, and `Security` checks before merge.
