@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { classifyQueueFailure, DEFAULT_RETRY_POLICY_CONFIG } from "../../src/observability/retry.js";
 import {
   createAgentRuntime,
   OpenCodeAgentRuntime,
@@ -7,6 +6,7 @@ import {
   type AgentRuntimeConfigSource,
 } from "../../src/platform/agents/index.js";
 import { AgentRuntimeError, AppError, ModelProviderError, type AgentErrorCode } from "../../src/shared/errors/index.js";
+import { classifyQueueFailure, DEFAULT_RETRY_POLICY_CONFIG } from "../../src/shared/retry.js";
 
 /**
  * Characterization tests for the agent/model boundary (PR 3.9).

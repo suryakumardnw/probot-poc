@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApp } from "../../src/index.js";
-import { createReviewQueue } from "../../src/modules/ingestion/queue.js";
+import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
 import { createTestTriage } from "../helpers/triage.js";
@@ -111,6 +111,7 @@ const testApp = createApp({
   ingestionRepositories: ingestion.repositories,
   ingestionUnitOfWork: ingestion.unitOfWork,
   triage: createTestTriage(),
+  config: ingestion.config,
 });
 
 function installFetchStub(): void {

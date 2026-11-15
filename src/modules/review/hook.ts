@@ -12,11 +12,10 @@
  * Failure semantics: any AgentRuntimeError / ReviewEngineError propagates so
  * the processor fails the review immediately (fail-immediately; §8.4).
  */
-import type { ReviewConfig } from "../../config/review-schema.js";
-import { recordProviderCall, recordReviewFindings } from "../../observability/metrics.js";
-import { endSpan, reviewSpanAttributes, startSpan } from "../../observability/tracing.js";
+import type { ReviewConfig } from "../../contracts/config.js";
 import type { AgentRuntime } from "../../ports/agent-runtime.js";
 import type { Logger } from "../../ports/logger.js";
+import { reviewSpanAttributes, type Observability } from "../../ports/observability.js";
 import type { ReviewJobPayload, ReviewStateService } from "../ingestion/index.js";
 import { redactCredentials, type WorkspaceResult } from "../workspace/index.js";
 import { runReview } from "./engine.js";
@@ -26,6 +25,8 @@ export interface ReviewEngineHookDeps {
   runtime: AgentRuntime;
   config: ReviewConfig;
   logger: Logger;
+  /** Metrics/tracing adapter injected by the composition root. */
+  observability: Observability;
   /** Review-state transition boundary (durable, injected by bootstrap). */
   transitionReviewState: ReviewStateService["transitionReviewState"];
 }
@@ -54,20 +55,18 @@ export function createReviewEngineHook(deps: ReviewEngineHookDeps): ReviewEngine
     const reviewId = ctx.payload.reviewId;
     await deps.transitionReviewState(reviewId, "investigating");
 
-    const span = startSpan("agent.started", {
-      attributes: {
-        ...reviewSpanAttributes({
-          review_id: reviewId,
-          repository: ctx.payload.repositoryFullName,
-          pull_request_number: ctx.payload.pullRequestNumber,
-          head_sha: ctx.payload.headSha,
-        }),
-        "agent.runtime": deps.config.agent.runtime.type,
-      },
+    const span = deps.observability.tracing.startSpan("agent.started", {
+      ...reviewSpanAttributes({
+        review_id: reviewId,
+        repository: ctx.payload.repositoryFullName,
+        pull_request_number: ctx.payload.pullRequestNumber,
+        head_sha: ctx.payload.headSha,
+      }),
+      "agent.runtime": deps.config.agent.runtime.type,
     });
 
-    const modelSpan = startSpan("model.request", {
-      attributes: { "agent.runtime": deps.config.agent.runtime.type },
+    const modelSpan = deps.observability.tracing.startSpan("model.request", {
+      "agent.runtime": deps.config.agent.runtime.type,
     });
 
     let output;
@@ -85,27 +84,27 @@ export function createReviewEngineHook(deps: ReviewEngineHookDeps): ReviewEngine
         { runtime: deps.runtime, config: deps.config },
       );
     } catch (error) {
-      endSpan(modelSpan, error);
-      endSpan(span, error);
+      modelSpan.end(error);
+      span.end(error);
       throw error;
     }
-    endSpan(modelSpan);
+    modelSpan.end();
     await deps.transitionReviewState(reviewId, "validating");
 
     // Ticket 12: provider latency / token usage metrics, one record per
     // model call reported by the engine.
     for (const call of output.meta.usage.modelCalls) {
-      recordProviderCall({
+      deps.observability.metrics.recordProviderCall({
         durationMs: call.durationMs,
         inputTokens: call.inputTokens,
         outputTokens: call.outputTokens,
       });
     }
-    recordReviewFindings({
+    deps.observability.metrics.recordReviewFindings({
       findings: output.result.findings,
       uncertainCount: output.result.uncertainFindings.length,
     });
-    endSpan(span);
+    span.end();
 
     // Redacted, secret-free run summary. Findings are persisted by
     // ticket 08; publication is ticket 09.

@@ -13,7 +13,7 @@
  * The timeout mode never resolves the active job, so only the helper's
  * deadline can end the process.
  */
-import { registerGracefulShutdown } from "../../src/lib/shutdown.ts";
+import { registerGracefulShutdown } from "../../src/platform/shutdown.ts";
 
 const mode = process.argv[2] ?? "complete";
 

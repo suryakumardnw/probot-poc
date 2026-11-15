@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG_PATH, loadReviewConfig, redactConfiguration } from "../config/review-loader.js";
+import { DEFAULT_CONFIG_PATH, loadReviewConfig, redactConfiguration } from "../platform/config/review-loader.js";
 
 /**
  * Dry-run CLI: npm run config:dry-run [-- <path-to-review.json>]

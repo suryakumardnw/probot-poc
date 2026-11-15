@@ -1,6 +1,6 @@
 import { Redis } from "ioredis";
-import type { Env } from "../config/env.js";
-import type { DependencyCheck } from "./prisma.js";
+import type { Env } from "./config/env.js";
+import type { DependencyCheck } from "./db/prisma.js";
 
 /**
  * Redis connectivity via ioredis.

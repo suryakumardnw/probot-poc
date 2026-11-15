@@ -29,6 +29,7 @@ import {
   CloneFailedError,
   DiffFailedError,
 } from "../src/modules/workspace/workspace.js";
+import { createObservability } from "../src/platform/observability/index.js";
 import { AgentRuntimeError } from "../src/shared/errors/index.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { createTestReviewState } from "./helpers/ingestion.js";
@@ -544,6 +545,7 @@ describe("worker processor", () => {
       repositories: createIngestionRepositories(prisma),
       service,
       logger: logger as unknown as ProcessReviewJobDeps["logger"],
+      observability: createObservability(),
       transitionReviewState: createTestReviewState().transitionReviewState,
       concurrency: 1,
     };

@@ -23,7 +23,7 @@
  * roll back together. Fingerprinting and validation stay pure.
  */
 
-import type { ReviewConfig } from "../../config/review-schema.js";
+import type { ReviewConfig } from "../../contracts/config.js";
 import type { Finding } from "../../modules/review/index.js";
 import type { Logger } from "../../ports/logger.js";
 import {

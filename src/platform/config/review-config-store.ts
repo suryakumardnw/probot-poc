@@ -6,7 +6,7 @@ import type {
   ReviewConfigStore,
   ReviewConfigUpdateResult,
   ReviewConfigValidation,
-} from "../ports/review-config.js";
+} from "../../ports/review-config.js";
 import {
   DEFAULT_CONFIG_PATH,
   LAST_KNOWN_GOOD_SUFFIX,
@@ -23,10 +23,10 @@ import {
 /**
  * Review-config store adapter.
  *
- * Temporary home beside the loader: PR 3.10 moves this file and the loader to
- * `platform/config`. Every method pins the store's path and environment, so
- * callers cannot accidentally read a different file or the ambient process
- * environment.
+ * Pins the store's path and environment, so callers cannot accidentally read a
+ * different file or the ambient process environment. Modules depend on the
+ * `ReviewConfigStore` port; only composition roots and scripts see this
+ * adapter.
  */
 
 export interface ReviewConfigStoreOptions {

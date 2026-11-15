@@ -1,12 +1,6 @@
 import path from "node:path";
 import type { Worker } from "bullmq";
-import { loadEnv, type Env } from "../config/env.js";
-import { createLogger, type PlatformLogger } from "../lib/logger.js";
-import { checkPrisma, disconnectPrisma } from "../lib/prisma.js";
-import { checkRedis, disconnectRedis, waitRedisReady } from "../lib/redis.js";
-import { registerGracefulShutdown, runShutdownSteps, type ShutdownStep } from "../lib/shutdown.js";
 import { reconcileIncompleteReviews } from "../modules/ingestion/index.js";
-import { createWorkerConnection } from "../modules/ingestion/queue.js";
 import {
   ensureKnowledgeSources,
   getKnowledgeSnapshot,
@@ -23,12 +17,19 @@ import {
   stopReviewWorker,
   workspaceDirectorySizeBytes,
 } from "../modules/workspace/index.js";
-import { AlertManager } from "../observability/alerts.js";
-import { startMetricsServer, metricsServerPort } from "../observability/metrics-endpoint.js";
-import { getMetricsRegistry } from "../observability/metrics.js";
-import { retryPolicyConfigFromReviewConfig } from "../observability/retry.js";
 import { createAgentRuntime } from "../platform/agents/index.js";
+import { loadEnv, type Env } from "../platform/config/env.js";
+import { checkPrisma, disconnectPrisma } from "../platform/db/prisma.js";
 import { createGitHubOctokit } from "../platform/github/octokit.js";
+import { createLogger, type PlatformLogger } from "../platform/logger.js";
+import { AlertManager } from "../platform/observability/alerts.js";
+import { createObservability } from "../platform/observability/index.js";
+import { startMetricsServer, metricsServerPort } from "../platform/observability/metrics-endpoint.js";
+import { getMetricsRegistry } from "../platform/observability/metrics.js";
+import { createWorkerConnection } from "../platform/queue/review-queue.js";
+import { checkRedis, disconnectRedis, waitRedisReady } from "../platform/redis.js";
+import { registerGracefulShutdown, runShutdownSteps, type ShutdownStep } from "../platform/shutdown.js";
+import { retryPolicyConfigFromReviewConfig } from "../shared/retry.js";
 import { createConfigStore, createIngestionModule, createPlatformClients, createReviewModule } from "./clients.js";
 
 /**
@@ -56,6 +57,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
   const clients = createPlatformClients(env);
   const workerConnection = createWorkerConnection(env.REDIS_URL);
   const config = createConfigStore(env);
+  const observability = createObservability();
   const ingestion = createIngestionModule({
     prisma: clients.prisma,
     queue: clients.reviewQueue,
@@ -105,6 +107,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
     }),
     config: reviewConfig,
     logger,
+    observability,
     transitionReviewState: ingestion.services.transitionReviewState,
     publishing: review.publishing,
     findings: review.findings,
@@ -203,6 +206,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
           repositories: ingestion.repositories,
           unitOfWork: ingestion.unitOfWork,
           logger,
+          observability,
           queue: clients.reviewQueue.queue,
           staleThresholdMs: Number(process.env.RECOVERY_STALE_THRESHOLD_MS) || undefined,
           // Keep the durable recovery budget aligned with the BullMQ attempt
@@ -371,6 +375,7 @@ export async function createWorkerRuntime(env: Env = loadEnv()): Promise<WorkerR
         repositories: ingestion.repositories,
         service: workspaceService,
         logger,
+        observability,
         transitionReviewState: ingestion.services.transitionReviewState,
         concurrency: reviewConfig.queue.concurrency,
         // Ticket 12 §12.4: retry policy from review.json (queue.retry.*).

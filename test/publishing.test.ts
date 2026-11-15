@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import type pino from "pino";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
+import { reviewConfigSchema, type ReviewConfig } from "../src/contracts/config.js";
+import type { ReviewJobPayload } from "../src/contracts/queue.js";
 import type { StoredFinding } from "../src/modules/findings/index.js";
 import {
   createFindingsDependencies,
@@ -11,7 +12,6 @@ import {
   persistReviewFindings,
   supersedeFindingsForReview,
 } from "../src/modules/findings/index.js";
-import type { ReviewJobPayload } from "../src/modules/ingestion/queue.js";
 import { parseUnifiedDiff, resolveInlinePosition } from "../src/modules/publishing/diff-positions.js";
 import { finalizeReview, type ReviewPipelineDeps } from "../src/modules/publishing/pipeline.js";
 import { createPublishingRepositories } from "../src/modules/publishing/prisma-publishing.repository.js";
@@ -35,6 +35,7 @@ import {
 import type { Finding, FindingEvidence, ReviewResult } from "../src/modules/review/index.js";
 import type { ReviewRunMetadata } from "../src/modules/review/types.js";
 import type { WorkspaceResult } from "../src/modules/workspace/workspace.js";
+import { createObservability } from "../src/platform/observability/index.js";
 import type { AgentRuntime } from "../src/ports/agent-runtime.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { createTestReviewState } from "./helpers/ingestion.js";
@@ -431,6 +432,7 @@ function makeDeps(state: FakeState, overrides: Partial<ReviewPipelineDeps> = {})
     runtime: {} as AgentRuntime,
     config,
     logger: fakeLogger,
+    observability: createObservability(),
     transitionReviewState: createTestReviewState().transitionReviewState,
     publishing,
     findings: createFindingsDependencies(prisma),

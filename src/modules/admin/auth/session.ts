@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import type { Env } from "../../../config/env.js";
+import type { Env } from "../../../contracts/config.js";
 import { safeEqual } from "./csrf.js";
 
 /**

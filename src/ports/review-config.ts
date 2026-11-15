@@ -1,15 +1,14 @@
-import type { ReviewConfig } from "../config/review-schema.js";
+import type { ReviewConfig } from "../contracts/config.js";
 
 /**
  * Review-config store port (ARCHITECTURE.md §11).
  *
  * Admin and ingestion depend on this surface, never on the loader or its file
- * layout. The implementation lives beside the loader for now; PR 3.10 moves it
- * (and the schema) into `platform/config`. Keeping the error class here means
- * callers can branch on validation failures without importing the loader.
+ * layout. The implementation lives in `src/platform/config`; the shared error
+ * lets callers branch on validation failures without importing the loader.
  */
 
-export { ConfigValidationError } from "../config/review-loader.js";
+export { ConfigValidationError } from "../shared/errors/index.js";
 export type { ReviewConfig };
 
 export interface ReviewConfigSnapshot {

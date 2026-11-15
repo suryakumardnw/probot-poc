@@ -1,8 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  CURRENT_SCHEMA_VERSION as shimSchemaVersion,
-  reviewConfigSchema as shimReviewConfigSchema,
-} from "../config/review-schema.js";
+import { CURRENT_SCHEMA_VERSION as shimSchemaVersion, reviewConfigSchema as shimReviewConfigSchema } from "./config.js";
 import { CURRENT_SCHEMA_VERSION, envSchema, reviewConfigSchema } from "./config.js";
 import * as contracts from "./index.js";
 

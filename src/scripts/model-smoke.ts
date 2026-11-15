@@ -17,8 +17,8 @@
  */
 
 import "dotenv/config";
-import { loadEnv } from "../config/env.js";
-import { createLogger } from "../lib/logger.js";
+import { loadEnv } from "../platform/config/env.js";
+import { createLogger } from "../platform/logger.js";
 import { ProviderConfigError } from "../platform/models/index.js";
 import { createOpenAICompatibleProvider } from "../platform/models/openai-compatible.js";
 import { ModelProviderError } from "../shared/errors/index.js";

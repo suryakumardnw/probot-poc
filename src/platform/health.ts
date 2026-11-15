@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Redis } from "ioredis";
-import { checkPrisma } from "./prisma.js";
+import { checkPrisma } from "./db/prisma.js";
 import { checkRedis } from "./redis.js";
 
 /**

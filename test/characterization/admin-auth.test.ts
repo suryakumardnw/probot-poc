@@ -3,9 +3,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
-import { loadEnv, type Env } from "../../src/config/env.js";
-import { createReviewConfigStore } from "../../src/config/review-config-store.js";
-import { DEFAULT_CONFIG_PATH } from "../../src/config/review-loader.js";
 import { adminErrorEnvelopeSchema, type AdminErrorEnvelope } from "../../src/contracts/admin.js";
 import {
   clearOauthStates,
@@ -17,7 +14,10 @@ import {
   setGithubFetch,
   type GithubFetch,
 } from "../../src/modules/admin/index.js";
-import { createReviewQueue } from "../../src/modules/ingestion/queue.js";
+import { loadEnv, type Env } from "../../src/platform/config/env.js";
+import { createReviewConfigStore } from "../../src/platform/config/review-config-store.js";
+import { DEFAULT_CONFIG_PATH } from "../../src/platform/config/review-loader.js";
+import { createReviewQueue } from "../../src/platform/queue/review-queue.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, prisma } from "./support.js";

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createReviewConfigStore } from "../../src/config/review-config-store.js";
+import { createReviewConfigStore } from "../../src/platform/config/review-config-store.js";
 import { ConfigValidationError } from "../../src/ports/review-config.js";
 
 /**

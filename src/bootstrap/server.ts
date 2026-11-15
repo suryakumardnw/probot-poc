@@ -1,13 +1,13 @@
 import type http from "node:http";
 import { createNodeMiddleware, createProbot, type Probot } from "probot";
-import { loadEnv, type Env } from "../config/env.js";
 import { createApp } from "../index.js";
-import { checkDependencies } from "../lib/health.js";
-import { createLogger, type PlatformLogger } from "../lib/logger.js";
-import { disconnectPrisma } from "../lib/prisma.js";
-import { disconnectRedis } from "../lib/redis.js";
-import { registerGracefulShutdown } from "../lib/shutdown.js";
 import { createAdminApi, createAdminPanel, createPrismaAuditRepository } from "../modules/admin/index.js";
+import { loadEnv, type Env } from "../platform/config/env.js";
+import { disconnectPrisma } from "../platform/db/prisma.js";
+import { checkDependencies } from "../platform/health.js";
+import { createLogger, type PlatformLogger } from "../platform/logger.js";
+import { disconnectRedis } from "../platform/redis.js";
+import { registerGracefulShutdown } from "../platform/shutdown.js";
 import type { Logger } from "../ports/logger.js";
 import {
   createConfigStore,
@@ -117,6 +117,7 @@ export async function createServerRuntime(env: Env = loadEnv()): Promise<ServerR
     ingestionRepositories: ingestion.repositories,
     ingestionUnitOfWork: ingestion.unitOfWork,
     triage: createTriageDependencies(),
+    config,
   });
   const probotMiddlewarePromise = probot ? createNodeMiddleware(appFn, { probot, webhooksPath: "/" }) : undefined;
 

@@ -24,7 +24,7 @@ export type AgentErrorCode =
 /**
  * Codes whose disposition is "transient" for the queue classifier. The
  * configuration-aware policy still decides whether a retry is actually
- * allowed and for how many attempts (see `observability/retry.ts`); this only
+ * allowed and for how many attempts (see `shared/retry.ts`); this only
  * preserves the pre-existing §12.4 behavior now that the class is an
  * `AppError`.
  */

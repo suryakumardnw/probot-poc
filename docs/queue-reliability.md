@@ -33,7 +33,7 @@ never create a second queue job for the same review.
 
 ## Retry decision (single decision point)
 
-`classifyQueueFailure` in `src/observability/retry.ts` is the only place that
+`classifyQueueFailure` in `src/shared/retry.ts` is the only place that
 decides whether a failed attempt may retry. It composes the two existing
 classifiers rather than re-implementing them:
 
@@ -129,7 +129,7 @@ is configuration-aware; backoff alignment is a documented follow-up.
 
 ## Graceful shutdown
 
-Shutdown is phase-ordered (`src/lib/shutdown.ts`):
+Shutdown is phase-ordered (`src/platform/shutdown.ts`):
 
 1. **stop-intake** — timers (outbox recovery, reconciliation, alerts, workspace
    sweep) and the metrics endpoint stop producing work.

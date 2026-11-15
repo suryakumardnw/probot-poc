@@ -1,10 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Redis } from "ioredis";
-import type { Env } from "../config/env.js";
-import { createReviewConfigStore } from "../config/review-config-store.js";
-import { createLogger } from "../lib/logger.js";
-import { createPrisma } from "../lib/prisma.js";
-import { createRedis } from "../lib/redis.js";
 import { createFindingsDependencies, type FindingsServiceDependencies } from "../modules/findings/index.js";
 import {
   createIngestionServices,
@@ -14,10 +9,15 @@ import {
 } from "../modules/ingestion/index.js";
 import { createIngestionRepositories } from "../modules/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../modules/ingestion/prisma-ingestion.unit-of-work.js";
-import { createReviewQueue, type BullMqReviewQueue } from "../modules/ingestion/queue.js";
 import { createPublishingRepositories, type PublishingRepositories } from "../modules/publishing/index.js";
 import type { TriageServiceDependencies } from "../modules/triage/index.js";
+import type { Env } from "../platform/config/env.js";
+import { createReviewConfigStore } from "../platform/config/review-config-store.js";
+import { createPrisma } from "../platform/db/prisma.js";
+import { createLogger } from "../platform/logger.js";
 import { createGroqTriageProvider } from "../platform/models/groq-triage.js";
+import { createReviewQueue, type BullMqReviewQueue } from "../platform/queue/review-queue.js";
+import { createRedis } from "../platform/redis.js";
 import { systemClock, type Clock } from "../ports/clock.js";
 import type { Logger } from "../ports/logger.js";
 import type { ReviewConfigStore } from "../ports/review-config.js";
@@ -109,6 +109,7 @@ export interface AppServices {
   ingestionRepositories: IngestionRepositories;
   ingestionUnitOfWork: IngestionUnitOfWork;
   triage: TriageServiceDependencies;
+  config: ReviewConfigStore;
 }
 
 /**
@@ -137,6 +138,7 @@ export function createWebhookServices(env: Env): WebhookServices {
     ingestionRepositories: module.repositories,
     ingestionUnitOfWork: module.unitOfWork,
     triage: createTriageDependencies(),
+    config,
     async close(): Promise<void> {
       await reviewQueue.close();
       await prisma.$disconnect().catch(() => {

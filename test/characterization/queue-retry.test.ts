@@ -1,12 +1,10 @@
 import { once } from "node:events";
 import { UnrecoverableError, type Queue } from "bullmq";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/config/review-loader.js";
-import { disconnectRedis } from "../../src/lib/redis.js";
+import type { ReviewJobPayload } from "../../src/contracts/queue.js";
 import { reconcileIncompleteReviews } from "../../src/modules/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
-import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/modules/ingestion/queue.js";
 import {
   ReviewJobRetryError,
   processReviewJob,
@@ -18,8 +16,12 @@ import {
   type ReviewWorkspaceOperations,
   type WorkspaceResult,
 } from "../../src/modules/workspace/workspace.js";
-import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/observability/retry.js";
+import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../src/platform/config/review-loader.js";
+import { createObservability } from "../../src/platform/observability/index.js";
+import { createReviewQueue, createWorkerConnection } from "../../src/platform/queue/review-queue.js";
+import { disconnectRedis } from "../../src/platform/redis.js";
 import { AgentRuntimeError } from "../../src/shared/errors/index.js";
+import { classifyFailure, retryPolicyConfigFromReviewConfig, retryPolicyFor } from "../../src/shared/retry.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestIngestion, createTestReviewState, silentLogger } from "../helpers/ingestion.js";
 import {
@@ -211,6 +213,7 @@ describe("worker retry execution (§12.4)", () => {
       repositories,
       service,
       logger: silentLogger,
+      observability: createObservability(),
       transitionReviewState: reviewState.transitionReviewState,
       concurrency: 1,
       retryPolicy,
@@ -274,6 +277,7 @@ describe("worker retry execution (§12.4)", () => {
       repositories,
       service,
       logger: silentLogger,
+      observability: createObservability(),
       transitionReviewState: reviewState.transitionReviewState,
       concurrency: 1,
       retryPolicy,
@@ -333,6 +337,7 @@ describe("durable retry decisions (§12.4)", () => {
           repositories,
           service,
           logger: silentLogger,
+          observability: createObservability(),
           concurrency: 1,
           transitionReviewState: reviewState.transitionReviewState,
           retryPolicy,
@@ -374,6 +379,7 @@ describe("durable retry decisions (§12.4)", () => {
           repositories,
           service,
           logger: silentLogger,
+          observability: createObservability(),
           concurrency: 1,
           transitionReviewState: reviewState.transitionReviewState,
           retryPolicy,
@@ -413,6 +419,7 @@ describe("durable retry decisions (§12.4)", () => {
           repositories,
           service,
           logger: silentLogger,
+          observability: createObservability(),
           concurrency: 1,
           transitionReviewState: reviewState.transitionReviewState,
           retryPolicy,
@@ -452,6 +459,7 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
       repositories,
       unitOfWork,
       logger: silentLogger,
+      observability: createObservability(),
       queue: fakeQueue,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
@@ -479,6 +487,7 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
       repositories,
       unitOfWork,
       logger: silentLogger,
+      observability: createObservability(),
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
     });
@@ -504,6 +513,7 @@ describe("failed-job recovery (§12.4, §17.3)", () => {
       repositories,
       unitOfWork,
       logger: silentLogger,
+      observability: createObservability(),
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
     });

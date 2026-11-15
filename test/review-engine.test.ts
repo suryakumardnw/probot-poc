@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
+import { reviewConfigSchema, type ReviewConfig } from "../src/contracts/config.js";
 import { reviewResultSchema, analysisOutputSchema } from "../src/contracts/review.js";
 import { scoreComplexity, parseDiffStats } from "../src/modules/review/complexity.js";
 import { runReview } from "../src/modules/review/engine.js";

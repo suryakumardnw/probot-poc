@@ -1,4 +1,11 @@
-import { SpanStatusCode, trace, type Attributes, type Span } from "@opentelemetry/api";
+import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
+import {
+  reviewSpanAttributes,
+  type ReviewSpan,
+  type ReviewSpanAttributes,
+  type ReviewSpanName,
+  type ReviewTracing,
+} from "../../ports/observability.js";
 
 /**
  * OpenTelemetry tracing for the review lifecycle (§16.3).
@@ -22,23 +29,15 @@ import { SpanStatusCode, trace, type Attributes, type Span } from "@opentelemetr
 
 export const TRACER_NAME = "ai-pr-reviewer";
 
-export type ReviewSpanName =
-  | "webhook.received"
-  | "job.created"
-  | "worker.started"
-  | "clone.completed"
-  | "agent.started"
-  | "model.request"
-  | "finding.validation"
-  | "github.publishing"
-  | "review.process";
+export { reviewSpanAttributes };
+export type { ReviewSpanName };
 
 export function getTracer() {
   return trace.getTracer(TRACER_NAME);
 }
 
 export interface SpanOptions {
-  attributes?: Attributes;
+  attributes?: ReviewSpanAttributes;
 }
 
 /** Start (and return) a span on the always-active tracer. */
@@ -88,29 +87,19 @@ export async function withSpanAsync<T>(
   }
 }
 
-/** Standard review-correlation span attributes (§16.3 lifecycle). */
-export function reviewSpanAttributes(corr: {
-  review_id?: string;
-  job_id?: string;
-  repository?: string;
-  pull_request_number?: number;
-  head_sha?: string;
-}): Attributes {
-  const attrs: Attributes = {};
-  if (corr.review_id) {
-    attrs["review.id"] = corr.review_id;
+class OpenTelemetryReviewSpan implements ReviewSpan {
+  constructor(private readonly span: Span) {}
+
+  end(error?: unknown): void {
+    endSpan(this.span, error);
   }
-  if (corr.job_id) {
-    attrs["job.id"] = corr.job_id;
-  }
-  if (corr.repository) {
-    attrs["repository"] = corr.repository;
-  }
-  if (typeof corr.pull_request_number === "number") {
-    attrs["pull_request.number"] = corr.pull_request_number;
-  }
-  if (corr.head_sha) {
-    attrs["head_sha"] = corr.head_sha;
-  }
-  return attrs;
+}
+
+/** Port adapter used by application modules (injected by the composition root). */
+export function createReviewTracing(): ReviewTracing {
+  return {
+    startSpan(name: ReviewSpanName, attributes?: ReviewSpanAttributes): ReviewSpan {
+      return new OpenTelemetryReviewSpan(startSpan(name, { attributes }));
+    },
+  };
 }

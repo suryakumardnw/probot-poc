@@ -1,4 +1,3 @@
-import { createReviewConfigStore } from "../../src/config/review-config-store.js";
 import {
   createIngestionServices,
   createReviewStateService,
@@ -9,7 +8,8 @@ import {
 } from "../../src/modules/ingestion/index.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
-import { createReviewQueue, type BullMqReviewQueue } from "../../src/modules/ingestion/queue.js";
+import { createReviewConfigStore } from "../../src/platform/config/review-config-store.js";
+import { createReviewQueue, type BullMqReviewQueue } from "../../src/platform/queue/review-queue.js";
 import { systemClock, type Clock } from "../../src/ports/clock.js";
 import type { Logger } from "../../src/ports/logger.js";
 import type { ReviewConfigStore } from "../../src/ports/review-config.js";
@@ -46,6 +46,7 @@ export interface TestIngestion {
   services: IngestionServices;
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
+  config: ReviewConfigStore;
   reviewQueue?: BullMqReviewQueue;
   close(): Promise<void>;
 }
@@ -72,6 +73,7 @@ export function createTestIngestion(options: TestIngestionOptions = {}): TestIng
     services,
     repositories,
     unitOfWork,
+    config,
     ...(reviewQueue ? { reviewQueue } : {}),
     async close(): Promise<void> {
       await reviewQueue?.close();

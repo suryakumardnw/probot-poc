@@ -25,7 +25,7 @@ descriptor and are therefore `bootstrap`.
 | `shared` | `src/shared` | Dependency-free helpers and the `AppError` family. |
 | `script` | `src/scripts`, `scripts` | Tooling and CLIs. |
 | `test` | `test` | Test suites and helpers. |
-| `legacy` | `src/{config,eval,lib,observability}` | **Temporary.** Directories not moved yet. Deleted in PR 3.12. |
+| `legacy` | `src/eval` | **Temporary.** Directory not moved yet. Deleted in PR 3.12. |
 
 Co-located `**/*.test.ts` files are also categorized as `test` files, so tests
 inside `src/contracts` or `src/platform` may import fixtures and test utilities.
@@ -90,7 +90,6 @@ removal.
 
 | Path | Removed by |
 |---|---|
-| `src/config`, `src/lib`, `src/observability` | PR 3.10 |
 | `src/eval` | PR 3.11 |
 | The `legacy` type and this table | PR 3.12 |
 
@@ -98,9 +97,6 @@ removal.
 
 | Allowance | Why it exists | Removed by |
 |---|---|---|
-| `module` -> `src/config` | Modules use the review schema/loader before config becomes `platform/config`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
-| `module` -> `src/observability` | Modules emit metrics before observability becomes `platform/observability`; module -> platform is forbidden, so this must become a port. | PR 3.10 |
-| `ports` -> `src/config` | `ports/review-config.ts` re-exports `ConfigValidationError` and the `ReviewConfig` type from the concrete loader. | PR 3.10 |
 | `contracts/review.ts` -> `src/modules/review` | `FINDING_CATEGORIES` still lives in the review module's `types.ts`. The move PR is move-only, so PR 3.12 moves the constant into `contracts/review.ts`. | PR 3.12 |
 | `modules/admin` -> `platform/http/error-mapper.ts` | The admin API and panel render failures through the platform HTTP projection. PR 3.12 injects the projection from the composition root or makes it a shared helper. | PR 3.12 |
 
@@ -114,14 +110,13 @@ the allowance.
 
 | Temporary path | Removed by |
 |---|---|
-| `src/config/**` | PR 3.10; PR 3.12 final |
-| `src/bootstrap/**` | PR 3.10; PR 3.12 final |
+| `src/bootstrap/**` | PR 3.12 final (composition roots read operational overrides) |
 | `src/modules/admin/**` | PR 3.12 final (development-only login reads `ADMIN_DEV_LOGIN`) |
 | `src/modules/execution/**` | PR 3.12 final (sandbox and process environment reads) |
 | `src/modules/knowledge/**` | PR 3.12 final (GitHub token reads) |
 | `src/platform/agents/**` | PR 3.12 final (runtime operational overrides) |
 | `src/platform/models/**` | PR 3.12 final (provider API key and model id) |
-| `src/observability/**` | PR 3.10; PR 3.12 final |
+| `src/platform/observability/**` | PR 3.12 final (alert thresholds load from environment overrides) |
 | `src/modules/publishing/**` | PR 3.12 final (model id resolution reads environment) |
 | `src/modules/workspace/**` | PR 3.12 final (token provider reads environment) |
 | `src/scripts/**` | PR 3.11; PR 3.12 final |
@@ -132,8 +127,8 @@ Permanent: `src/**/*.repository.ts`, `src/platform/db/**`, `test/**`.
 
 | Temporary file | Removed by |
 |---|---|
-| `src/lib/prisma.ts`, `src/lib/health.ts` | PR 3.10 (become `platform/db` and `platform/health`) |
-| `src/bootstrap/clients.ts` | PR 3.10 (composition root consumes platform factories); PR 3.12 removes any direct vendor type |
+| `src/platform/health.ts` | PR 3.12 removes the vendor type from the readiness check |
+| `src/bootstrap/clients.ts` | PR 3.12 removes any direct vendor type; the composition root already consumes the platform factories |
 | `src/modules/knowledge/materialize.ts` | PR 3.12 replaces the vendor type with a port |
 | `src/modules/execution/service.ts` | PR 3.12 replaces the vendor type with a port |
 | `src/eval/persistence.ts` | PR 3.11 moves eval under scripts; PR 3.12 removes the vendor type |
@@ -158,7 +153,7 @@ on it, and delete it:
 | A module imports another module's non-`index.ts` file. | `boundaries/dependencies` |
 | A module imports `../../platform/...`. | `boundaries/dependencies` |
 | `src/contracts/...` imports `node:fs` or a non-Zod package. | `boundaries/dependencies` |
-| `src/shared/...` imports `../lib/...`. | `boundaries/dependencies` |
+| `src/shared/...` imports `../platform/...`. | `boundaries/dependencies` |
 | A non-repository file imports `@prisma/client`. | `no-restricted-imports` |
 | A non-repository file imports `@prisma/client/runtime/library`. | `no-restricted-imports` (deep-import pattern) |
 | A non-platform file reads `process.env`. | `no-restricted-syntax` |

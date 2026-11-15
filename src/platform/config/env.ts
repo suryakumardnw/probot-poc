@@ -1,12 +1,11 @@
-import { envSchema, type Env } from "../contracts/config.js";
+import { envSchema, type Env } from "../../contracts/config.js";
 
 /**
  * Environment configuration loading.
  *
- * The schema lives in `src/contracts/config.ts` (moved in PR 1.5); this module
- * keeps the loader so existing imports keep working until Phase 3. Secrets are
- * read from the environment and are NEVER logged: validation reports variable
- * *names* only.
+ * The schema lives in `src/contracts/config.ts`; this adapter owns reading the
+ * process environment. Secrets are read from the environment and are NEVER
+ * logged: validation reports variable *names* only.
  */
 
 export type { Env };

@@ -9,7 +9,7 @@ import { z } from "zod";
  *
  * This module is a contract only: it describes shapes and defaults. Loading,
  * environment-reference resolution, secret scanning and last-known-good
- * handling stay in `src/config/` until the platform move in Phase 3.
+ * handling live in `src/platform/config/`.
  *
  * Security invariants enforced here:
  * - `schemaVersion` must be an explicitly supported version.

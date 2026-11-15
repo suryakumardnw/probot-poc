@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { z } from "zod";
-import { getPath, setPath } from "../shared/object-path.js";
-import type { ReviewConfig } from "./review-schema.js";
-import { CURRENT_SCHEMA_VERSION, reviewConfigSchema } from "./review-schema.js";
+import { CURRENT_SCHEMA_VERSION, reviewConfigSchema, type ReviewConfig } from "../../contracts/config.js";
+import { ConfigValidationError } from "../../shared/errors/index.js";
+import { getPath, setPath } from "../../shared/object-path.js";
 
-export { getPath, setPath } from "../shared/object-path.js";
+export { ConfigValidationError } from "../../shared/errors/index.js";
+export { getPath, setPath } from "../../shared/object-path.js";
 
 /**
  * Central configuration loader (ARCHITECTURE.md §11.2, §11.4, §3.2).
@@ -30,13 +31,6 @@ export const LAST_KNOWN_GOOD_SUFFIX = ".last-known-good.json";
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
-
-export class ConfigValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ConfigValidationError";
-  }
-}
 
 export class MissingEnvVarError extends ConfigValidationError {
   readonly variable: string;

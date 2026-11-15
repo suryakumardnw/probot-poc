@@ -1,4 +1,4 @@
-import { createPrisma, disconnectPrisma } from "../../src/lib/prisma.js";
+import { createPrisma, disconnectPrisma } from "../../src/platform/db/prisma.js";
 import { testEnv } from "./env.js";
 
 /**

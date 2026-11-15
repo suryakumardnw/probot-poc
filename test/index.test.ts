@@ -79,6 +79,7 @@ function makeTestApp() {
     ingestionRepositories: testIngestion.repositories,
     ingestionUnitOfWork: testIngestion.unitOfWork,
     triage: createTestTriage(),
+    config: testIngestion.config,
   });
 }
 

@@ -4,10 +4,11 @@ import { fileURLToPath } from "node:url";
 import type { ReviewState } from "@prisma/client";
 import { Probot, ProbotOctokit } from "probot";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { ReviewJobPayload } from "../src/contracts/queue.js";
 import { createApp } from "../src/index.js";
-import { createRedis, checkRedis, disconnectRedis } from "../src/lib/redis.js";
 import { InvalidStateTransitionError } from "../src/modules/ingestion/index.js";
-import { createReviewQueue, type ReviewJobPayload } from "../src/modules/ingestion/queue.js";
+import { createReviewQueue } from "../src/platform/queue/review-queue.js";
+import { createRedis, checkRedis, disconnectRedis } from "../src/platform/redis.js";
 import { disconnectDatabase, prisma } from "./helpers/db.js";
 import { testEnv } from "./helpers/env.js";
 import { createTestIngestion } from "./helpers/ingestion.js";
@@ -39,8 +40,8 @@ process.env.MODEL_BASE_URL ??= "http://localhost:8000";
  * the rest of the time so all other tests exercise the real configuration.
  */
 const configPathHolder = vi.hoisted(() => ({ path: undefined as string | undefined }));
-vi.mock("../src/config/review-loader.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/config/review-loader.js")>();
+vi.mock("../src/platform/config/review-loader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/platform/config/review-loader.js")>();
   return {
     ...actual,
     loadReviewConfig: ((path: string, ...rest: unknown[]) =>
@@ -192,6 +193,7 @@ function makeTestApp() {
     ingestionRepositories: ingestion.repositories,
     ingestionUnitOfWork: ingestion.unitOfWork,
     triage: createTestTriage(),
+    config: ingestion.config,
   });
 }
 let testApp = makeTestApp();

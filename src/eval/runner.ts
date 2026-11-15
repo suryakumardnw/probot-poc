@@ -9,7 +9,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { ReviewConfig } from "../config/review-schema.js";
+import type { ReviewConfig } from "../contracts/config.js";
 import { runReview, type RunReviewOutput } from "../modules/review/index.js";
 import type { WorkspaceResult } from "../modules/workspace/index.js";
 import type { AgentRuntime } from "../ports/agent-runtime.js";

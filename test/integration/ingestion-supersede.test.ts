@@ -1,10 +1,10 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { createReviewConfigStore } from "../../src/config/review-config-store.js";
 import { createIngestionService, type IngestReviewRequestInput } from "../../src/modules/ingestion/index.js";
 import type { ReviewWithJob } from "../../src/modules/ingestion/ingestion.repository.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "../../src/modules/ingestion/ingestion.unit-of-work.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
+import { createReviewConfigStore } from "../../src/platform/config/review-config-store.js";
 import { cleanDatabase, seedReviewChain } from "../characterization/support.js";
 import { disconnectDatabase, prisma } from "../helpers/db.js";
 import { silentLogger } from "../helpers/ingestion.js";

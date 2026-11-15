@@ -7,6 +7,7 @@
  */
 
 import type { Probot } from "probot";
+import type { ReviewConfigStore } from "../../ports/review-config.js";
 import type { IngestionRepositories, IngestionService, IngestionUnitOfWork } from "../ingestion/index.js";
 import { registerInstallationHandlers } from "./installation.js";
 import { registerIssueCommentHandlers } from "./issue-comment.js";
@@ -20,6 +21,7 @@ export interface WebhookDependencies {
   ingestion: IngestionService;
   repositories: IngestionRepositories;
   unitOfWork: IngestionUnitOfWork;
+  config: ReviewConfigStore;
 }
 
 /**
@@ -30,6 +32,10 @@ export interface WebhookDependencies {
  */
 export function registerWebhooks(app: Probot, deps: WebhookDependencies): void {
   registerPullRequestHandlers(app, { ingestion: deps.ingestion });
-  registerIssueCommentHandlers(app, { ingestion: deps.ingestion, repositories: deps.repositories });
+  registerIssueCommentHandlers(app, {
+    ingestion: deps.ingestion,
+    repositories: deps.repositories,
+    config: deps.config,
+  });
   registerInstallationHandlers(app, { unitOfWork: deps.unitOfWork });
 }

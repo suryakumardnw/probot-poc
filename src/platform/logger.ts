@@ -1,6 +1,6 @@
 import pino from "pino";
-import type { Env } from "../config/env.js";
 import type { LogContext, Logger } from "../ports/logger.js";
+import type { Env } from "./config/env.js";
 
 /**
  * Structured logging via Pino.

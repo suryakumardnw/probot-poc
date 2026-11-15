@@ -1,4 +1,4 @@
-import type { FindingSeverity } from "../modules/review/index.js";
+import type { FindingSeverityValue } from "../../contracts/review.js";
 
 /**
  * Minimal hand-rolled Prometheus-compatible metrics registry (§16.2).
@@ -8,7 +8,7 @@ import type { FindingSeverity } from "../modules/review/index.js";
  * infrastructure — the render() output is plain Prometheus text format.
  */
 
-const SEVERITIES: readonly FindingSeverity[] = ["critical", "high", "medium", "low", "informational"];
+const SEVERITIES: readonly FindingSeverityValue[] = ["critical", "high", "medium", "low", "informational"];
 
 class Counter {
   readonly values = new Map<string, number>();

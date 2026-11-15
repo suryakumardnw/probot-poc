@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { loadEnv } from "../src/config/env.js";
-import { createLogger, logRedactPaths } from "../src/lib/logger.js";
-import { registerGracefulShutdown, type ShutdownStep } from "../src/lib/shutdown.js";
+import { loadEnv } from "../src/platform/config/env.js";
+import { createLogger, logRedactPaths } from "../src/platform/logger.js";
+import { registerGracefulShutdown, type ShutdownStep } from "../src/platform/shutdown.js";
 
 describe("pino logger", () => {
   test("is configured for structured JSON output", () => {

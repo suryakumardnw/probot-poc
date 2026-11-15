@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { checkDependencies } from "../src/lib/health.js";
-import { createRedis, disconnectRedis } from "../src/lib/redis.js";
+import { checkDependencies } from "../src/platform/health.js";
+import { createRedis, disconnectRedis } from "../src/platform/redis.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 import { testEnv } from "./helpers/env.js";
 

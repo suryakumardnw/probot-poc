@@ -31,7 +31,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { ReviewConfig } from "../../config/review-schema.js";
+import type { ReviewConfig } from "../../contracts/config.js";
 import { analysisOutputSchema, findingSchema, reviewResultSchema } from "../../contracts/review.js";
 import type { ParsedAnalysisOutput } from "../../contracts/review.js";
 import type { AgentRuntime, AgentSession, AgentTask } from "../../ports/agent-runtime.js";

@@ -18,9 +18,9 @@
  * | unknown                  | no retry                                   |
  */
 
-import type { ReviewConfig } from "../config/review-schema.js";
+import type { ReviewConfig } from "../contracts/config.js";
 import { ERROR_CODES } from "../contracts/errors.js";
-import { AppError, classifyAppFailure } from "../shared/errors/index.js";
+import { AppError, classifyAppFailure } from "./errors/index.js";
 
 export type FailureClass =
   | "github_api_transient"

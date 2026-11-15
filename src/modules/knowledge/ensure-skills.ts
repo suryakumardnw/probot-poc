@@ -31,7 +31,7 @@
  */
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type { ReviewConfig } from "../../config/review-schema.js";
+import type { ReviewConfig } from "../../contracts/config.js";
 import { knowledgeManifestSchema, type GitHubTreeEntry, type KnowledgeManifest } from "../../contracts/knowledge.js";
 import type { Logger } from "../../ports/logger.js";
 import {

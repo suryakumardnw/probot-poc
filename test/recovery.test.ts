@@ -2,6 +2,7 @@ import type { Queue } from "bullmq";
 import pino from "pino";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { reviewJobPayloadSchema } from "../src/contracts/queue.js";
+import type { ReviewJobPayload } from "../src/contracts/queue.js";
 import {
   REDIS_PERSISTENCE_COMMANDLINE,
   reconcileIncompleteReviews,
@@ -9,8 +10,8 @@ import {
 } from "../src/modules/ingestion/index.js";
 import { createIngestionRepositories } from "../src/modules/ingestion/prisma-ingestion.repository.js";
 import { createIngestionUnitOfWork } from "../src/modules/ingestion/prisma-ingestion.unit-of-work.js";
-import type { ReviewJobPayload } from "../src/modules/ingestion/queue.js";
-import { getMetricsRegistry } from "../src/observability/metrics.js";
+import { createObservability } from "../src/platform/observability/index.js";
+import { getMetricsRegistry } from "../src/platform/observability/metrics.js";
 import { prisma, disconnectDatabase } from "./helpers/db.js";
 
 /**
@@ -150,6 +151,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
@@ -177,6 +179,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       staleThresholdMs: 15 * 60_000,
     });
@@ -203,6 +206,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       staleThresholdMs: 15 * 60_000,
     });
@@ -236,6 +240,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       staleThresholdMs: 15 * 60_000,
     });
@@ -265,6 +270,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
@@ -284,6 +290,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
@@ -302,6 +309,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       staleThresholdMs: 15 * 60_000,
       maxJobAttempts: 3,
@@ -326,6 +334,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       policy: "fail",
       staleThresholdMs: 15 * 60_000,
@@ -348,6 +357,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       queue,
       staleThresholdMs: 15 * 60_000,
     });
@@ -366,6 +376,7 @@ describe("reconciliation", () => {
       repositories,
       unitOfWork,
       logger,
+      observability: createObservability(),
       policy: "fail",
       staleThresholdMs: 15 * 60_000,
       sweepExpiredWorkspaces: async () => {
@@ -387,6 +398,7 @@ describe("reconciliation", () => {
       repositories: createIngestionRepositories(brokenPrisma),
       unitOfWork: createIngestionUnitOfWork(brokenPrisma),
       logger,
+      observability: createObservability(),
       staleThresholdMs: 15 * 60_000,
     });
     expect(summary).toEqual({

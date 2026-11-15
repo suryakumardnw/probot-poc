@@ -1,37 +1,38 @@
 import http from "node:http";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { reviewConfigSchema } from "../src/config/review-schema.js";
+import { reviewConfigSchema } from "../src/contracts/config.js";
 import { ReviewRetrievalError } from "../src/modules/workspace/workspace.js";
-import { AlertManager, loadAlertThresholds, type AlertSignal } from "../src/observability/alerts.js";
-import {
-  createReviewLogger,
-  withRuntimeIdentity,
-  startStage,
-  type ReviewCorrelation,
-} from "../src/observability/correlation.js";
+import { AlertManager, loadAlertThresholds, type AlertSignal } from "../src/platform/observability/alerts.js";
+import { createObservability } from "../src/platform/observability/index.js";
 import {
   metricsHandler,
   startMetricsServer,
   metricsServerPort,
   METRICS_CONTENT_TYPE,
-} from "../src/observability/metrics-endpoint.js";
+} from "../src/platform/observability/metrics-endpoint.js";
 import {
   MetricsRegistry,
   getMetricsRegistry,
   setMetricsRegistry,
   recordProviderCall,
   recordReviewFindings,
-} from "../src/observability/metrics.js";
+} from "../src/platform/observability/metrics.js";
+import { startSpan, endSpan, reviewSpanAttributes, withSpanSync } from "../src/platform/observability/tracing.js";
+import {
+  createReviewLogger,
+  withRuntimeIdentity,
+  startStage,
+  type ReviewCorrelation,
+} from "../src/ports/review-logging.js";
+import { AgentRuntimeError, ProviderError, RateLimitError, ValidationError } from "../src/shared/errors/index.js";
 import {
   classifyFailure,
   classifyQueueFailure,
   retryPolicyFor,
   DEFAULT_RETRY_POLICY_CONFIG,
   retryPolicyConfigFromReviewConfig,
-} from "../src/observability/retry.js";
-import { startSpan, endSpan, reviewSpanAttributes, withSpanSync } from "../src/observability/tracing.js";
-import { AgentRuntimeError, ProviderError, RateLimitError, ValidationError } from "../src/shared/errors/index.js";
+} from "../src/shared/retry.js";
 
 /**
  * Ticket 12 unit tests: metrics registry, correlation logging, tracing,
@@ -112,6 +113,38 @@ describe("MetricsRegistry", () => {
 
   test("getMetricsRegistry returns a stable singleton", () => {
     expect(getMetricsRegistry()).toBe(getMetricsRegistry());
+  });
+
+  test("observability port adapter records through the singleton registry", () => {
+    const { metrics } = createObservability();
+    metrics.recordReviewStarted();
+    metrics.recordReviewCompleted("processed");
+    metrics.recordReviewFailed("clone_failure");
+    metrics.observeQueueWait(2);
+    metrics.observeReviewDuration(3);
+    metrics.recordProviderCall({ durationMs: 1000, inputTokens: 10, outputTokens: 5, errorCode: "rate_limit" });
+    metrics.recordReviewFindings({
+      findings: [{ severity: "high", category: "security" }],
+      uncertainCount: 1,
+    });
+
+    expect(registry).toBe(getMetricsRegistry());
+    const text = registry.render();
+    expect(text).toContain("ai_pr_reviewer_reviews_started_total 1");
+    expect(text).toContain('ai_pr_reviewer_reviews_completed_total{outcome="processed"} 1');
+    expect(text).toContain('ai_pr_reviewer_reviews_failed_total{failure_class="clone_failure"} 1');
+    expect(text).toContain('ai_pr_reviewer_queue_wait_seconds_bucket{le="5"} 1');
+    expect(text).toContain('ai_pr_reviewer_review_duration_seconds_bucket{le="5"} 1');
+    expect(text).toContain('ai_pr_reviewer_provider_errors_total{error_code="rate_limit"} 1');
+    expect(text).toContain('ai_pr_reviewer_findings_by_severity{severity="high"} 1');
+    expect(text).toContain("ai_pr_reviewer_uncertain_findings_total 1");
+  });
+
+  test("observability port tracing adapter returns an endable span", () => {
+    const { tracing } = createObservability();
+    const span = tracing.startSpan("review.process", { "review.id": "rev_123" });
+    expect(() => span.end()).not.toThrow();
+    expect(() => span.end(new Error("boom"))).not.toThrow();
   });
 
   test("recordProviderCall tracks latency, tokens and errors", () => {

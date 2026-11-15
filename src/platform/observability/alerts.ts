@@ -1,4 +1,4 @@
-import type { Logger } from "../ports/logger.js";
+import type { Logger } from "../../ports/logger.js";
 import { getMetricsRegistry } from "./metrics.js";
 
 /**

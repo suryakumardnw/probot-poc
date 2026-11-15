@@ -1,5 +1,5 @@
 import type { Probot } from "probot";
-import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../../config/review-loader.js";
+import type { ReviewConfigStore } from "../../ports/review-config.js";
 import {
   REVIEW_TYPES,
   type IngestionRepositories,
@@ -45,6 +45,8 @@ import {
 export interface IssueCommentHandlerDeps {
   ingestion: IngestionService;
   repositories: IngestionRepositories;
+  /** Review-config store (the module never imports the loader/platform). */
+  config: ReviewConfigStore;
 }
 
 export function registerIssueCommentHandlers(app: Probot, deps: IssueCommentHandlerDeps): void {
@@ -72,7 +74,7 @@ export function registerIssueCommentHandlers(app: Probot, deps: IssueCommentHand
     // Configuration gates: command name, event subscription, manual triggers.
     let config;
     try {
-      config = loadReviewConfig(DEFAULT_CONFIG_PATH).config;
+      config = deps.config.load().config;
     } catch (error) {
       context.log.warn({ err: error }, "Review configuration unavailable; ignoring /review command");
       return;

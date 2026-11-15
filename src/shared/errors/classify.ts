@@ -5,7 +5,7 @@ import { redactSecrets } from "./redact.js";
 /**
  * The single family-level error -> retry/fail mapping used by the HTTP mapper
  * and, after PR 2.8 integration, the config-aware queue policy. The existing
- * `src/observability/retry.ts` classifier remains the live queue policy until
+ * `src/shared/retry.ts` classifier remains the live queue policy until
  * that staged migration lands; this function is named `classifyAppFailure` to
  * keep both explicit.
  *

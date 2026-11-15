@@ -21,10 +21,10 @@ import "dotenv/config";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
 import { runReview } from "../modules/review/index.js";
 import type { ChangedFile, WorkspaceResult } from "../modules/workspace/index.js";
 import { createAgentRuntime } from "../platform/agents/index.js";
+import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../platform/config/review-loader.js";
 
 const UTILS_TS = "export function formatName(user: { name: string }) {\n  return { name: user.name };\n}\n";
 const CALLER_TS = 'import { formatName } from "./utils.js";\n\nconst label = formatName(user).toUpperCase();\n';

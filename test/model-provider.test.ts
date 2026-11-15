@@ -1,7 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { logRedactPaths } from "../src/lib/logger.js";
+import { logRedactPaths } from "../src/platform/logger.js";
 import {
   createModelProviderFromConfig,
   createOpenAICompatibleProvider,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { EnvValidationError, loadEnv } from "../src/config/env.js";
+import { EnvValidationError, loadEnv } from "../src/platform/config/env.js";
 
 describe("loadEnv", () => {
   test("applies safe defaults when optional variables are absent", () => {

@@ -34,8 +34,8 @@ import { createOutboxRecoveryService, type OutboxRecoveryService } from "./recov
 import { createReviewStateService, type ReviewStateService } from "./review-state.service.js";
 
 export { REVIEW_TYPES } from "../../contracts/queue.js";
-export type { IngestOutcome, ReviewTypeValue } from "../../contracts/queue.js";
-export { REVIEW_QUEUE_NAME, parseReviewJobPayload, type ReviewJobPayload } from "./queue.js";
+export type { IngestOutcome, ReviewJobPayload, ReviewTypeValue } from "../../contracts/queue.js";
+export { REVIEW_QUEUE_NAME, parseReviewJobPayload } from "../../shared/queue-payload.js";
 export type { ReviewState } from "./ingestion.repository.js";
 export {
   createIngestionReadService,

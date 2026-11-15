@@ -6,10 +6,8 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
-import { disconnectRedis } from "../../src/lib/redis.js";
-import { orderShutdownSteps } from "../../src/lib/shutdown.js";
+import type { ReviewJobPayload } from "../../src/contracts/queue.js";
 import { createIngestionRepositories } from "../../src/modules/ingestion/prisma-ingestion.repository.js";
-import { createReviewQueue, createWorkerConnection, type ReviewJobPayload } from "../../src/modules/ingestion/queue.js";
 import { NullTokenProvider } from "../../src/modules/workspace/credentials.js";
 import { startReviewWorker, stopReviewWorker } from "../../src/modules/workspace/processor.js";
 import {
@@ -18,6 +16,10 @@ import {
   type ReviewWorkspaceOperations,
   type WorkspaceResult,
 } from "../../src/modules/workspace/workspace.js";
+import { createObservability } from "../../src/platform/observability/index.js";
+import { createReviewQueue, createWorkerConnection } from "../../src/platform/queue/review-queue.js";
+import { disconnectRedis } from "../../src/platform/redis.js";
+import { orderShutdownSteps } from "../../src/platform/shutdown.js";
 import { testEnv } from "../helpers/env.js";
 import { createTestReviewState, silentLogger } from "../helpers/ingestion.js";
 import { cleanDatabase, disconnectDatabase, jobIdentity, prisma, seedReviewChain } from "./support.js";
@@ -238,6 +240,7 @@ describe("real BullMQ worker drain", () => {
       repositories: createIngestionRepositories(prisma),
       service,
       logger: silentLogger,
+      observability: createObservability(),
       transitionReviewState,
       concurrency: 1,
     });
@@ -337,6 +340,7 @@ describe("real BullMQ worker retry during shutdown", () => {
       repositories: createIngestionRepositories(prisma),
       service,
       logger: silentLogger,
+      observability: createObservability(),
       transitionReviewState,
       concurrency: 1,
     });
@@ -396,6 +400,7 @@ describe("real BullMQ worker retry during shutdown", () => {
         repositories: createIngestionRepositories(prisma),
         service,
         logger: silentLogger,
+        observability: createObservability(),
         transitionReviewState,
         concurrency: 1,
       });
@@ -452,6 +457,7 @@ describe("real BullMQ worker permanent payload failure", () => {
       repositories: createIngestionRepositories(prisma),
       service,
       logger: silentLogger,
+      observability: createObservability(),
       transitionReviewState,
       concurrency: 1,
     });

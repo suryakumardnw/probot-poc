@@ -1,18 +1,21 @@
 import fs from "node:fs";
 import { UnrecoverableError, Worker } from "bullmq";
 import type { Redis } from "ioredis";
+import type { Logger } from "../../ports/logger.js";
+import { reviewSpanAttributes, type Observability, type ReviewSpan } from "../../ports/observability.js";
 import {
   createReviewLogger,
   startStage,
   type ReviewCorrelation,
   type StageTracker,
-} from "../../observability/correlation.js";
-import { getMetricsRegistry } from "../../observability/metrics.js";
-import { classifyQueueFailure, type FailureClass, type RetryPolicyConfig } from "../../observability/retry.js";
-import { DEFAULT_RETRY_POLICY_CONFIG } from "../../observability/retry.js";
-import { endSpan, reviewSpanAttributes, startSpan } from "../../observability/tracing.js";
-import type { Logger } from "../../ports/logger.js";
+} from "../../ports/review-logging.js";
 import { AppError, AgentRuntimeError } from "../../shared/errors/index.js";
+import {
+  classifyQueueFailure,
+  DEFAULT_RETRY_POLICY_CONFIG,
+  type FailureClass,
+  type RetryPolicyConfig,
+} from "../../shared/retry.js";
 import {
   isTerminalReviewState,
   parseReviewJobPayload,
@@ -51,6 +54,8 @@ export interface ProcessReviewJobDeps {
   repositories: IngestionRepositories;
   service: ReviewWorkspaceOperations;
   logger: Logger;
+  /** Metrics/tracing adapter injected by the composition root. */
+  observability: Observability;
   /** Review-state transition boundary (durable, injected by bootstrap). */
   transitionReviewState: ReviewStateService["transitionReviewState"];
   concurrency: number;
@@ -171,7 +176,7 @@ export async function processReviewJob(
     await repositories.reviews.resetForRecovery(job.reviewId);
   }
 
-  let span: ReturnType<typeof startSpan> | undefined;
+  let span: ReviewSpan | undefined;
   let activeStage: StageTracker | undefined;
   try {
     await deps.transitionReviewState(job.reviewId, "preparing");
@@ -185,12 +190,12 @@ export async function processReviewJob(
       head_sha: payload.headSha,
     };
     const reviewLogger = createReviewLogger(logger, correlation);
-    const metrics = getMetricsRegistry();
-    metrics.reviewsStarted.inc();
+    const metrics = deps.observability.metrics;
+    metrics.recordReviewStarted();
     const enqueuedAt = job.createdAt instanceof Date ? job.createdAt : new Date(job.createdAt);
-    metrics.queueWait.observe(Math.max(0, (Date.now() - enqueuedAt.getTime()) / 1000));
+    metrics.observeQueueWait(Math.max(0, (Date.now() - enqueuedAt.getTime()) / 1000));
 
-    span = startSpan("review.process", { attributes: reviewSpanAttributes(correlation) });
+    span = deps.observability.tracing.startSpan("review.process", reviewSpanAttributes(correlation));
 
     const cloneStage = startStage(reviewLogger, "clone");
     activeStage = cloneStage;
@@ -227,10 +232,9 @@ export async function processReviewJob(
     await deps.service.cleanupAfterReview(job.reviewId);
     // A successful retry must not retain the previous attempt's failure text.
     await repositories.reviewJobs.update(job.id, { status: "completed", lastError: null });
-    endSpan(span);
-    const metricsRegistry = getMetricsRegistry();
-    metricsRegistry.reviewsCompleted.inc(1, { outcome: "processed" });
-    metricsRegistry.reviewDuration.observe((Date.now() - enqueuedAt.getTime()) / 1000);
+    span.end();
+    deps.observability.metrics.recordReviewCompleted("processed");
+    deps.observability.metrics.observeReviewDuration((Date.now() - enqueuedAt.getTime()) / 1000);
     reviewLogger.info({ jobId, reviewId: job.reviewId }, "Review retrieval processed");
     return "processed";
   } catch (error) {
@@ -284,7 +288,7 @@ export async function processReviewJob(
       retriesRemaining ? "Review attempt failed; BullMQ will retry" : "Review failed permanently",
     );
     if (span) {
-      endSpan(span, error);
+      span.end(error);
     }
     await deps.service.cleanupAfterFailure(job.reviewId, message).catch(() => {
       /* cleanup is best-effort */
@@ -318,7 +322,7 @@ export async function processReviewJob(
     // Terminal failure: permanent by classification, or the attempt budget is
     // exhausted. Record the stable code on both durable rows before failing the
     // queue job so reconciliation never has to guess why it stopped.
-    getMetricsRegistry().reviewsFailed.inc(1, { failure_class: decision.failureClass });
+    deps.observability.metrics.recordReviewFailed(decision.failureClass);
     try {
       await deps.transitionReviewState(job.reviewId, "failed", {
         errorCode: retriesExhausted ? "retry_exhausted" : terminalErrorCode(error),

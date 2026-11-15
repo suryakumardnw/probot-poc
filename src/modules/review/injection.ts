@@ -33,7 +33,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type { ReviewConfig } from "../../config/review-schema.js";
+import type { ReviewConfig } from "../../contracts/config.js";
 import type { Logger } from "../../ports/logger.js";
 import { handbookVariantDir, type KnowledgeHandbookVariant, type KnowledgeSnapshot } from "../knowledge/index.js";
 import { HANDBOOK_REFERENCE_INSTRUCTIONS } from "./prompts/index.js";

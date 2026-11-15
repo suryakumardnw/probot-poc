@@ -16,11 +16,11 @@
  *  - GitHub API failure after bounded retries → `completed_with_warnings`
  *    (the review data is retained; publication can be retried later).
  */
-import type { ReviewConfig } from "../../config/review-schema.js";
-import { endSpan, reviewSpanAttributes, startSpan } from "../../observability/tracing.js";
+import type { ReviewConfig } from "../../contracts/config.js";
 import type { AgentRuntime } from "../../ports/agent-runtime.js";
 import type { PublisherOctokit } from "../../ports/github-publisher.js";
 import type { Logger } from "../../ports/logger.js";
+import { reviewSpanAttributes, type Observability } from "../../ports/observability.js";
 import { resolveModelId } from "../../shared/model-id.js";
 import {
   getFindingsForReview,
@@ -67,6 +67,8 @@ export interface ReviewPipelineDeps {
   runtime: AgentRuntime;
   config: ReviewConfig;
   logger: Logger;
+  /** Metrics/tracing adapter injected by the composition root. */
+  observability: Observability;
   /** Review-state transition boundary (durable, injected by bootstrap). */
   transitionReviewState: ReviewStateService["transitionReviewState"];
   /** Review-comment persistence and review publication state. */
@@ -267,14 +269,15 @@ export async function finalizeReview(
 
   await deps.transitionReviewState(reviewId, "publishing");
 
-  const publishSpan = startSpan("github.publishing", {
-    attributes: reviewSpanAttributes({
+  const publishSpan = deps.observability.tracing.startSpan(
+    "github.publishing",
+    reviewSpanAttributes({
       review_id: reviewId,
       repository: payload.repositoryFullName,
       pull_request_number: payload.pullRequestNumber,
       head_sha: workspace.headSha,
     }),
-  });
+  );
 
   // Publishing gate (decision 7): only review types whose
   // review.types.<type>.publish flag is true post to GitHub. Experimental
@@ -291,7 +294,7 @@ export async function finalizeReview(
       /* row gone — ignore */
     });
     await deps.transitionReviewState(reviewId, "completed");
-    endSpan(publishSpan);
+    publishSpan.end();
     logger.info(
       buildReviewTelemetry({
         config: deps.config,
@@ -359,7 +362,7 @@ export async function finalizeReview(
     const usagePersisted = await persistReviewUsage(deps.publishing.reviews, reviewId, output);
 
     await deps.transitionReviewState(reviewId, "completed");
-    endSpan(publishSpan);
+    publishSpan.end();
     logger.info(
       buildReviewTelemetry({
         config: deps.config,
@@ -379,7 +382,7 @@ export async function finalizeReview(
   } catch (error) {
     if (error instanceof StaleHeadError) {
       // §4.3/§4.4: reject the result, publish nothing.
-      endSpan(publishSpan, error);
+      publishSpan.end(error);
       logger.warn({ reviewId }, "PR head moved before publication; rejecting review results");
       await deps
         .transitionReviewState(reviewId, "failed", {
@@ -404,7 +407,7 @@ export async function finalizeReview(
       );
       throw error;
     }
-    endSpan(publishSpan, error);
+    publishSpan.end(error);
     const message = redactCredentials(error instanceof Error ? error.message : String(error));
     const usagePersisted = await persistReviewUsage(deps.publishing.reviews, reviewId, output);
     logger.info(

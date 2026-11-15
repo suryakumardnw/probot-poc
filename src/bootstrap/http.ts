@@ -1,14 +1,14 @@
 import http from "node:http";
 import { z } from "zod";
-import type { Env } from "../config/env.js";
 import { adminErrorEnvelopeSchema } from "../contracts/admin.js";
 import { ERROR_CODES } from "../contracts/errors.js";
 import { ingestOutcomeSchema } from "../contracts/queue.js";
-import type { ReadinessReport } from "../lib/health.js";
 import { isAdminConfigured } from "../modules/admin/index.js";
 import { ManualIngestionError, type IngestionServices } from "../modules/ingestion/index.js";
-import { metricsHandler } from "../observability/metrics-endpoint.js";
+import type { Env } from "../platform/config/env.js";
+import type { ReadinessReport } from "../platform/health.js";
 import { toErrorLogPayload, toHttpEnvelope } from "../platform/http/error-mapper.js";
+import { metricsHandler } from "../platform/observability/metrics-endpoint.js";
 import type { Logger } from "../ports/logger.js";
 
 /**

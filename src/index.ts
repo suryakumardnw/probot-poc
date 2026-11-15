@@ -1,9 +1,9 @@
 import type { Probot } from "probot";
 import type { AppServices } from "./bootstrap/clients.js";
 import { createWebhookServices } from "./bootstrap/clients.js";
-import { loadEnv } from "./config/env.js";
 import { registerTriageHandlers } from "./modules/triage/index.js";
 import { registerWebhooks } from "./modules/webhooks/index.js";
+import { loadEnv } from "./platform/config/env.js";
 
 /**
  * Probot application definition.
@@ -25,6 +25,7 @@ export function createApp(services: AppServices): (app: Probot) => void {
       ingestion: services.ingestion,
       repositories: services.ingestionRepositories,
       unitOfWork: services.ingestionUnitOfWork,
+      config: services.config,
     });
 
     // For more information on building apps:

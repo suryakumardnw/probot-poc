@@ -2,7 +2,7 @@
  * Logger port.
  *
  * Application and domain modules log through this interface; the concrete
- * Pino adapter lives in `src/lib/logger.ts` and is constructed by bootstrap.
+ * Pino adapter lives in `src/platform/logger.ts` and is constructed by bootstrap.
  * Keeping the port independent of Pino lets tests inject silent/fake loggers
  * and lets the logging library change without touching modules.
  */

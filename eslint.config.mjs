@@ -10,7 +10,7 @@ import tseslint from "typescript-eslint";
  * `src/modules` or `src/platform` yet. Every path here is listed with its
  * removal PR in docs/module-boundaries.md; PR 3.12 deletes this list.
  */
-const LEGACY_ELEMENT_PATHS = ["src/config", "src/eval", "src/lib", "src/observability"];
+const LEGACY_ELEMENT_PATHS = ["src/eval"];
 
 /**
  * Temporary `process.env` allowances. `platform/config` owns environment
@@ -23,9 +23,7 @@ const PROCESS_ENV_ALLOWED_FILES = [
   "test/**/*.ts",
   // One-off container diagnostic; not application code (permanent exception).
   "deploy/inspect-key.js",
-  // TODO(PR 3.10; PR 3.12 final): config moves to platform/config.
-  "src/config/**/*.ts",
-  // TODO(PR 3.10; PR 3.12 final): composition roots read operational overrides.
+  // TODO(PR 3.12 final): composition roots read operational overrides.
   "src/bootstrap/**/*.ts",
   // TODO(PR 3.11; PR 3.12 final): CLI scripts read environment directly.
   "src/scripts/**/*.ts",
@@ -43,8 +41,8 @@ const PROCESS_ENV_ALLOWED_FILES = [
   // TODO(PR 3.12 final): the model adapter reads the API key / model id from
   // the environment.
   "src/platform/models/**/*.ts",
-  // TODO(PR 3.10; PR 3.12 final): observability moves to platform/observability.
-  "src/observability/**/*.ts",
+  // TODO(PR 3.12 final): alert thresholds load from environment overrides.
+  "src/platform/observability/**/*.ts",
   // TODO(PR 3.12): the publishing module still resolves the model id from the
   // environment.
   "src/modules/publishing/**/*.ts",
@@ -61,12 +59,10 @@ const PROCESS_ENV_ALLOWED_FILES = [
 const PRISMA_ALLOWED_FILES = [
   "src/**/*.repository.ts",
   "src/platform/db/**/*.ts",
+  "src/platform/health.ts",
   "test/**/*.ts",
-  // TODO(PR 3.10): lib/prisma.ts becomes platform/db/prisma.ts.
-  "src/lib/prisma.ts",
-  // TODO(PR 3.10): health is a platform adapter.
-  "src/lib/health.ts",
-  // TODO(PR 3.10): the composition root should consume platform/db factories.
+  // TODO(PR 3.12): the composition root keeps the vendor client type until
+  // the platform/db factories fully own the connection lifecycle.
   "src/bootstrap/clients.ts",
   // TODO(PR 3.12): the knowledge module's materializer still takes the Prisma
   // client directly; replace it with a port.
@@ -248,20 +244,6 @@ export default tseslint.config(
               allow: { to: { element: { type: "platform", fileInternalPath: "http/error-mapper.ts" } } },
             },
             {
-              // TODO(PR 3.10): modules still reach un-moved top-level
-              // directories directly. Each path is removed when its directory
-              // moves (or becomes a port-backed platform adapter).
-              from: { element: { type: "module" } },
-              allow: {
-                to: {
-                  element: {
-                    type: "legacy",
-                    path: ["src/config", "src/observability"],
-                  },
-                },
-              },
-            },
-            {
               // Platform adapters may use contracts, ports, and shared only.
               from: { element: { type: "platform" } },
               allow: { to: { element: { type: ["contracts", "ports", "shared"] } } },
@@ -269,12 +251,6 @@ export default tseslint.config(
             {
               from: { element: { type: "ports" } },
               allow: { to: { element: { type: ["contracts", "shared"] } } },
-            },
-            {
-              // TODO(PR 3.10): ports/review-config still re-exports the concrete
-              // loader error; the loader moves to platform/config.
-              from: { element: { type: "ports" } },
-              allow: { to: { element: { type: "legacy", path: "src/config" } } },
             },
             {
               // Shared code may use the Zod contracts; it must not import
@@ -403,12 +379,12 @@ export default tseslint.config(
       "src/modules/admin/auth/github-oauth.ts",
       "src/modules/admin/auth/session.ts",
       "src/modules/admin/rate-limit.ts",
-      "src/config/review-loader.ts",
+      "src/platform/config/review-loader.ts",
       "src/modules/execution/local-executor.ts",
       "src/modules/execution/policy.ts",
       "src/modules/findings/validation.ts",
       "src/modules/webhooks/issue-comment.ts",
-      "src/observability/alerts.ts",
+      "src/platform/observability/alerts.ts",
       "src/modules/publishing/summary.ts",
       "src/modules/review/retrieval.ts",
       "src/modules/review/tools.ts",

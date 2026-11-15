@@ -127,7 +127,7 @@ sequenceDiagram
 
 **Probot process:** `src/server.ts`
 
-- Loads environment (`src/config/env.ts`), logger, Prisma, Redis.
+- Loads environment (`src/platform/config/env.ts`), logger, Prisma, Redis.
 - Starts `/healthz`, `/readyz`, `/metrics`, the admin API/panel, and the
   manual review API.
 - Creates Probot middleware if `APP_ID` and a private key are configured.
@@ -135,7 +135,7 @@ sequenceDiagram
 **Worker process:** `src/worker.ts`
 
 - Connects to PostgreSQL and Redis.
-- Loads `config/review.json` through `src/config/review-loader.ts`.
+- Loads `config/review.json` through `src/platform/config/review-loader.ts`.
 - Fetches the knowledge sources **once per boot** (`ensureKnowledgeSources`) —
   the handbook and optional skill playbook. This is not per review.
 - Creates `ReviewWorkspaceService` and starts the BullMQ worker with
@@ -1312,7 +1312,7 @@ also have the provider timeout. Timeout escalation is SIGTERM then SIGKILL.
 | PR webhook handler | `src/handlers/pull-request.ts` |
 | `/review` handler | `src/handlers/issue-comment.ts` |
 | Durable ingestion, idempotency, outbox | `src/ingestion/orchestrator.ts` |
-| BullMQ queue | `src/ingestion/queue.ts` |
+| BullMQ queue | `src/platform/queue/review-queue.ts` |
 | Outbox publisher/recovery | `src/ingestion/outbox.ts` |
 | State machine | `src/ingestion/review-state.ts` |
 | Worker entry point | `src/worker.ts` |

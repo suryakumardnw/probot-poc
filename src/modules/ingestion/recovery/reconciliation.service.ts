@@ -24,8 +24,8 @@
 import type { Queue } from "bullmq";
 import { ERROR_CODES } from "../../../contracts/errors.js";
 import { outboxPayloadSchema, reviewJobPayloadSchema, type ReviewJobPayload } from "../../../contracts/queue.js";
-import { getMetricsRegistry } from "../../../observability/metrics.js";
 import type { Logger } from "../../../ports/logger.js";
+import type { Observability } from "../../../ports/observability.js";
 import { AppError, ValidationError } from "../../../shared/errors/index.js";
 import type { ReviewJobRecord, ReviewJobWithReview, ReviewRecord } from "../ingestion.repository.js";
 import type { IngestionRepositories, IngestionUnitOfWork } from "../ingestion.unit-of-work.js";
@@ -40,6 +40,8 @@ export type ReconciliationDependencies = {
 
 export interface ReconciliationDeps extends ReconciliationDependencies {
   logger: Logger;
+  /** Metrics adapter injected by the composition root. */
+  observability: Observability;
   /** BullMQ queue used to re-enqueue recovered reviews. */
   queue?: Queue<ReviewJobPayload>;
   /** Recovery behavior for stale reviews (§17.3 step 7). Default "requeue". */
@@ -242,7 +244,7 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
       );
       try {
         await failReviewForRecovery(repositories, unitOfWork, review.id, job.id, reason, "recovery_exhausted");
-        getMetricsRegistry().reviewsFailed.inc(1, { failure_class: "recovery_exhausted" });
+        deps.observability.metrics.recordReviewFailed("recovery_exhausted");
         summary.failed += 1;
       } catch (error) {
         logger.error(
@@ -318,7 +320,7 @@ export async function reconcileIncompleteReviews(deps: ReconciliationDeps): Prom
         const reason = `${error.code}: ${error.message}`;
         try {
           await failReviewForRecovery(repositories, unitOfWork, review.id, job.id, reason, error.code);
-          getMetricsRegistry().reviewsFailed.inc(1, { failure_class: "review_payload_invalid" });
+          deps.observability.metrics.recordReviewFailed("review_payload_invalid");
           summary.failed += 1;
           logger.error(
             { reviewId: review.id, jobId: job.id, code: error.code },

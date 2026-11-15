@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../config/review-loader.js";
+import { DEFAULT_CONFIG_PATH, loadReviewConfig } from "../platform/config/review-loader.js";
 
 /**
  * Validation CLI: npm run config:validate [-- <path-to-review.json>]

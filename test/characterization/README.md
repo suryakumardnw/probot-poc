@@ -152,7 +152,7 @@ one Postgres/Redis instance and truncates fixture tables between tests.
   It contains no assertions.
 - `test/fixtures/shutdown-child.mjs` runs the real shutdown helper in a child
   process so `SIGTERM`, deadlines and exit codes are real. Node's native type
-  stripping lets the fixture import `src/lib/shutdown.ts` directly.
+  stripping lets the fixture import `src/platform/shutdown.ts` directly.
 - GitHub provider calls are stubbed at the HTTP transport boundary
   (global `fetch`) or through the production `setGithubFetch` seam. No test
   reaches the network.

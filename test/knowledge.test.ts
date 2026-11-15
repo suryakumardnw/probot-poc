@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
+import { reviewConfigSchema, type ReviewConfig } from "../src/contracts/config.js";
 import { fetchFileContent, fetchRepoTree, resolveCommitSha, sha256Hex } from "../src/modules/knowledge/fetch.js";
 import {
   ensureKnowledgeSources,
@@ -234,7 +234,7 @@ describe("ensureKnowledgeSources", () => {
             return {};
           },
         },
-      } as unknown as ReturnType<typeof import("../src/lib/prisma.js").createPrisma>,
+      } as unknown as ReturnType<typeof import("../src/platform/db/prisma.js").createPrisma>,
       logger: fakeLogger,
     });
     expect(captured!.handbook!.ref).toBe(HANDBOOK_SHA);
@@ -296,7 +296,7 @@ describe("ensureKnowledgeSources", () => {
           findUnique: async () => ({ knowledgeSnapshot: null }),
           update: async () => ({}),
         },
-      } as unknown as ReturnType<typeof import("../src/lib/prisma.js").createPrisma>,
+      } as unknown as ReturnType<typeof import("../src/platform/db/prisma.js").createPrisma>,
       logger: fakeLogger,
     });
 

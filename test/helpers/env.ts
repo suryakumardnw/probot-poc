@@ -1,4 +1,4 @@
-import { loadEnv } from "../../src/config/env.js";
+import { loadEnv } from "../../src/platform/config/env.js";
 
 /**
  * Validated environment for tests.

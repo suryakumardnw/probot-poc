@@ -17,7 +17,7 @@
  * `Finding` contract and re-uses it instead of re-validating the wire schema.
  */
 
-import type { ReviewConfig } from "../../config/review-schema.js";
+import type { ReviewConfig } from "../../contracts/config.js";
 import { FINDING_CATEGORIES, type Finding, type FindingSeverity } from "../../modules/review/index.js";
 import { readWorkspaceFile } from "../workspace/index.js";
 

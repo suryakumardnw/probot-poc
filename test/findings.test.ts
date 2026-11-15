@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { reviewConfigSchema, type ReviewConfig } from "../src/config/review-schema.js";
+import { reviewConfigSchema, type ReviewConfig } from "../src/contracts/config.js";
 import {
   computeFindingFingerprint,
   normalizeTextSignature,

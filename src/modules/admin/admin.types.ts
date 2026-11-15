@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Env } from "../../config/env.js";
+import type { Env } from "../../contracts/config.js";
 import type { ReviewConfigStore } from "../../ports/review-config.js";
 import type { IngestionReadService } from "../ingestion/index.js";
 import type { AuditRepository } from "./audit.repository.js";
